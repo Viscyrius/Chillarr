@@ -1,5 +1,8 @@
 # Changelog
 
+## Unreleased
+- My downloads no longer says "Nothing downloaded yet" when you do have things. If Jellyfin was still starting (it takes about half a minute) or too busy to answer, the page took that as an empty library. Now it says it's getting your library and keeps trying until Jellyfin answers.
+
 ## 0.9.1 (2026-10-22)
 - The TV remote works in Chillarr on LG TVs. Arrows and OK did nothing before: LG's Jellyfin app never handed the remote to Chillarr's page, and older TVs send the keys in a form Chillarr didn't read. Now the arrows move from the first poster and OK opens it.
 - Every TV has its own phone remote code. On the TV, open Settings > Phone remote, then type that code on your phone. The phone then controls that TV and only that TV. Each TV keeps its code until you press New code on it. The code in Chillarr on the PC still controls the PC.

@@ -780,6 +780,13 @@ export async function renderTab(view, tab, mode = null) {
   } catch (err) {
     // A redraw that fails leaves the page as it was.
     if (seq !== renderSeq || mode === "redraw") return;
+    // My downloads is the library: Jellyfin not answering yet (it takes ~20-30 s
+    // to start) says so and tries again, never "Nothing downloaded yet".
+    if (tab === "downloads") {
+      view.replaceChildren(el("div", { class: "empty-state" }, el("h2", { text: "Getting your library" }), el("p", { text: "Jellyfin isn't answering yet. This page tries again on its own." }), el("button", { class: "btn primary", onclick: () => renderTab(view, tab) }, "Try now")));
+      emptyTimer = setTimeout(() => renderTab(view, tab, "back"), 5000); // "back": the message stays up meanwhile, no skeleton flash
+      return;
+    }
     view.replaceChildren(el("div", { class: "empty-state" }, el("h2", { text: "Couldn't load this page" }), el("p", { text: String(err) }), el("button", { class: "btn primary", onclick: () => renderTab(view, tab) }, "Try again")));
     return;
   }

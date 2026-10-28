@@ -143,7 +143,7 @@ fn media_sign_out(app: AppHandle) {
 }
 
 #[tauri::command]
-async fn media_rows(app: AppHandle, tab: String) -> Vec<media::Row> {
+async fn media_rows(app: AppHandle, tab: String) -> Result<Vec<media::Row>, String> {
     media::rows(&app, &tab).await
 }
 

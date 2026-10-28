@@ -3,7 +3,7 @@
 
 use crate::arr::Arr;
 use crate::fix::Core;
-use crate::jellyfin::{Jf, Session};
+use crate::jellyfin::{Jf, JfError, Session};
 use crate::library;
 use crate::log::log;
 use crate::model::{AppId, Level};
@@ -889,10 +889,15 @@ pub fn continue_first(watch: Vec<Tile>, cont: Vec<Tile>) -> Vec<Tile> {
 }
 
 /// The rows for one tab: home, movies, series, anime, downloads.
-pub async fn rows(app: &AppHandle, tab: &str) -> Vec<Row> {
+///
+/// Err only on My downloads, when Jellyfin couldn't list the library (still
+/// starting, which takes it ~20-30 s, or too busy to answer). That page is the
+/// library, so an empty one would say "Nothing downloaded yet" about a full
+/// library. Other tabs just go without the library rows.
+pub async fn rows(app: &AppHandle, tab: &str) -> Result<Vec<Row>, String> {
     let j = jf(app).filter(|j| j.user_id.is_some());
     if tab == "mylist" {
-        return my_list_page(app, j.as_ref()).await;
+        return Ok(my_list_page(app, j.as_ref()).await);
     }
     let mut out: Vec<Option<Row>> = Vec::new();
     let (mut lib_movies, mut lib_series, mut lib_anime, mut cont, mut latest) = (vec![], vec![], vec![], vec![], vec![]);
@@ -906,10 +911,16 @@ pub async fn rows(app: &AppHandle, tab: &str) -> Vec<Row> {
             }
         }
         latest = j.latest().await.unwrap_or_default().iter().map(|v| tiles::from_jf(v, &j.base)).collect();
-        lib_movies = jf_tiles(j, "recursive=true&includeItemTypes=Movie&sortBy=SortName&limit=500").await;
-        lib_series = jf_tiles(j, "recursive=true&includeItemTypes=Series&sortBy=SortName&limit=500").await;
+        let lib = |q: String| async move { j.items(&q).await.map(|v| v.iter().map(|v| tiles::from_jf(v, &j.base)).collect::<Vec<Tile>>()) };
+        let mut failed = None;
+        let mut keep = |r: Result<Vec<Tile>, JfError>| r.unwrap_or_else(|e| { failed.get_or_insert(e); vec![] });
+        lib_movies = keep(lib("recursive=true&includeItemTypes=Movie&sortBy=SortName&limit=500".into()).await);
+        lib_series = keep(lib("recursive=true&includeItemTypes=Series&sortBy=SortName&limit=500".into()).await);
         for id in &anime_ids {
-            lib_anime.extend(jf_tiles(j, &format!("parentId={id}&recursive=true&includeItemTypes=Series,Movie&sortBy=SortName&limit=500")).await);
+            lib_anime.extend(keep(lib(format!("parentId={id}&recursive=true&includeItemTypes=Series,Movie&sortBy=SortName&limit=500")).await));
+        }
+        if let (Some(e), "downloads") = (failed, tab) {
+            return Err(format!("Couldn't get your library from Jellyfin. {e}."));
         }
         let is_anime = |t: &Tile| lib_anime.iter().any(|a| a.key == t.key);
         lib_movies.retain(|t| !is_anime(t));
@@ -1048,7 +1059,7 @@ pub async fn rows(app: &AppHandle, tab: &str) -> Vec<Row> {
             out.push(row("library-anime", "My anime", lib_anime));
         }
     }
-    out.into_iter().flatten().collect()
+    Ok(out.into_iter().flatten().collect())
 }
 
 /// One page of "Explore all": "movie:<cat>", "series:<cat>", "anime:<cat>".

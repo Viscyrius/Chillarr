@@ -323,7 +323,7 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
             st.tailscale_ip = None;
             ok(st)
         }
-        "media_rows" => ok(media::rows(app, &arg::<String>(a, "tab")?).await),
+        "media_rows" => res(media::rows(app, &arg::<String>(a, "tab")?).await),
         "media_episodes" => ok(media::episodes(app, &arg::<String>(a, "seriesId")?).await),
         "media_search" => ok(media::search(app, &arg::<String>(a, "term")?).await),
         "media_search_live" => ok(crate::search::live(app.clone(), arg(a, "term")?, arg(a, "seq")?).await),
