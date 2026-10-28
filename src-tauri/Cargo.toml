@@ -1,0 +1,59 @@
+[package]
+name = "chillarr"
+version = "0.9.1"
+description = "Keeps Prowlarr, Sonarr, Radarr, FlareSolverr and qBittorrent running and fixed"
+authors = ["Viscyrius"]
+edition = "2021"
+
+[lib]
+name = "chillarr_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-autostart = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-single-instance = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+roxmltree = "0.20"
+sha2 = "0.10"
+pbkdf2 = "0.12"
+base64 = "0.22"
+getrandom = "0.2"
+# Already built for Tauri; unpacks OpenSubtitles.org's .gz downloads.
+flate2 = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+windows = { version = "0.58", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_Security_Cryptography",
+  "Win32_System_JobObjects",
+  "Win32_System_Threading",
+  "Win32_System_Registry",
+  "Win32_System_Services",
+  "Win32_UI_Shell",
+  "Win32_UI_WindowsAndMessaging",
+] }
+
+# Tauri's own WebView2 bindings (already built for it), to turn off the
+# browser's autofill dropdown in setup.
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.39"
+windows-core = "0.62"
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

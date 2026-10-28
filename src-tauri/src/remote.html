@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#0b0c10">
+<title>Chillarr Remote</title>
+<style>
+  :root { --bg: #0b0c10; --pad: #16181f; --key: #1f222b; --line: #2b2f3a; --text: #f1f2f5; --muted: #8c90a0; --accent: #ff6a3d; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; user-select: none; -webkit-user-select: none; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 15px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  body { display: flex; flex-direction: column; align-items: center; padding: max(18px, env(safe-area-inset-top)) 16px max(18px, env(safe-area-inset-bottom)); gap: 18px; }
+  h1 { font-size: 18px; margin: 4px 0 0; letter-spacing: -0.01em; }
+  h1 b { color: var(--accent); }
+  .muted { color: var(--muted); font-size: 13px; text-align: center; margin: 0; }
+  button { font: inherit; color: var(--text); background: var(--key); border: 1px solid var(--line); border-radius: 14px; cursor: pointer; touch-action: manipulation; transition: transform 0.12s, background 0.12s; }
+  button:active { transform: scale(0.94); background: #2a2e39; }
+  .row { display: flex; gap: 10px; width: 100%; max-width: 360px; }
+  .row button { flex: 1; height: 52px; }
+  .pad { position: relative; width: min(78vw, 300px); aspect-ratio: 1; border-radius: 50%; background: var(--pad); border: 1px solid var(--line); }
+  .pad button { position: absolute; width: 34%; height: 34%; border: 0; background: transparent; border-radius: 16px; font-size: 26px; color: var(--muted); }
+  .pad button:active { background: rgba(255,255,255,0.06); color: var(--text); }
+  .pad .up { top: 2%; left: 33%; } .pad .down { bottom: 2%; left: 33%; } .pad .left { left: 2%; top: 33%; } .pad .right { right: 2%; top: 33%; }
+  .pad .ok { top: 31%; left: 31%; width: 38%; height: 38%; border-radius: 50%; background: var(--key); border: 1px solid var(--line); color: var(--text); font-size: 17px; font-weight: 600; }
+  .play { background: var(--accent); border-color: var(--accent); color: #140a06; font-weight: 700; }
+  input { width: 100%; max-width: 360px; height: 48px; border-radius: 12px; border: 1px solid var(--line); background: var(--pad); color: var(--text); padding: 0 14px; font: inherit; user-select: text; -webkit-user-select: text; }
+  .pin { font-size: 22px; letter-spacing: 0.12em; text-align: center; text-transform: uppercase; }
+  .to { display: flex; align-items: center; gap: 10px; width: 100%; max-width: 360px; justify-content: space-between; padding: 10px 14px; border-radius: 14px; background: var(--pad); border: 1px solid var(--line); font-size: 14px; }
+  .to b { font-weight: 600; }
+  .to button { height: 34px; padding: 0 12px; font-size: 13px; color: var(--muted); }
+  .err { color: #ff8a8a; min-height: 1.4em; font-size: 13px; text-align: center; margin: 0; }
+  [hidden] { display: none !important; }
+  .tabs { display: flex; gap: 6px; padding: 4px; border-radius: 14px; background: var(--pad); border: 1px solid var(--line); width: 100%; max-width: 360px; }
+  .tabs button { flex: 1; height: 40px; border: 0; background: transparent; color: var(--muted); font-weight: 600; }
+  .tabs button.on { background: var(--key); color: var(--text); }
+  .results { display: grid; gap: 10px; width: 100%; max-width: 420px; }
+  .res { display: flex; gap: 12px; align-items: center; padding: 8px; border-radius: 14px; background: var(--pad); border: 1px solid var(--line); animation: rise 0.35s ease both; }
+  .res img, .res .ph { width: 54px; height: 80px; border-radius: 8px; object-fit: cover; background: var(--key); flex: none; }
+  .res .info { flex: 1; min-width: 0; }
+  .res b { display: block; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .res small { color: var(--muted); font-size: 12px; }
+  .res .get { height: 40px; padding: 0 14px; flex: none; }
+  .res .done { color: #6fd39a; font-size: 13px; font-weight: 600; flex: none; max-width: 110px; text-align: right; }
+  @keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+</style>
+</head>
+<body>
+  <h1><b>Chillarr</b> Remote</h1>
+
+  <section id="pair" hidden style="display:flex;flex-direction:column;align-items:center;gap:14px;width:100%">
+    <p class="muted">Type the code shown on the TV in Chillarr, under Settings &gt; Phone remote. Every TV has its own code. To control Chillarr on the PC, use the code in its Settings &gt; General.</p>
+    <input id="pin" class="pin" maxlength="13" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false" placeholder="ABCDE 23456">
+    <div class="row"><button id="go" class="play">Connect</button></div>
+    <p id="err" class="err"></p>
+  </section>
+
+  <div class="to" id="to" hidden><span>Controlling <b id="toname"></b></span><button id="switch">Change</button></div>
+
+  <nav class="tabs" id="tabs" hidden>
+    <button class="on" data-tab="remote">Remote</button>
+    <button data-tab="get">Download</button>
+  </nav>
+
+  <section id="get" hidden style="display:flex;flex-direction:column;align-items:center;gap:14px;width:100%">
+    <input id="q" type="search" placeholder="Search movies, series, anime" enterkeyhint="search" autocomplete="off">
+    <p id="getnote" class="muted">Find anything and press Download. Your PC downloads it, and it shows up on your TV when it's ready.</p>
+    <div class="results" id="results"></div>
+  </section>
+
+  <section id="remote" hidden style="display:flex;flex-direction:column;align-items:center;gap:16px;width:100%">
+    <div class="row">
+      <button data-a="tab-prev" aria-label="Previous tab">&#8592; Tab</button>
+      <button data-a="search" aria-label="Search">Search</button>
+      <button data-a="tab-next" aria-label="Next tab">Tab &#8594;</button>
+    </div>
+    <div class="pad">
+      <button class="up" data-a="up" aria-label="Up">&#9650;</button>
+      <button class="left" data-a="left" aria-label="Left">&#9664;</button>
+      <button class="ok" data-a="select">OK</button>
+      <button class="right" data-a="right" aria-label="Right">&#9654;</button>
+      <button class="down" data-a="down" aria-label="Down">&#9660;</button>
+    </div>
+    <div class="row">
+      <button data-a="back">Back</button>
+      <button data-a="play" class="play">Play / Pause</button>
+    </div>
+    <div class="row">
+      <button data-a="seek-back">&#8634; 10s</button>
+      <button data-a="seek-fwd">10s &#8635;</button>
+    </div>
+    <input id="type" type="search" placeholder="Type to search" enterkeyhint="search" autocomplete="off">
+    <p id="state" class="err"></p>
+  </section>
+
+<script>
+  const $ = (s) => document.querySelector(s);
+  let pin = "";
+  try { pin = localStorage.getItem("chillarr-pin") || ""; } catch (e) {}
+
+  async function call(path, body) {
+    return fetch(path, { method: "POST", headers: { "X-Pin": pin, "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : "{}" });
+  }
+  const LOST = "Lost Chillarr. Check that this phone is on the same Wi-Fi, or on Tailscale.";
+  // The screen this code drives, named once it's checked.
+  let target = "";
+  const offline = () => `${target || "The TV"} isn't showing Chillarr right now. Open Jellyfin on it.`;
+
+  let tab = "remote";
+  try { tab = localStorage.getItem("chillarr-tab") || "remote"; } catch (e) {}
+  function showPair(msg) { $("#remote").hidden = true; $("#get").hidden = true; $("#tabs").hidden = true; $("#to").hidden = true; $("#pair").hidden = false; $("#err").textContent = msg || ""; $("#pin").focus(); }
+  function showRemote(info) {
+    target = (info && info.to) || "";
+    $("#toname").textContent = target || "Chillarr";
+    $("#to").hidden = false;
+    $("#pair").hidden = true; $("#tabs").hidden = false; showTab(tab);
+    $("#state").textContent = info && info.online === false ? offline() : "";
+  }
+  $("#switch").addEventListener("click", () => { $("#pin").value = ""; showPair(); });
+  function showTab(t) {
+    tab = t;
+    try { localStorage.setItem("chillarr-tab", t); } catch (e) {}
+    document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === t));
+    $("#remote").hidden = t !== "remote";
+    $("#get").hidden = t !== "get";
+  }
+  document.querySelectorAll("#tabs button").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
+
+  // Download: search Chillarr, then ask the PC to download.
+  function esc(s) { return String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+  let searchTimer, searchSeq = 0;
+  $("#q").addEventListener("input", (e) => {
+    clearTimeout(searchTimer);
+    const q = e.target.value.trim();
+    if (q.length < 2) { $("#results").innerHTML = ""; $("#getnote").hidden = false; return; }
+    searchTimer = setTimeout(() => find(q), 400);
+  });
+  async function find(q) {
+    const seq = ++searchSeq;
+    $("#getnote").hidden = false;
+    $("#getnote").textContent = "Searching...";
+    let list;
+    try {
+      const r = await fetch("/search", { method: "POST", headers: { "X-Pin": pin, "Content-Type": "application/json" }, body: JSON.stringify({ q }) });
+      if (r.status === 401) { showPair("The code changed. Type the new one."); return; }
+      list = await r.json();
+    } catch (e) { $("#getnote").textContent = LOST; return; }
+    if (seq !== searchSeq) return;
+    $("#getnote").hidden = list.length > 0;
+    $("#getnote").textContent = list.length ? "" : "Nothing found.";
+    const kinds = { movie: "Movie", series: "Series", anime: "Anime", episode: "Episode" };
+    $("#results").innerHTML = "";
+    list.forEach((x, i) => {
+      const row = document.createElement("div");
+      row.className = "res";
+      row.style.animationDelay = `${Math.min(i, 10) * 30}ms`;
+      row.innerHTML = (x.poster ? `<img src="${esc(x.poster)}" alt="" loading="lazy">` : `<div class="ph"></div>`) +
+        `<div class="info"><b>${esc(x.title)}</b><small>${esc([x.year, kinds[x.kind] || ""].filter(Boolean).join(" · "))}</small></div>` +
+        (x.status ? `<span class="done">${esc(x.status)}</span>` : `<button class="get play">Download</button>`);
+      const btn = row.querySelector(".get");
+      if (btn) btn.addEventListener("click", async () => {
+        btn.disabled = true; btn.textContent = "Adding...";
+        try {
+          const r = await fetch("/get", { method: "POST", headers: { "X-Pin": pin, "Content-Type": "application/json" }, body: JSON.stringify({ tile: x.tile }) });
+          const res = await r.json();
+          const done = document.createElement("span");
+          done.className = "done";
+          done.textContent = res.ok ? "On its way" : "Couldn't add";
+          if (!res.ok) done.style.color = "#ff8a8a";
+          btn.replaceWith(done);
+          if (!res.ok) $("#getnote").hidden = false, $("#getnote").textContent = res.msg;
+        } catch (e) { btn.disabled = false; btn.textContent = "Download"; }
+      });
+      $("#results").append(row);
+    });
+  }
+
+  async function connect() {
+    pin = $("#pin").value.replace(/[^0-9a-z]/gi, "").toUpperCase();
+    if (pin.length !== 10) { $("#err").textContent = "The code has 10 letters and numbers."; return; }
+    try {
+      const r = await call("/check");
+      if (r.ok) { try { localStorage.setItem("chillarr-pin", pin); } catch (e) {} showRemote(await r.json().catch(() => null)); }
+      else showPair("That code isn't right. A new code on the TV disconnects old phones.");
+    } catch (e) { showPair("Chillarr isn't answering. Is it open, with the phone remote on?"); }
+  }
+  $("#go").addEventListener("click", connect);
+  $("#pin").addEventListener("keydown", (e) => { if (e.key === "Enter") connect(); });
+
+  async function send(action, text) {
+    if (navigator.vibrate) navigator.vibrate(8);
+    try {
+      const s = (await call("/cmd", { action, text })).status;
+      if (s === 401) { try { localStorage.removeItem("chillarr-pin"); } catch (e) {} showPair("The code changed. Type the new one."); }
+      else $("#state").textContent = s === 409 ? offline() : "";
+    } catch (e) { $("#state").textContent = LOST; }
+  }
+
+  // Hold an arrow to keep moving.
+  document.querySelectorAll("[data-a]").forEach((b) => {
+    const a = b.dataset.a;
+    const repeats = ["up", "down", "left", "right", "seek-back", "seek-fwd"].includes(a);
+    let t1, t2;
+    const stop = () => { clearTimeout(t1); clearInterval(t2); };
+    b.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      send(a);
+      if (repeats) t1 = setTimeout(() => { t2 = setInterval(() => send(a), 140); }, 420);
+    });
+    ["pointerup", "pointerleave", "pointercancel"].forEach((ev) => b.addEventListener(ev, stop));
+  });
+
+  let typeTimer;
+  $("#type").addEventListener("input", (e) => { clearTimeout(typeTimer); typeTimer = setTimeout(() => send("type", e.target.value), 250); });
+  $("#type").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.target.blur(); send("down"); } });
+
+  (async () => {
+    if (!pin) return showPair();
+    try {
+      const r = await call("/check");
+      if (r.ok) showRemote(await r.json().catch(() => null)); else showPair();
+    } catch (e) { showPair("Chillarr isn't answering. Is it open, with the phone remote on?"); }
+  })();
+</script>
+</body>
+</html>

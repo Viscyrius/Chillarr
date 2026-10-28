@@ -1,0 +1,187 @@
+﻿[
+    {
+        "id":  361,
+        "url":  "https://www.tvmaze.com/shows/361/saturday-night-live",
+        "name":  "Saturday Night Live",
+        "type":  "Variety",
+        "language":  "English",
+        "genres":  [
+                       "Comedy",
+                       "Music"
+                   ],
+        "status":  "Running",
+        "runtime":  93,
+        "averageRuntime":  90,
+        "premiered":  "1975-10-11",
+        "ended":  null,
+        "officialSite":  "http://www.nbc.com/saturday-night-live",
+        "schedule":  {
+                         "time":  "23:29",
+                         "days":  [
+                                      "Saturday"
+                                  ]
+                     },
+        "rating":  {
+                       "average":  6
+                   },
+        "weight":  100,
+        "network":  {
+                        "id":  1,
+                        "name":  "NBC",
+                        "country":  {
+                                        "name":  "United States",
+                                        "code":  "US",
+                                        "timezone":  "America/New_York"
+                                    },
+                        "officialSite":  "https://www.nbc.com/"
+                    },
+        "webChannel":  null,
+        "dvdCountry":  null,
+        "externals":  {
+                          "tvrage":  5098,
+                          "thetvdb":  76177,
+                          "imdb":  "tt0072562"
+                      },
+        "image":  {
+                      "medium":  "https://static.tvmaze.com/uploads/images/medium_portrait/589/1474771.jpg",
+                      "original":  "https://static.tvmaze.com/uploads/images/original_untouched/589/1474771.jpg"
+                  },
+        "summary":  "\u003cp\u003e\u003cb\u003eSaturday Night Live\u003c/b\u003e is an Emmy Award-winning late-night comedy showcase.\u003c/p\u003e\u003cp\u003eSince its inception in 1975, \"SNL\" has launched the careers of many of the brightest comedy performers of their generation. As The New York Times noted on the occasion of the show\u0027s Emmy-winning 25th Anniversary special in 1999, \"in defiance of both time and show business convention, \u0027SNL\u0027 is still the most pervasive influence on the art of comedy in contemporary culture.\" At the close of the century, \"Saturday Night Live\" placed seventh on Entertainment Weekly\u0027s list of the Top 100 Entertainers of the past fifty years.\u003c/p\u003e",
+        "updated":  1791718032,
+        "_links":  {
+                       "self":  {
+                                    "href":  "https://api.tvmaze.com/shows/361"
+                                },
+                       "previousepisode":  {
+                                               "href":  "https://api.tvmaze.com/episodes/3700599",
+                                               "name":  "Shane Gillis / Rosalía"
+                                           },
+                       "nextepisode":  {
+                                           "href":  "https://api.tvmaze.com/episodes/3700600",
+                                           "name":  "Inde Navarrette / Gracie Abrams"
+                                       }
+                   }
+    },
+    {
+        "id":  269,
+        "url":  "https://www.tvmaze.com/shows/269/peaky-blinders",
+        "name":  "Peaky Blinders",
+        "type":  "Scripted",
+        "language":  "English",
+        "genres":  [
+                       "Drama",
+                       "Crime",
+                       "History"
+                   ],
+        "status":  "Running",
+        "runtime":  null,
+        "averageRuntime":  61,
+        "premiered":  "2013-09-12",
+        "ended":  null,
+        "officialSite":  "http://www.bbc.co.uk/programmes/b045fz8r",
+        "schedule":  {
+                         "time":  "21:00",
+                         "days":  [
+                                      "Sunday"
+                                  ]
+                     },
+        "rating":  {
+                       "average":  8.5
+                   },
+        "weight":  100,
+        "network":  {
+                        "id":  12,
+                        "name":  "BBC One",
+                        "country":  {
+                                        "name":  "United Kingdom",
+                                        "code":  "GB",
+                                        "timezone":  "Europe/London"
+                                    },
+                        "officialSite":  "https://www.bbc.co.uk/bbcone"
+                    },
+        "webChannel":  null,
+        "dvdCountry":  null,
+        "externals":  {
+                          "tvrage":  37240,
+                          "thetvdb":  270915,
+                          "imdb":  "tt2442560"
+                      },
+        "image":  {
+                      "medium":  "https://static.tvmaze.com/uploads/images/medium_portrait/48/122213.jpg",
+                      "original":  "https://static.tvmaze.com/uploads/images/original_untouched/48/122213.jpg"
+                  },
+        "summary":  "\u003cp\u003eAn epic gangster drama set in the lawless streets of 1920s Birmingham.\u003c/p\u003e",
+        "updated":  1778696206,
+        "_links":  {
+                       "self":  {
+                                    "href":  "https://api.tvmaze.com/shows/269"
+                                },
+                       "previousepisode":  {
+                                               "href":  "https://api.tvmaze.com/episodes/3476341",
+                                               "name":  "Peaky Blinders: The Immortal Man"
+                                           }
+                   }
+    },
+    {
+        "id":  263,
+        "url":  "https://www.tvmaze.com/shows/263/last-week-tonight-with-john-oliver",
+        "name":  "Last Week Tonight with John Oliver",
+        "type":  "Talk Show",
+        "language":  "English",
+        "genres":  [
+                       "Comedy"
+                   ],
+        "status":  "Running",
+        "runtime":  30,
+        "averageRuntime":  31,
+        "premiered":  "2014-04-27",
+        "ended":  null,
+        "officialSite":  "http://www.hbo.com/last-week-tonight-with-john-oliver",
+        "schedule":  {
+                         "time":  "23:00",
+                         "days":  [
+                                      "Sunday"
+                                  ]
+                     },
+        "rating":  {
+                       "average":  7.8
+                   },
+        "weight":  100,
+        "network":  {
+                        "id":  8,
+                        "name":  "HBO",
+                        "country":  {
+                                        "name":  "United States",
+                                        "code":  "US",
+                                        "timezone":  "America/New_York"
+                                    },
+                        "officialSite":  "https://www.hbo.com/"
+                    },
+        "webChannel":  null,
+        "dvdCountry":  null,
+        "externals":  {
+                          "tvrage":  40882,
+                          "thetvdb":  278518,
+                          "imdb":  "tt3530232"
+                      },
+        "image":  {
+                      "medium":  "https://static.tvmaze.com/uploads/images/medium_portrait/615/1537812.jpg",
+                      "original":  "https://static.tvmaze.com/uploads/images/original_untouched/615/1537812.jpg"
+                  },
+        "summary":  "\u003cp\u003eOn \u003cb\u003eLast Week Tonight with John Oliver\u003c/b\u003e, John Oliver presents a satirical look at the week in news, politics and current events.\u003c/p\u003e",
+        "updated":  1791944791,
+        "_links":  {
+                       "self":  {
+                                    "href":  "https://api.tvmaze.com/shows/263"
+                                },
+                       "previousepisode":  {
+                                               "href":  "https://api.tvmaze.com/episodes/3784772",
+                                               "name":  "Generic Drugs"
+                                           },
+                       "nextepisode":  {
+                                           "href":  "https://api.tvmaze.com/episodes/3787791",
+                                           "name":  "Episode 27"
+                                       }
+                   }
+    }
+]

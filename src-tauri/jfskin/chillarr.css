@@ -1,0 +1,681 @@
+/* Chillarr's look for Jellyfin's own web app. Linked last in index.html by
+   jfweb.rs, so it follows the theme stylesheet. Jellyfin's pages are built
+   from its MUI theme (the --jf-* variables) plus older class-based CSS; most
+   of the look comes from redefining the variables, the rest from the classes.
+   A selector Jellyfin renames later only falls back to Jellyfin's own style. */
+
+@font-face {
+  font-family: "Outfit";
+  src: url("chillarr/Outfit.woff2") format("woff2");
+  font-weight: 300 800;
+  font-display: swap;
+}
+
+/* Doubled attribute: beats MUI's :root, [data-theme="dark"] rule whatever
+   theme the viewer picked. */
+html[data-theme][data-theme], :root {
+  color-scheme: dark;
+  --cx-bg: #0b0c10;
+  --cx-bg-2: #101217;
+  --cx-surface: #15171d;
+  --cx-raised: #1d2028;
+  --cx-line: rgba(255, 255, 255, 0.08);
+  --cx-line-2: rgba(255, 255, 255, 0.14);
+  --cx-text: #f3f3f5;
+  --cx-muted: #9b9ea8;
+  --cx-accent: #ff6a3d;
+  --cx-accent-hi: #ff7d55;
+  --cx-ink: #1a0b05;
+  --cx-display: "Outfit", "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+  --cx-text-font: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, Roboto, "Noto Sans", sans-serif;
+  --cx-ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --cx-radius: 8px;
+
+  --jf-palette-primary-main: #ff6a3d;
+  --jf-palette-primary-light: #ff8b66;
+  --jf-palette-primary-dark: #d9542b;
+  --jf-palette-primary-contrastText: #1a0b05;
+  --jf-palette-primary-mainChannel: 255 106 61;
+  --jf-palette-primary-lightChannel: 255 139 102;
+  --jf-palette-primary-darkChannel: 217 84 43;
+  --jf-palette-primary-contrastTextChannel: 26 11 5;
+  --jf-palette-secondary-main: #ff6a3d;
+  --jf-palette-secondary-light: #ff8b66;
+  --jf-palette-secondary-dark: #d9542b;
+  --jf-palette-secondary-contrastText: #1a0b05;
+  --jf-palette-secondary-mainChannel: 255 106 61;
+  --jf-palette-secondary-lightChannel: 255 139 102;
+  --jf-palette-secondary-darkChannel: 217 84 43;
+  --jf-palette-secondary-contrastTextChannel: 26 11 5;
+  --jf-palette-background-default: #0b0c10;
+  --jf-palette-background-paper: #15171d;
+  --jf-palette-background-defaultChannel: 11 12 16;
+  --jf-palette-background-paperChannel: 21 23 29;
+  --jf-palette-background-defaultImage: none;
+  --jf-palette-AppBar-defaultBg: #0b0c10;
+  --jf-palette-AppBar-darkBg: #0b0c10;
+  --jf-palette-SnackbarContent-bg: #1d2028;
+  --jf-palette-SnackbarContent-color: #f3f3f5;
+  --jf-palette-text-primary: #f3f3f5;
+  --jf-palette-text-secondary: #9b9ea8;
+  --jf-palette-divider: rgba(255, 255, 255, 0.08);
+  --jf-palette-action-hover: rgba(255, 255, 255, 0.07);
+  --jf-card-borderRadius: 8px;
+
+  --jf-font-family: var(--cx-text-font);
+  --jf-font-button: 600 0.9rem/1.75 var(--cx-display);
+  --jf-font-h1: 700 1.9rem/1.15 var(--cx-display);
+  --jf-font-h2: 600 1.5rem/1.2 var(--cx-display);
+  --jf-font-h3: 600 1.2rem/1.2 var(--cx-display);
+  --jf-font-h4: 700 2.1rem/1.2 var(--cx-display);
+  --jf-font-h5: 600 1.5rem/1.3 var(--cx-display);
+  --jf-font-h6: 600 1.2rem/1.5 var(--cx-display);
+  --jf-font-subtitle1: 400 1rem/1.6 var(--cx-text-font);
+  --jf-font-subtitle2: 600 0.875rem/1.5 var(--cx-text-font);
+  --jf-font-body1: 400 1rem/1.5 var(--cx-text-font);
+  --jf-font-body2: 400 0.875rem/1.45 var(--cx-text-font);
+  --jf-font-caption: 400 0.75rem/1.6 var(--cx-text-font);
+  --jf-font-overline: 600 0.75rem/2.4 var(--cx-text-font);
+}
+
+/* ---------- Base ---------- */
+html, body {
+  font-family: var(--cx-text-font);
+  -webkit-font-smoothing: antialiased;
+}
+html, .backgroundContainer, .mainDrawer, .drawer-open, .dialog, .nowPlayingPlaylist {
+  background-color: var(--cx-bg) !important;
+}
+body, .libraryPage, .page { color: var(--cx-text); }
+::selection { background: var(--cx-accent); color: var(--cx-ink); }
+* { scrollbar-color: var(--cx-raised) transparent; }
+h1, h2, h3, .pageTitle, .sectionTitle, .itemName, .formDialogHeaderTitle, .MuiTypography-h1, .MuiTypography-h2, .MuiTypography-h3, .MuiTypography-h4, .MuiTypography-h5, .MuiTypography-h6 {
+  font-family: var(--cx-display);
+  letter-spacing: -0.01em;
+}
+.button-link, .button-flat:hover { color: var(--cx-accent); }
+.itemTags .button-link, .itemExternalLinks .button-link, .itemDetailsGroup .button-link { color: var(--cx-text); }
+.itemTags .button-link:hover, .itemExternalLinks .button-link:hover, .itemDetailsGroup .button-link:hover { color: var(--cx-accent); }
+
+/* One focus ring everywhere: a TV remote has to see where it is. */
+:focus-visible { outline: 2px solid var(--cx-accent); outline-offset: 2px; }
+.emby-button.show-focus:focus, .emby-tab-button.show-focus:focus {
+  background: var(--cx-accent) !important;
+  color: var(--cx-ink) !important;
+}
+
+/* ---------- Header ---------- */
+header.MuiAppBar-root {
+  background: linear-gradient(180deg, rgba(11, 12, 16, 0.92), rgba(11, 12, 16, 0.55) 70%, rgba(11, 12, 16, 0)) !important;
+  backdrop-filter: none !important;
+  box-shadow: none !important;
+}
+header.MuiAppBar-root .MuiButton-root {
+  font: 500 15px var(--cx-display);
+  letter-spacing: 0.005em;
+  color: #d4d5da;
+  border-radius: var(--cx-radius);
+  padding-inline: 12px;
+}
+header.MuiAppBar-root .MuiButton-root:hover { color: #fff; background: rgba(255, 255, 255, 0.07); }
+header.MuiAppBar-root .MuiButton-root.active, header.MuiAppBar-root .MuiButton-root[aria-current="page"] { color: #fff; }
+header.MuiAppBar-root .MuiButton-root .MuiButton-startIcon img { border-radius: 8px; }
+header.MuiAppBar-root .MuiIconButton-root { color: #d4d5da; }
+header.MuiAppBar-root .MuiIconButton-root:hover { color: #fff; background: rgba(255, 255, 255, 0.07); }
+.MuiAvatar-root { background: var(--cx-raised) !important; color: var(--cx-text) !important; border: 1px solid var(--cx-line-2); }
+/* The classic header (older layout, TV layout). */
+.skinHeader-withBackground, .skinHeader-blurred {
+  background: linear-gradient(180deg, rgba(11, 12, 16, 0.94), rgba(11, 12, 16, 0.7)) !important;
+  backdrop-filter: blur(10px);
+}
+.pageTitle { font-weight: 600; }
+.headerTabs .emby-tab-button { font-family: var(--cx-display); font-weight: 500; }
+.emby-tab-button { color: var(--cx-muted); }
+.emby-tab-button:hover { color: var(--cx-text) !important; }
+.emby-tab-button-active, .emby-tab-button-active .emby-button-foreground { color: var(--cx-text) !important; }
+.emby-tab-button-active { box-shadow: inset 0 -2px 0 var(--cx-accent); }
+
+/* Side drawer */
+.mainDrawer { border-right: 1px solid var(--cx-line); }
+.navMenuOption { border-radius: var(--cx-radius); margin: 1px 8px; font-family: var(--cx-display); }
+.navMenuOption:hover { background: rgba(255, 255, 255, 0.06); }
+.navMenuOption-selected { background: rgba(255, 106, 61, 0.16) !important; color: var(--cx-text) !important; box-shadow: inset 3px 0 0 var(--cx-accent); }
+.MuiDrawer-paper { background: var(--cx-bg-2) !important; border-right: 1px solid var(--cx-line) !important; }
+.MuiListItemButton-root { border-radius: var(--cx-radius); }
+.MuiListItemButton-root.Mui-selected { background: rgba(255, 106, 61, 0.16) !important; }
+
+/* ---------- Section titles and rows ---------- */
+.sectionTitle, .sectionTitle-cards {
+  font: 600 1.3rem/1.2 var(--cx-display);
+  letter-spacing: -0.01em;
+  color: var(--cx-text);
+}
+.sectionTitle a, .sectionTitleTextButton { color: var(--cx-text) !important; }
+.sectionTitle a:hover, .sectionTitleTextButton:hover { color: var(--cx-accent) !important; }
+.emby-scrollbuttons-button { border-radius: 50%; color: var(--cx-text); }
+
+/* ---------- Cards ---------- */
+.cardBox, .cardScalable, .cardImageContainer, .cardContent, .cardPadder, .blurhash-canvas {
+  border-radius: var(--cx-radius);
+}
+.cardScalable { overflow: hidden; background: var(--cx-surface); }
+.cardBox:not(.visualCardBox) .cardPadder { background-color: var(--cx-surface) !important; }
+.cardPadder .cardImageIcon { color: var(--cx-raised) !important; }
+.defaultCardBackground, .defaultCardBackground0, .defaultCardBackground1, .defaultCardBackground2, .defaultCardBackground3, .defaultCardBackground4, .defaultCardBackground5 {
+  background: radial-gradient(120% 90% at 20% 0%, rgba(255, 106, 61, 0.22), transparent 60%), var(--cx-raised) !important;
+}
+.cardImageIcon { color: rgba(243, 243, 245, 0.55) !important; }
+.visualCardBox { background: var(--cx-surface) !important; border: 1px solid var(--cx-line); }
+.cardBox {
+  transition: transform 0.22s var(--cx-ease);
+}
+.cardScalable { box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35); transition: box-shadow 0.22s var(--cx-ease); }
+@media (hover: hover) and (pointer: fine) {
+  .card:hover .cardBox:not(.visualCardBox) { transform: translateY(-4px) scale(1.04); }
+  .card:hover .cardScalable { box-shadow: 0 18px 40px rgba(0, 0, 0, 0.55); }
+}
+/* Focus: an accent ring around the picture, for remotes and keyboards. */
+/* TV layout focuses the card itself; desktop and phone focus the link inside it. */
+.card:focus, .card :focus-visible { outline: none; }
+.card:focus .cardBox:not(.visualCardBox), .card:has(:focus-visible) .cardBox:not(.visualCardBox) { transform: translateY(-4px) scale(1.04); }
+.card:focus .cardBox:not(.visualCardBox) .cardScalable, .card:focus .cardBox.visualCardBox,
+.card:has(:focus-visible) .cardBox:not(.visualCardBox) .cardScalable, .card:has(:focus-visible) .cardBox.visualCardBox {
+  border-color: transparent !important;
+  box-shadow: 0 0 0 3px var(--cx-accent), 0 18px 40px rgba(0, 0, 0, 0.55) !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  .cardBox, .cardScalable { transition: none; }
+  .card:hover .cardBox:not(.visualCardBox), .card:focus .cardBox:not(.visualCardBox), .card:has(:focus-visible) .cardBox:not(.visualCardBox) { transform: none; }
+}
+.cardText { color: var(--cx-text); font-size: 0.9em; }
+.cardText-first { font-weight: 600; }
+.cardText-secondary, .cardText + .cardText { color: var(--cx-muted); }
+.cardOverlayContainer { border-radius: var(--cx-radius); }
+.cardOverlayButton:hover, .cardOverlayButton-hover:hover { color: var(--cx-accent) !important; }
+.itemProgressBar { background: rgba(255, 255, 255, 0.18) !important; height: 4px; }
+.itemProgressBarForeground { background-color: var(--cx-accent) !important; }
+/* The newer library grid draws progress with MUI, whose bar colour is resolved in JS. */
+.MuiLinearProgress-colorPrimary { background-color: rgba(255, 255, 255, 0.18) !important; }
+.MuiLinearProgress-barColorPrimary { background-color: var(--cx-accent) !important; }
+.countIndicator, .playedIndicator, .fullSyncIndicator, .mediaSourceIndicator {
+  background: var(--cx-accent) !important;
+  color: var(--cx-ink) !important;
+  font-weight: 700;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+/* ---------- Buttons ---------- */
+.emby-button, .raised, .button-submit, .button-cancel {
+  font-family: var(--cx-display);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  border-radius: var(--cx-radius);
+}
+.raised, .raised.emby-button {
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--cx-text);
+  box-shadow: none;
+}
+.raised:hover { background: rgba(255, 255, 255, 0.2); }
+.button-submit, .raised.button-submit, .emby-button.button-submit {
+  background: var(--cx-accent) !important;
+  color: var(--cx-ink) !important;
+}
+.button-submit:hover { background: var(--cx-accent-hi) !important; }
+.raised:focus, .fab:focus, .button-submit:focus { box-shadow: 0 0 0 2px var(--cx-bg), 0 0 0 4px var(--cx-accent); }
+.fab { background: var(--cx-accent); color: var(--cx-ink); }
+.paper-icon-button-light { border-radius: 50%; }
+@media (hover: hover) and (pointer: fine) {
+  .paper-icon-button-light:hover:not(:disabled) { background-color: rgba(255, 255, 255, 0.1) !important; color: #fff !important; }
+}
+.paper-icon-button-light:active:not(:disabled) { background-color: rgba(255, 106, 61, 0.2) !important; color: var(--cx-accent) !important; }
+.paper-icon-button-light.show-focus:focus { color: var(--cx-accent) !important; }
+.MuiButton-containedPrimary { color: var(--cx-ink) !important; }
+
+/* ---------- Inputs ---------- */
+.emby-input, .emby-textarea, .emby-select, .emby-select-withcolor {
+  background: var(--cx-surface) !important;
+  border: 1px solid var(--cx-line-2) !important;
+  border-radius: var(--cx-radius) !important;
+  color: var(--cx-text) !important;
+  font-family: var(--cx-text-font);
+}
+.emby-select-withcolor > option { background: var(--cx-surface); }
+.emby-input:focus, .emby-textarea:focus, .emby-select-withcolor:focus, .emby-select:focus {
+  border-color: var(--cx-accent) !important;
+  box-shadow: 0 0 0 3px rgba(255, 106, 61, 0.2);
+}
+.inputLabel, .selectLabel, .textareaLabel { color: var(--cx-muted); }
+.inputLabelFocused, .selectLabelFocused, .textareaLabelFocused { color: var(--cx-accent) !important; }
+.emby-checkbox:checked + span + .checkboxOutline { background-color: var(--cx-accent) !important; border-color: var(--cx-accent) !important; }
+.emby-checkbox:checked + span + .checkboxOutline .checkboxIcon-checked { color: var(--cx-ink) !important; }
+.checkboxOutline { border-radius: 5px; border-color: var(--cx-muted); }
+.fieldDescription { color: var(--cx-muted); }
+
+/* ---------- Detail page ---------- */
+/* Netflix-like: the backdrop runs under the title and fades into the page. */
+.layout-desktop .itemBackdrop { height: 56vh; }
+.itemBackdrop::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(0deg, var(--cx-bg) 0%, rgba(11, 12, 16, 0.6) 32%, rgba(11, 12, 16, 0) 62%),
+    linear-gradient(90deg, rgba(11, 12, 16, 0.75) 0%, rgba(11, 12, 16, 0) 55%);
+  pointer-events: none;
+}
+.detailRibbon {
+  background: transparent !important;
+  background-image: none !important;
+}
+.noBackdropTransparency .detailPageWrapperContainer { background-color: var(--cx-bg) !important; }
+.detailPagePrimaryContainer { background: transparent; }
+.itemName.infoText, .detailPagePrimaryContainer .itemName {
+  font: 700 clamp(2rem, 3.6vw, 3.2rem)/1.05 var(--cx-display);
+  letter-spacing: -0.025em;
+  color: #fff;
+  text-wrap: balance;
+}
+.parentName, .itemName.originalTitle { font-family: var(--cx-display); color: var(--cx-muted); }
+.itemMiscInfo { color: #d4d5da; font-size: 0.95rem; }
+.mediaInfoOfficialRating { border-radius: 4px; border-color: rgba(255, 255, 255, 0.35); }
+.tagline { font: 500 1.15rem/1.4 var(--cx-display); color: var(--cx-text); }
+.overview { color: #d4d5da; max-width: 72ch; line-height: 1.6; }
+.detailImageContainer .card .cardScalable { box-shadow: 0 30px 70px rgba(0, 0, 0, 0.6); }
+.detailButton {
+  border-radius: 50% !important;
+  background: rgba(255, 255, 255, 0.12) !important;
+  color: var(--cx-text) !important;
+  transition: background 0.2s, transform 0.15s var(--cx-ease);
+}
+.detailButton:hover { background: rgba(255, 255, 255, 0.22) !important; }
+.detailButton:active { transform: scale(0.95); }
+.detailButton:focus { box-shadow: 0 0 0 3px var(--cx-accent) !important; }
+.detailButton.btnPlay, .detailButton.btnResume {
+  background: #fff !important;
+  color: #0b0c10 !important;
+}
+.detailButton.btnPlay:hover, .detailButton.btnResume:hover { background: #fff !important; transform: scale(1.06); }
+.detailButton-icon { color: inherit !important; }
+.btnUserRating .favorite.ratingbutton-icon-withrating, .ratingbutton-icon-withrating { color: var(--cx-accent) !important; }
+.trackSelections .selectContainer .detailTrackSelect { background: var(--cx-surface) !important; }
+.itemDetailsGroup .label { color: var(--cx-muted); }
+.itemDetailsGroup .content { color: var(--cx-text); }
+.listItem, .paperList { border-radius: var(--cx-radius); }
+.paperList { background: var(--cx-surface) !important; }
+.listItem:hover { background: rgba(255, 255, 255, 0.04); }
+.listItem:focus { background: rgba(255, 106, 61, 0.14); }
+.childrenItemsContainer .listItem-content { border-radius: var(--cx-radius); }
+
+/* ---------- Search ---------- */
+.searchFields .emby-input, #searchPage .emby-input {
+  height: 52px;
+  font-size: 1.15rem;
+  padding-left: 18px;
+  border-radius: 26px !important;
+}
+.searchFieldsInner .material-icons, .searchfields-icon { color: var(--cx-muted); }
+
+/* ---------- Dialogs, menus, toasts ---------- */
+.dialog, .actionSheet, .MuiPaper-root.MuiMenu-paper, .MuiPaper-root.MuiPopover-paper, .MuiDialog-paper {
+  background: var(--cx-surface) !important;
+  background-image: none !important;
+  color: var(--cx-text);
+  border: 1px solid var(--cx-line-2);
+  border-radius: 14px !important;
+  box-shadow: 0 40px 120px rgba(0, 0, 0, 0.6) !important;
+}
+.dialog.dialog-fullscreen, .dialog-fullscreen-lowres { border-radius: 0 !important; border: 0; }
+.formDialogHeader:not(.formDialogHeader-clear), .formDialogFooter:not(.formDialogFooter-clear), .collapseContent {
+  background-color: var(--cx-surface) !important;
+}
+.formDialogHeader:not(.formDialogHeader-clear) { border-bottom: 1px solid var(--cx-line); }
+.actionSheetMenuItem { border-radius: var(--cx-radius); }
+.actionSheetMenuItem:hover, .actionSheetMenuItem:focus { background: rgba(255, 255, 255, 0.07) !important; }
+.MuiMenuItem-root { border-radius: 6px; margin-inline: 6px; }
+.MuiMenuItem-root:hover { background: rgba(255, 255, 255, 0.07) !important; }
+.toast { background: var(--cx-raised) !important; color: var(--cx-text) !important; border-radius: 10px; border: 1px solid var(--cx-line-2); }
+.mdl-spinner__layer, .progressring-spiner { border-color: var(--cx-accent) !important; }
+.docspinner .mdl-spinner__circle { border-color: var(--cx-accent) !important; }
+.alphaPickerButton { font-family: var(--cx-display); border-radius: 6px; }
+.alphaPickerButton-selected, .alphaPickerButton-tv:focus { background: var(--cx-accent) !important; color: var(--cx-ink) !important; }
+
+/* ---------- Sign in and server pages ---------- */
+/* One stage for every page before you're in: a warm glow from the top
+   corner, Chillarr's mark faint behind it, and no header band. */
+/* The glow sits on the page's backdrop, which starts above the header too. */
+:is(#loginPage, #selectServerPage, #forgotPasswordPage, #forgotPasswordPinPage, #addServerPage, .wizardPage) { background: transparent !important; min-height: 100vh; }
+body:has(:is(#loginPage, #selectServerPage, #forgotPasswordPage, #forgotPasswordPinPage, #addServerPage, .wizardPage):not(.hide)) .backgroundContainer {
+  background:
+    radial-gradient(900px 520px at 12% -8%, rgba(255, 106, 61, 0.22), transparent 62%),
+    radial-gradient(700px 480px at 100% 110%, rgba(255, 106, 61, 0.1), transparent 60%),
+    var(--cx-bg) !important;
+}
+#loginPage::before, #selectServerPage::before {
+  content: "";
+  position: fixed;
+  right: -8vmin;
+  bottom: -10vmin;
+  width: 62vmin;
+  height: 62vmin;
+  background: url("chillarr/logo.svg") center / contain no-repeat;
+  opacity: 0.018;
+  filter: grayscale(1);
+  pointer-events: none;
+}
+body:has(:is(#loginPage, #selectServerPage, #forgotPasswordPage, #forgotPasswordPinPage, #addServerPage, .wizardPage):not(.hide)) :is(.skinHeader, header.MuiAppBar-root) {
+  background: transparent !important;
+  backdrop-filter: none !important;
+}
+#loginPage > .padded-left.padded-right {
+  max-width: 440px;
+  margin: 0 auto;
+  min-height: calc(100vh - 80px);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  animation: cx-rise 0.6s var(--cx-ease) both;
+}
+#loginPage .margin-auto-x, #loginPage .readOnlyContent { max-width: 100% !important; }
+#loginPage h1, #loginPage .sectionTitle, #selectServerPage .sectionTitle, #forgotPasswordPage .sectionTitle, .wizardPage .sectionTitle {
+  font: 700 2rem/1.1 var(--cx-display);
+  letter-spacing: -0.02em;
+  color: var(--cx-text);
+}
+#loginPage .manualLoginForm::before {
+  content: "";
+  display: block;
+  width: 60px;
+  height: 60px;
+  margin: 0 auto 16px;
+  background: url("chillarr/logo.svg") center / contain no-repeat;
+  filter: drop-shadow(0 8px 24px rgba(255, 106, 61, 0.35));
+}
+#loginPage .manualLoginForm {
+  box-sizing: border-box;
+  width: 100%;
+  background: rgba(21, 23, 29, 0.78);
+  backdrop-filter: blur(18px) saturate(1.2);
+  border: 1px solid var(--cx-line-2);
+  border-radius: 16px;
+  padding: 30px 28px 24px;
+  box-shadow: 0 40px 120px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+#loginPage .manualLoginForm .sectionTitle { margin: 0 0 10px; }
+#loginPage .inputContainer { margin-bottom: 1.3em; }
+#loginPage .emby-input { height: 46px; font-size: 1rem; padding-inline: 14px; }
+#loginPage .button-submit {
+  height: 48px;
+  font-size: 1rem;
+  margin-top: 6px;
+  box-shadow: 0 10px 30px rgba(255, 106, 61, 0.28);
+  transition: transform 0.15s var(--cx-ease), background 0.2s;
+}
+#loginPage .button-submit:hover { transform: translateY(-1px); }
+#loginPage .button-submit:active { transform: none; }
+#loginPage .manualLoginForm .btnCancel { background: transparent !important; border: 1px solid var(--cx-line-2); }
+#loginPage .manualLoginForm .btnCancel:hover { border-color: var(--cx-muted); background: rgba(255, 255, 255, 0.04) !important; }
+
+/* The other ways in sit under the form as quiet links, not a stack of slabs. */
+#loginPage .readOnlyContent {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px 8px;
+  margin-top: 18px !important;
+}
+#loginPage .readOnlyContent > .emby-button.raised {
+  width: auto;
+  flex: 0 0 auto;
+  margin: 0 !important;
+  padding: 8px 14px;
+  background: transparent !important;
+  border: 0;
+  color: var(--cx-muted);
+  font: 500 0.92rem var(--cx-display);
+  box-shadow: none;
+}
+#loginPage .readOnlyContent > .emby-button.raised:hover,
+#loginPage .readOnlyContent > .emby-button.raised:focus-visible { color: var(--cx-text); background: rgba(255, 255, 255, 0.06) !important; }
+#loginPage .loginDisclaimerContainer { flex-basis: 100%; }
+#loginPage .disclaimer, #loginPage .loginDisclaimer { color: var(--cx-muted); font-size: 0.88rem; line-height: 1.55; max-width: 42ch; margin: 18px auto 0; text-align: center; }
+
+/* Who's watching: jellyfin-web's user picker drawn like Chillarr's profiles. */
+#loginPage .visualLoginForm h1 {
+  font-size: 0 !important;
+  margin: 0 0 clamp(24px, 4vh, 40px) !important;
+  text-align: center;
+}
+#loginPage .visualLoginForm h1::after {
+  content: "Who's watching?";
+  font: 700 clamp(1.8rem, 4vw, 3rem)/1.1 var(--cx-display);
+  letter-spacing: -0.02em;
+  color: var(--cx-text);
+}
+#loginPage:has(.visualLoginForm:not(.hide)) > .padded-left.padded-right { max-width: 1100px; }
+#divUsers { display: flex; flex-wrap: wrap; gap: clamp(16px, 3vw, 32px); justify-content: center; }
+#divUsers .card {
+  width: clamp(104px, 12vw, 150px) !important;
+  margin: 0 !important;
+  padding: 4px;
+  background: none;
+  border: 0;
+  animation: cx-pop 0.45s var(--cx-ease) both;
+}
+#divUsers .card:nth-child(2) { animation-delay: 40ms; }
+#divUsers .card:nth-child(3) { animation-delay: 80ms; }
+#divUsers .card:nth-child(n+4) { animation-delay: 120ms; }
+#divUsers .cardBox { margin: 0 !important; background: none !important; transform: none !important; }
+#divUsers .cardScalable {
+  border-radius: 16px;
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.45);
+  background: linear-gradient(145deg, #ff8b66, #d9542b) !important;
+  transition: transform 0.3s cubic-bezier(0.34, 1.4, 0.64, 1), box-shadow 0.3s;
+}
+#divUsers .cardPadder { background: transparent !important; }
+#divUsers .cardImageContainer { border-radius: 16px; background-color: transparent !important; }
+#divUsers .cardImageIcon { color: rgba(255, 255, 255, 0.92) !important; }
+#divUsers .cardText {
+  margin-top: 12px;
+  font: 500 1rem var(--cx-display);
+  color: var(--cx-muted);
+  transition: color 0.2s;
+}
+#divUsers .card:hover .cardScalable, #divUsers .card:focus .cardScalable, #divUsers .card:focus-visible .cardScalable {
+  transform: scale(1.06);
+  box-shadow: 0 0 0 3px #fff, 0 18px 44px rgba(0, 0, 0, 0.55) !important;
+}
+#divUsers .card:hover .cardText, #divUsers .card:focus .cardText, #divUsers .card:focus-visible .cardText { color: var(--cx-text); }
+#divUsers .card:focus, #divUsers .card:focus-visible { outline: none; }
+
+/* Servers to pick from, and the pages around signing in. */
+#selectServerPage .card .cardScalable { border-radius: 14px; }
+#selectServerPage .cardText { font-family: var(--cx-display); }
+#forgotPasswordPage .readOnlyContent, #forgotPasswordPinPage .readOnlyContent, .wizardPage .wizardContent {
+  max-width: 520px;
+  margin: 8vh auto 0;
+  background: rgba(21, 23, 29, 0.78);
+  border: 1px solid var(--cx-line-2);
+  border-radius: 16px;
+  padding: 28px;
+  box-shadow: 0 40px 120px rgba(0, 0, 0, 0.5);
+}
+
+@keyframes cx-rise { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
+@keyframes cx-pop { from { opacity: 0; transform: translateY(12px) scale(0.94); } to { opacity: 1; transform: none; } }
+
+/* ---------- Your settings ---------- */
+/* Built like Chillarr's Settings: one column, grouped into rounded boxes. */
+#myPreferencesMenuPage > .padded-left, .userPreferencesPage .settingsContainer, .userPreferencesPage .readOnlyContent {
+  max-width: 780px !important;
+  margin-inline: auto !important;
+}
+.userPreferencesPage .verticalSection { margin-bottom: 30px; }
+.userPreferencesPage .sectionTitle {
+  font: 600 1.2rem/1.2 var(--cx-display) !important;
+  color: var(--cx-text);
+  margin: 28px 0 12px;
+}
+#myPreferencesMenuPage .headerUsername { font: 700 2rem/1.1 var(--cx-display) !important; letter-spacing: -0.02em; margin: 8px 0 18px; }
+/* The menu: one box per group, a row per page, an accent tile per icon. */
+#myPreferencesMenuPage .verticalSection {
+  background: var(--cx-surface);
+  border: 1px solid var(--cx-line);
+  border-radius: 14px;
+  padding: 6px;
+  margin-bottom: 18px;
+}
+#myPreferencesMenuPage .verticalSection .sectionTitle {
+  margin: 12px 12px 6px;
+  font: 600 0.78rem var(--cx-display) !important;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--cx-muted);
+}
+#myPreferencesMenuPage .listItem {
+  display: flex;
+  align-items: center;
+  border: 0 !important;
+  border-radius: 10px;
+  padding: 10px 12px !important;
+  margin: 0;
+  transition: background 0.15s;
+}
+#myPreferencesMenuPage .listItem:hover, #myPreferencesMenuPage .listItem:focus-visible { background: rgba(255, 255, 255, 0.05); }
+#myPreferencesMenuPage .listItemIcon {
+  width: 38px;
+  height: 38px;
+  display: inline-grid !important;
+  place-items: center;
+  padding: 0 !important;
+  border-radius: 10px;
+  font-size: 20px;
+  background: rgba(255, 106, 61, 0.14) !important;
+  color: var(--cx-accent) !important;
+}
+#myPreferencesMenuPage .listItemBodyText { font: 500 1rem var(--cx-display); color: var(--cx-text); }
+#myPreferencesMenuPage .listItem::after {
+  content: "";
+  flex: none;
+  width: 7px;
+  height: 7px;
+  margin: 0 6px 0 auto;
+  border-right: 2px solid var(--cx-muted);
+  border-top: 2px solid var(--cx-muted);
+  transform: rotate(45deg);
+  opacity: 0.7;
+}
+/* Forms: labels above, hints quiet, a full-colour save at the end. */
+.userPreferencesPage .inputContainer, .userPreferencesPage .selectContainer, .userPreferencesPage .checkboxContainer { margin-bottom: 1.3em; }
+.userPreferencesPage .checkboxContainer-withDescription {
+  background: var(--cx-surface);
+  border: 1px solid var(--cx-line);
+  border-radius: 12px;
+  padding: 14px 16px;
+}
+.userPreferencesPage .button-submit, .content-primary .button-submit { min-height: 46px; padding-inline: 28px; }
+.mdl-switch__track { background: rgba(255, 255, 255, 0.22) !important; }
+.mdl-switch.is-checked .mdl-switch__track { background: rgba(255, 106, 61, 0.55) !important; }
+.mdl-switch.is-checked .mdl-switch__thumb { background: var(--cx-accent) !important; }
+
+/* ---------- Video player ---------- */
+.videoOsdBottom {
+  background: linear-gradient(0deg, rgba(11, 12, 16, 0.92) 0%, rgba(11, 12, 16, 0.55) 55%, rgba(11, 12, 16, 0)) !important;
+}
+.skinHeader.osdHeader, .osdHeader {
+  background: linear-gradient(180deg, rgba(11, 12, 16, 0.8), rgba(11, 12, 16, 0)) !important;
+}
+.osdTitle, .osdMediaInfo .mediaInfoText, .videoOsdBottom .osdTextContainer { font-family: var(--cx-display); }
+.osdTitle { font-weight: 600; }
+.mdl-slider-background-lower, .sliderBubble { background: var(--cx-accent) !important; }
+.mdl-slider-background-upper { background: rgba(255, 255, 255, 0.28) !important; }
+.mdl-slider::-webkit-slider-thumb { background: var(--cx-accent) !important; }
+.mdl-slider::-moz-range-thumb { background: var(--cx-accent) !important; }
+.sliderBubble { color: var(--cx-ink); border-radius: 6px; }
+.videoOsdBottom .paper-icon-button-light, .osdControls .paper-icon-button-light { color: #fff; }
+.videoOsdBottom .btnPause { background: rgba(255, 255, 255, 0.14); }
+.upNextDialog { background: rgba(21, 23, 29, 0.94) !important; border-radius: 14px; border: 1px solid var(--cx-line-2); }
+.upNextDialog-countdownText { color: var(--cx-accent) !important; }
+.buttonActive { color: var(--cx-accent) !important; }
+
+/* ---------- Admin dashboard ---------- */
+/* Mostly MUI, which reads the --jf-* theme; the rest is surfaces and type. */
+html[data-theme][data-theme], :root {
+  --jf-palette-TableCell-border: rgba(255, 255, 255, 0.07);
+  --jf-palette-Tooltip-bg: #1d2028;
+  --jf-palette-Avatar-defaultBg: #1d2028;
+  --jf-palette-FilledInput-bg: rgba(255, 255, 255, 0.05);
+  --jf-palette-FilledInput-hoverBg: rgba(255, 255, 255, 0.08);
+  --jf-palette-Chip-defaultBorder: rgba(255, 255, 255, 0.14);
+  --jf-palette-success-main: #3ecf8e;
+  --jf-palette-warning-main: #f0b44a;
+  --jf-palette-error-main: #f0616d;
+  --jf-shape-borderRadius: 8px;
+}
+/* MUI lightens raised paper in dark mode; Chillarr's surfaces are flat. */
+.MuiPaper-root { background-image: none !important; }
+.MuiCard-root, .MuiPaper-outlined {
+  background: var(--cx-surface) !important;
+  border: 1px solid var(--cx-line) !important;
+  border-radius: 14px !important;
+}
+.MuiTableHead-root .MuiTableCell-root {
+  font: 600 0.78rem var(--cx-display);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--cx-muted);
+  background: var(--cx-bg-2) !important;
+}
+.MuiTableRow-root:hover > .MuiTableCell-body { background: rgba(255, 255, 255, 0.03); }
+.MuiOutlinedInput-root { border-radius: var(--cx-radius) !important; background: var(--cx-surface); }
+.MuiOutlinedInput-notchedOutline { border-color: var(--cx-line-2) !important; }
+.MuiOutlinedInput-root.Mui-focused .MuiOutlinedInput-notchedOutline { border-color: var(--cx-accent) !important; box-shadow: 0 0 0 3px rgba(255, 106, 61, 0.2); }
+.MuiInputLabel-root.Mui-focused, .MuiFormLabel-root.Mui-focused { color: var(--cx-accent) !important; }
+.MuiButton-root { font-family: var(--cx-display) !important; text-transform: none !important; font-weight: 600 !important; border-radius: var(--cx-radius) !important; letter-spacing: 0.01em !important; }
+.MuiButton-containedPrimary { background: var(--cx-accent) !important; box-shadow: 0 8px 24px rgba(255, 106, 61, 0.22) !important; }
+.MuiButton-containedPrimary:hover { background: var(--cx-accent-hi) !important; }
+.MuiButton-outlined { border-color: var(--cx-line-2) !important; }
+.MuiChip-root { border-radius: 6px !important; font-family: var(--cx-display); }
+.MuiTabs-indicator { background-color: var(--cx-accent) !important; border-radius: 2px; }
+.MuiTab-root { font-family: var(--cx-display) !important; text-transform: none !important; font-weight: 500 !important; }
+.MuiTab-root.Mui-selected { color: var(--cx-text) !important; }
+.MuiAlert-root { border-radius: 12px !important; }
+.MuiTooltip-tooltip { border: 1px solid var(--cx-line-2); border-radius: 8px !important; }
+.MuiListSubheader-root {
+  background: transparent !important;
+  font: 600 0.75rem var(--cx-display) !important;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--cx-muted) !important;
+}
+.MuiDrawer-paper .MuiListItemButton-root { margin: 1px 8px; }
+.MuiDrawer-paper .MuiListItemIcon-root { color: var(--cx-muted); min-width: 40px; }
+.MuiDrawer-paper .Mui-selected .MuiListItemIcon-root { color: var(--cx-accent); }
+.dashboardDocument .content-primary, .dashboardDocument .readOnlyContent { color: var(--cx-text); }
+.dashboardDocument .sectionTitle { font: 600 1.25rem var(--cx-display); }
+.dashboardDocument .paperList, .dashboardDocument .listItem-border { border-color: var(--cx-line) !important; }
+.dashboardDocument .card .cardScalable { border-radius: 12px; }
+.sessionCardFooter, .sessionCardButtons { background: transparent; }
+.backdropCard .cardScalable { box-shadow: none; }
+
+/* ---------- Scrollbars ---------- */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--cx-raised); border-radius: 10px; border: 2px solid var(--cx-bg); }
+::-webkit-scrollbar-thumb:hover { background: #2a2d36; }
+
+@media (prefers-reduced-motion: reduce) {
+  #loginPage > .padded-left.padded-right, #divUsers .card { animation: none; }
+  #divUsers .cardScalable, #loginPage .button-submit { transition: none; }
+}
+
+/* ---------- Phone width ---------- */
+@media (max-width: 600px) {
+  .itemName.infoText, .detailPagePrimaryContainer .itemName { font-size: 1.9rem; }
+  .sectionTitle, .sectionTitle-cards { font-size: 1.12rem; }
+  .card:hover .cardBox:not(.visualCardBox) { transform: none; }
+  #loginPage .manualLoginForm { padding: 22px 18px 18px; }
+  #loginPage > .padded-left.padded-right { min-height: 0; padding-top: 10vh; }
+  #myPreferencesMenuPage .headerUsername { font-size: 1.6rem !important; }
+  header.MuiAppBar-root .MuiButton-root { padding-inline: 8px; }
+}

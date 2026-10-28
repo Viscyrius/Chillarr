@@ -1,0 +1,26 @@
+[
+  {
+    "source": "DownloadClientStatusCheck",
+    "type": "error",
+    "message": "All download clients are unavailable due to failures",
+    "wikiUrl": "https://wiki.servarr.com/radarr/system#download-clients-are-unavailable-due-to-failures"
+  },
+  {
+    "source": "DownloadClientCheck",
+    "type": "error",
+    "message": "Unable to communicate with qBittorrent. No connection could be made because the target machine actively refused it. (localhost:6767)",
+    "wikiUrl": "https://wiki.servarr.com/radarr/system#unable-to-communicate-with-download-client"
+  },
+  {
+    "source": "AllowedHostsCheck",
+    "type": "warning",
+    "message": "Allowed Hosts is not configured, Radarr will accept requests for any hostname. Set Allowed Hosts in General settings to restrict which hostnames can be used to reach Radarr.",
+    "wikiUrl": "https://wiki.servarr.com/radarr/system#allowed-hosts-not-configured"
+  },
+  {
+    "source": "IndexerLongTermStatusCheck",
+    "type": "warning",
+    "message": "Indexers unavailable due to failures for more than 6 hours: 1337x (Prowlarr)",
+    "wikiUrl": "https://wiki.servarr.com/radarr/system#indexers-are-unavailable-due-to-failures"
+  }
+]

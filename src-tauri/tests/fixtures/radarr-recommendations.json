@@ -1,0 +1,182 @@
+﻿[
+    {
+        "title":  "War of the Worlds",
+        "sortTitle":  "war of the worlds",
+        "originalLanguage":  {
+                                 "id":  1,
+                                 "name":  "English"
+                             },
+        "status":  "released",
+        "overview":  "Ray Ferrier is a divorced dockworker and less-than-perfect father. Soon after his ex-wife and her new husband drop off his teenage son and young daughter for a rare weekend visit, a strange and powerful lightning storm touches down.",
+        "inCinemas":  "2005-06-28T00:00:00Z",
+        "physicalRelease":  "2005-10-21T00:00:00Z",
+        "digitalRelease":  "2006-01-06T00:00:00Z",
+        "images":  [
+                       {
+                           "coverType":  "poster",
+                           "remoteUrl":  "https://image.tmdb.org/t/p/original/6Biy7R9LfumYshur3YKhpj56MpB.jpg"
+                       },
+                       {
+                           "coverType":  "fanart",
+                           "remoteUrl":  "https://image.tmdb.org/t/p/original/bInicBgSHfQiWLbnRT5jxw9Grvm.jpg"
+                       }
+                   ],
+        "website":  "https://amblin.com/movie/war-of-the-worlds/",
+        "remotePoster":  "https://image.tmdb.org/t/p/original/6Biy7R9LfumYshur3YKhpj56MpB.jpg",
+        "year":  2005,
+        "youTubeTrailerId":  "TLnQXsKn5-E",
+        "studio":  "Paramount Pictures",
+        "runtime":  117,
+        "imdbId":  "tt0407304",
+        "tmdbId":  74,
+        "folder":  "War of the Worlds (2005)",
+        "certification":  "PG-13",
+        "popularity":  22.5467,
+        "genres":  [
+                       "Adventure",
+                       "Thriller",
+                       "Science Fiction"
+                   ],
+        "ratings":  {
+                        "imdb":  {
+                                     "votes":  515393,
+                                     "value":  6.6,
+                                     "type":  "user"
+                                 },
+                        "tmdb":  {
+                                     "votes":  9618,
+                                     "value":  6.578,
+                                     "type":  "user"
+                                 },
+                        "metacritic":  {
+                                           "votes":  0,
+                                           "value":  73,
+                                           "type":  "user"
+                                       },
+                        "rottenTomatoes":  {
+                                               "votes":  0,
+                                               "value":  76,
+                                               "type":  "user"
+                                           },
+                        "trakt":  {
+                                      "votes":  12429,
+                                      "value":  6.74624,
+                                      "type":  "user"
+                                  }
+                    },
+        "collection":  {
+                           "tmdbId":  0,
+                           "monitored":  false,
+                           "qualityProfileId":  0,
+                           "searchOnAdd":  false,
+                           "minimumAvailability":  "tba",
+                           "images":  [
+
+                                      ],
+                           "added":  "0001-01-01T00:00:00Z",
+                           "tags":  [
+
+                                    ],
+                           "id":  0
+                       },
+        "isExcluded":  false,
+        "isExisting":  false,
+        "isTrending":  false,
+        "isPopular":  false,
+        "isRecommendation":  true,
+        "lists":  [
+
+                  ]
+    },
+    {
+        "title":  "Predator",
+        "sortTitle":  "predator",
+        "originalLanguage":  {
+                                 "id":  1,
+                                 "name":  "English"
+                             },
+        "status":  "released",
+        "overview":  "A team of elite commandos on a secret mission in a Central American jungle come to find themselves hunted by an extraterrestrial warrior.",
+        "inCinemas":  "1987-06-12T00:00:00Z",
+        "physicalRelease":  "2000-01-01T00:00:00Z",
+        "digitalRelease":  "2002-02-05T00:00:00Z",
+        "images":  [
+                       {
+                           "coverType":  "poster",
+                           "remoteUrl":  "https://image.tmdb.org/t/p/original/k3mW4qfJo6SKqe6laRyNGnbB9n5.jpg"
+                       },
+                       {
+                           "coverType":  "fanart",
+                           "remoteUrl":  "https://image.tmdb.org/t/p/original/YL3GPOiDcNraIJOVDCZsoOBoDy.jpg"
+                       }
+                   ],
+        "website":  "https://www.20thcenturystudios.com/movies/predator",
+        "remotePoster":  "https://image.tmdb.org/t/p/original/k3mW4qfJo6SKqe6laRyNGnbB9n5.jpg",
+        "year":  1987,
+        "youTubeTrailerId":  "XY6d4LGd8YM",
+        "studio":  "20th Century Fox",
+        "runtime":  107,
+        "imdbId":  "tt0093773",
+        "tmdbId":  106,
+        "folder":  "Predator (1987)",
+        "certification":  "R",
+        "popularity":  19.643,
+        "genres":  [
+                       "Science Fiction",
+                       "Action",
+                       "Adventure",
+                       "Thriller"
+                   ],
+        "ratings":  {
+                        "imdb":  {
+                                     "votes":  507673,
+                                     "value":  7.8,
+                                     "type":  "user"
+                                 },
+                        "tmdb":  {
+                                     "votes":  9583,
+                                     "value":  7.6,
+                                     "type":  "user"
+                                 },
+                        "metacritic":  {
+                                           "votes":  0,
+                                           "value":  47,
+                                           "type":  "user"
+                                       },
+                        "rottenTomatoes":  {
+                                               "votes":  0,
+                                               "value":  65,
+                                               "type":  "user"
+                                           },
+                        "trakt":  {
+                                      "votes":  15549,
+                                      "value":  7.78359,
+                                      "type":  "user"
+                                  }
+                    },
+        "collection":  {
+                           "title":  "Predator Collection",
+                           "tmdbId":  399,
+                           "monitored":  false,
+                           "qualityProfileId":  0,
+                           "searchOnAdd":  false,
+                           "minimumAvailability":  "tba",
+                           "images":  [
+
+                                      ],
+                           "added":  "0001-01-01T00:00:00Z",
+                           "tags":  [
+
+                                    ],
+                           "id":  0
+                       },
+        "isExcluded":  false,
+        "isExisting":  false,
+        "isTrending":  false,
+        "isPopular":  false,
+        "isRecommendation":  true,
+        "lists":  [
+
+                  ]
+    }
+]

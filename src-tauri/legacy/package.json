@@ -1,0 +1,8 @@
+{
+  "name": "chillarr-legacy-build",
+  "private": true,
+  "description": "Pinned esbuild for build.rs: the copy of Chillarr's pages for older TV browsers.",
+  "devDependencies": {
+    "esbuild": "0.24.0"
+  }
+}

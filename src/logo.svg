@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1a1d24"/>
+      <stop offset="1" stop-color="#0c0e12"/>
+    </linearGradient>
+    <linearGradient id="coral" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ff7a4a"/>
+      <stop offset="1" stop-color="#f2552c"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffd25a"/>
+      <stop offset="1" stop-color="#ffb224"/>
+    </linearGradient>
+  </defs>
+  <rect x="40" y="40" width="944" height="944" rx="216" fill="url(#bg)"/>
+  <!-- Outer swoosh: from lower left, over the top, ending right of centre -->
+  <path d="M 287 640 A 262 262 0 1 1 748 420" fill="none" stroke="url(#coral)" stroke-width="136" stroke-linecap="round"/>
+  <!-- Gap that separates the two halves -->
+  <path d="M 336 470 A 198 198 0 1 0 712 600" fill="none" stroke="#15181e" stroke-width="176" stroke-linecap="round"/>
+  <!-- Inner swoosh: from the left, under the bottom, ending right of centre -->
+  <path d="M 336 470 A 198 198 0 1 0 712 600" fill="none" stroke="url(#gold)" stroke-width="128" stroke-linecap="round"/>
+  <!-- Play -->
+  <path d="M 478 448 L 478 600 L 604 524 Z" fill="#ffffff" stroke="#ffffff" stroke-width="34" stroke-linejoin="round"/>
+</svg>

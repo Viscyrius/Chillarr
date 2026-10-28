@@ -1,0 +1,1459 @@
+{
+  "TmdbId": 671,
+  "ImdbId": "tt0241527",
+  "Title": "Harry Potter and the Philosopher\u0027s Stone",
+  "Overview": "Harry Potter has lived under the stairs at his aunt and uncle\u0027s house his whole life. But on his 11th birthday, he learns he\u0027s a powerful wizard\u2014with a place waiting for him at the Hogwarts School of Witchcraft and Wizardry. As he learns to harness his newfound powers with the help of the school\u0027s kindly headmaster, Harry uncovers the truth about his parents\u0027 deaths\u2014and about the villain who\u0027s to blame.",
+  "OriginalTitle": "Harry Potter and the Philosopher\u0027s Stone",
+  "OriginalLanguage": "en",
+  "TitleSlug": "671",
+  "Runtime": 152,
+  "Popularity": 64.7501,
+  "Year": 2001,
+  "Premier": "2001-11-04T00:00:00Z",
+  "InCinema": "2001-11-16T00:00:00Z",
+  "PhysicalRelease": "2002-04-29T00:00:00Z",
+  "DigitalRelease": "2004-11-25T00:00:00Z",
+  "Images": [
+    {
+      "CoverType": "Poster",
+      "Url": "https://image.tmdb.org/t/p/original/wuMc08IPKEatf9rnMNXvIDxqP4W.jpg"
+    },
+    {
+      "CoverType": "Fanart",
+      "Url": "https://image.tmdb.org/t/p/original/hziiv14OpD73u9gAak4XDDfBKa2.jpg"
+    }
+  ],
+  "Ratings": [
+    {
+      "Count": 30385,
+      "Value": 7.904,
+      "Origin": "Tmdb",
+      "Type": "User"
+    }
+  ],
+  "MovieRatings": {
+    "Tmdb": {
+      "Count": 30385,
+      "Value": 7.904,
+      "Type": "User"
+    },
+    "Imdb": {
+      "Count": 969276,
+      "Value": 7.7,
+      "Type": "User"
+    },
+    "Metacritic": {
+      "Count": 0,
+      "Value": 65,
+      "Type": "User"
+    },
+    "RottenTomatoes": {
+      "Count": 0,
+      "Value": 80,
+      "Type": "User"
+    },
+    "Trakt": {
+      "Count": 45740,
+      "Value": 8.14541,
+      "Type": "User"
+    }
+  },
+  "Genres": [
+    "Adventure",
+    "Fantasy"
+  ],
+  "Keywords": [
+    "based on novel or book",
+    "based on young adult novel",
+    "boarding school",
+    "bullying",
+    "child hero",
+    "children\u0027s adventure",
+    "chosen one",
+    "fantasy world",
+    "found family",
+    "friendship",
+    "ghost",
+    "london, england",
+    "magic",
+    "male female friendship",
+    "male friendship",
+    "owl",
+    "pre-teen",
+    "school",
+    "school friend",
+    "school of witchcraft",
+    "teen adventure",
+    "teen fantasy",
+    "witch",
+    "wizard"
+  ],
+  "AlternativeTitles": [
+    {
+      "Title": "Hari Poter i Kamen mudrosti",
+      "Type": "Tmdb",
+      "Language": "en"
+    },
+    {
+      "Title": "\u06C1\u06CC\u0631\u06CC \u067E\u0648\u0679\u0631 \u0627\u0648\u0631 \u0641\u0644\u0633\u0641\u06CC \u06A9\u0627 \u067E\u062A\u06BE\u0631",
+      "Type": "Tmdb",
+      "Language": "en"
+    },
+    {
+      "Title": "O Ch\u00E1ri P\u00F3ter kai i Filosofik\u00ED L\u00EDthos",
+      "Type": "Tmdb",
+      "Language": "en"
+    },
+    {
+      "Title": "Hari Poter i Kamenot na mudrosta",
+      "Type": "Tmdb",
+      "Language": "en"
+    },
+    {
+      "Title": "Harri Potter i filosofs\u02B9kyy kamin\u02B9",
+      "Type": "Tmdb",
+      "Language": "uk"
+    },
+    {
+      "Title": "Harry Potter and the Sorcerer\u0027s Stone",
+      "Type": "Tmdb",
+      "Language": "en"
+    },
+    {
+      "Title": "\uD574\uB9AC\uD3EC\uD130\uC640 \uB9C8\uBC95\uC0AC\uC758 \uB3CC",
+      "Type": "Tmdb",
+      "Language": "ko"
+    },
+    {
+      "Title": "\u30CF\u30EA\u30FC\u30DD\u30C3\u30BF\u30FC\u3068\u8CE2\u8005\u306E\u77F3",
+      "Type": "Tmdb",
+      "Language": "ja"
+    },
+    {
+      "Title": "\u05D4\u05E8\u05D9 \u05E4\u05D5\u05EA\u05E8 \u05D5\u05D0\u05D1\u05DF \u05D4\u05D7\u05DB\u05DE\u05D9\u05DD",
+      "Type": "Tmdb",
+      "Language": "en"
+    },
+    {
+      "Title": "Harry Potter dhe Guri Filozofal",
+      "Type": "Tmdb",
+      "Language": "en"
+    },
+    {
+      "Title": "\u0E41\u0E2E\u0E23\u0E4C\u0E23\u0E35\u0E48 \u0E1E\u0E2D\u0E15\u0E40\u0E15\u0E2D\u0E23\u0E4C\u0E01\u0E31\u0E1A\u0E28\u0E34\u0E25\u0E32\u0E2D\u0E32\u0E16\u0E23\u0E23\u0E1E\u0E4C",
+      "Type": "Tmdb",
+      "Language": "th"
+    },
+    {
+      "Title": "\u0540\u0561\u0580\u0580\u056B \u0553\u0578\u0569\u0565\u0580\u0568 \u0587 \u0553\u056B\u056C\u056B\u057D\u0578\u0583\u0561\u0575\u0561\u056F\u0561\u0576 \u0554\u0561\u0580\u0568",
+      "Type": "Tmdb",
+      "Language": "en"
+    },
+    {
+      "Title": "\u0DC4\u0DD0\u0DBB\u0DD3 \u0DB4\u0DDC\u0DA7\u0DBB\u0DCA \u0DC3\u0DC4 \u0DB8\u0DCF\u0DBA\u0DCF \u0D9C\u0DBD",
+      "Type": "Tmdb",
+      "Language": "en"
+    },
+    {
+      "Title": "Harry Potter \u0219i Piatra Filosofal\u0103",
+      "Type": "Tmdb",
+      "Language": "ro"
+    },
+    {
+      "Title": "Harry Potter \u00E0 l\u0027\u00E9cole des sorciers",
+      "Type": "Tmdb",
+      "Language": "fr"
+    },
+    {
+      "Title": "Harry Potter: \u00C9cole des sorciers",
+      "Type": "Tmdb",
+      "Language": "fr"
+    }
+  ],
+  "Translations": [
+    {
+      "Title": "Harry Potter and the Philosopher\u0027s Stone",
+      "Overview": "Harry Potter has lived under the stairs at his aunt and uncle\u0027s house his whole life. But on his 11th birthday, he learns he\u0027s a powerful wizard\u2014with a place waiting for him at the Hogwarts School of Witchcraft and Wizardry. As he learns to harness his newfound powers with the help of the school\u0027s kindly headmaster, Harry uncovers the truth about his parents\u0027 deaths\u2014and about the villain who\u0027s to blame.",
+      "Language": "en-US"
+    },
+    {
+      "Title": "Harry Potter und der Stein der Weisen",
+      "Overview": "Harry Potter erf\u00E4hrt an seinem 11. Geburtstag, dass seine verstorbenen Eltern m\u00E4chtige Zauberer waren und auch er selbst magische Kr\u00E4fte besitzt. Als er von Hogwarts, der Schule f\u00FCr Hexerei und Zauberei, aufgenommen wird, erlebt Harry das Abenteuer seines Lebens. Er lernt Quidditch, das hoch in der Luft gespielt wird, und auf dem Weg, sich einem schwarzen Magier zu stellen, der ihn vernichten will, muss Harry eine spannende Schachpartie mit lebenden Figuren \u00FCberstehen\u2026",
+      "Language": "de-DE"
+    },
+    {
+      "Title": "Harry Potter e la pietra filosofale",
+      "Overview": "Harry Potter vive con gli zii e il cuginetto sin dalla pi\u00F9 tenera et\u00E0 dopo la morte dei suoi genitori. I parenti non lo amano per nulla. Harry sta ormai per compiere undici anni e viene guardato male anche per alcune sue capacit\u00E0 \u0027magiche\u0027. Che sono effettive perch\u00E9 Harry \u00E8 figlio di maghi e comincia a ricevere lettere, regolarmente sequestrate, portate da gufi. Dovr\u00E0 giungere il gigantesco Hagrid a recapitargliene personalmente una perch\u00E9 possa apprendere di essere stato ammesso a frequentare la Scuola di Magia e Stregoneria di Hogwarts. Gli zii a questo punto non possono far pi\u00F9 nulla e Harry raggiunge la Scuola dove apprende che il suo nome \u00E8 gi\u00E0 noto e dove scoprir\u00E0 di avere naturali doti magiche.",
+      "Language": "it-IT"
+    },
+    {
+      "Title": "Harry Potter \u00E0 l\u0027\u00E9cole des sorciers",
+      "Overview": "Orphelin, le jeune Harry Potter peut enfin quitter ses tyranniques oncle et tante Dursley lorsqu\u0027un curieux messager lui r\u00E9v\u00E8le qu\u0027il est un sorcier. \u00C0 11 ans, Harry va enfin pouvoir int\u00E9grer la l\u00E9gendaire \u00E9cole de sorcellerie de Poudlard, y trouver une famille digne de ce nom et des amis, d\u00E9velopper ses dons, et pr\u00E9parer son glorieux avenir.",
+      "Language": "fr-FR"
+    },
+    {
+      "Title": "Harry Potter en de Steen der Wijzen",
+      "Overview": "Op zijn elfde verjaardag verneemt Harry Potter dat zijn overleden ouders twee machtige tovenaars waren en dat hij zelf ook over magische krachten beschikt. Hij krijgt zijn opleiding aan Zweinsteins Hogeschool voor Hekserij en Hocus Pocus.",
+      "Language": "nl-NL"
+    },
+    {
+      "Title": "Harry Potter \u00E9s a B\u00F6lcsek k\u00F6ve",
+      "Overview": "Sz\u00FClei hal\u00E1la ut\u00E1n Harry Potter mostohasz\u00FCl\u0151kn\u00E9l nevelkedik. Sanyar\u00FA a sorsa, a l\u00E9pcs\u0151 alatti kuck\u00F3ban lakik \u00E9s elviselhetetlen az unokatestv\u00E9re. \u00C1m hamarosan kider\u00FCl, hogy Harry nem k\u00F6z\u00F6ns\u00E9ges kisfi\u00FA, hanem egy var\u00E1zsl\u00F3 h\u00E1zasp\u00E1r \u00E1rv\u00E1ja, aki csak \u00E1tmenetileg keveredett a l\u00E9nyegr\u0151l mit sem sejt\u0151 muglik k\u00F6z\u00E9. Most viszont v\u00E9gigs\u00E9t\u00E1l az Abszol \u00FAton, hogy beiratkozz\u00E9k a titokzatos Roxfort Boszork\u00E1ny- \u00E9s Var\u00E1zsl\u00F3k\u00E9pz\u0151 Szakiskol\u00E1ba. N\u00E9h\u00E1ny j\u00F3 bar\u00E1t, n\u00E9h\u00E1ny nagy kaland \u00E9s n\u00E9h\u00E1ny \u0151si ellens\u00E9g v\u00E1r itt r\u00E1, de mi ez egy els\u0151\u00E9ves var\u00E1zsl\u00F3tanoncnak?",
+      "Language": "hu-HU"
+    },
+    {
+      "Title": "Harry Potter a Kame\u0148 mudrcov",
+      "Overview": "Harry Potter pre\u017E\u00EDva ako sirota neradostn\u00E9 detstvo. Bl\u00ED\u017Eia sa v\u0161ak jeho jeden\u00E1ste narodeniny a vtedy mu obor Hagrid vyjav\u00ED tajomstvo jeho \u017Eivota: Harry je toti\u017E \u010Darodejn\u00EDk! Vz\u00E1p\u00E4t\u00ED v \u010Darodejnom svete nast\u00E1va ve\u013Ek\u00FD rozruch - chlapec, ktor\u00FD u\u017E ako bato\u013Ea porazil mocn\u00E9ho p\u00E1na zla, ktor\u00E9ho meno sa ka\u017Ed\u00FD boj\u00ED vyslovi\u0165, sa toti\u017E kone\u010Dne vyd\u00E1va na cestu, ktor\u00E1 mu bola predur\u010Den\u00E1.",
+      "Language": "sk-SK"
+    },
+    {
+      "Title": "Harry Potter e a Pedra Filosofal",
+      "Overview": "Harry Potter \u00E9 um rapaz \u00F3rf\u00E3o que vive infeliz com a sua tia e o seu tio, os Dursley. Recebe uma carta a convid\u00E1-lo para frequentar Hogwarts, uma escola famosa especializada na forma\u00E7\u00E3o de jovens feiticeiros. Inicialmente, o tio impede-o de ler a carta, mas pouco depois Harry recebe a visita de Hagrid, o guarda-ca\u00E7a de Hogwarts, que vem busc\u00E1-lo para o levar \u00E0 escola. Harry entra num mundo m\u00E1gico que nunca imaginou e vive muitas aventuras com os seus novos amigos, Ron Weasley e Hermione Granger.",
+      "Language": "pt-PT"
+    },
+    {
+      "Title": "\u0413\u0430\u0440\u0440\u0438 \u041F\u043E\u0442\u0442\u0435\u0440 \u0438 \u0444\u0438\u043B\u043E\u0441\u043E\u0444\u0441\u043A\u0438\u0439 \u043A\u0430\u043C\u0435\u043D\u044C",
+      "Overview": "\u0416\u0438\u0437\u043D\u044C \u0434\u0435\u0441\u044F\u0442\u0438\u043B\u0435\u0442\u043D\u0435\u0433\u043E \u0413\u0430\u0440\u0440\u0438 \u041F\u043E\u0442\u0442\u0435\u0440\u0430 \u043D\u0435\u043B\u044C\u0437\u044F \u043D\u0430\u0437\u0432\u0430\u0442\u044C \u0441\u043B\u0430\u0434\u043A\u043E\u0439: \u0440\u043E\u0434\u0438\u0442\u0435\u043B\u0438 \u0443\u043C\u0435\u0440\u043B\u0438, \u0435\u0434\u0432\u0430 \u0435\u043C\u0443 \u0438\u0441\u043F\u043E\u043B\u043D\u0438\u043B\u0441\u044F \u0433\u043E\u0434, \u0430 \u043E\u0442 \u0434\u044F\u0434\u0438 \u0438 \u0442\u0451\u0442\u0438, \u0432\u0437\u044F\u0432\u0448\u0438\u0445 \u0441\u0438\u0440\u043E\u0442\u0443 \u043D\u0430 \u0432\u043E\u0441\u043F\u0438\u0442\u0430\u043D\u0438\u0435, \u0434\u043E\u0441\u0442\u0430\u044E\u0442\u0441\u044F \u043B\u0438\u0448\u044C \u0442\u044B\u0447\u043A\u0438 \u0434\u0430 \u043F\u043E\u0434\u0437\u0430\u0442\u044B\u043B\u044C\u043D\u0438\u043A\u0438. \u041D\u043E \u0432 \u043E\u0434\u0438\u043D\u043D\u0430\u0434\u0446\u0430\u0442\u044B\u0439 \u0434\u0435\u043D\u044C \u0440\u043E\u0436\u0434\u0435\u043D\u0438\u044F \u0413\u0430\u0440\u0440\u0438 \u0432\u0441\u0451 \u043C\u0435\u043D\u044F\u0435\u0442\u0441\u044F. \u0421\u0442\u0440\u0430\u043D\u043D\u044B\u0439 \u0433\u043E\u0441\u0442\u044C, \u043D\u0435\u043E\u0436\u0438\u0434\u0430\u043D\u043D\u043E \u043F\u043E\u044F\u0432\u0438\u0432\u0448\u0438\u0439\u0441\u044F \u043D\u0430 \u043F\u043E\u0440\u043E\u0433\u0435, \u043F\u0440\u0438\u043D\u043E\u0441\u0438\u0442 \u043F\u0438\u0441\u044C\u043C\u043E, \u0438\u0437 \u043A\u043E\u0442\u043E\u0440\u043E\u0433\u043E \u043C\u0430\u043B\u044C\u0447\u0438\u043A \u0443\u0437\u043D\u0430\u0451\u0442, \u0447\u0442\u043E \u043D\u0430 \u0441\u0430\u043C\u043E\u043C \u0434\u0435\u043B\u0435 \u043E\u043D - \u0432\u043E\u043B\u0448\u0435\u0431\u043D\u0438\u043A \u0438 \u0437\u0430\u0447\u0438\u0441\u043B\u0435\u043D \u0432 \u0448\u043A\u043E\u043B\u0443 \u043C\u0430\u0433\u0438\u0438 \u043F\u043E\u0434 \u043D\u0430\u0437\u0432\u0430\u043D\u0438\u0435\u043C \u0425\u043E\u0433\u0432\u0430\u0440\u0442\u0441. \u0410 \u0443\u0436\u0435 \u0447\u0435\u0440\u0435\u0437 \u043F\u0430\u0440\u0443 \u043D\u0435\u0434\u0435\u043B\u044C \u0413\u0430\u0440\u0440\u0438 \u0431\u0443\u0434\u0435\u0442 \u043C\u0447\u0430\u0442\u044C\u0441\u044F \u0432 \u043F\u043E\u0435\u0437\u0434\u0435 \u0425\u043E\u0433\u0432\u0430\u0440\u0442\u0441-\u044D\u043A\u0441\u043F\u0440\u0435\u0441\u0441 \u043D\u0430\u0432\u0441\u0442\u0440\u0435\u0447\u0443 \u043D\u043E\u0432\u043E\u0439 \u0436\u0438\u0437\u043D\u0438, \u0433\u0434\u0435 \u0435\u0433\u043E \u0436\u0434\u0443\u0442 \u043D\u0435\u0432\u0435\u0440\u043E\u044F\u0442\u043D\u044B\u0435 \u043F\u0440\u0438\u043A\u043B\u044E\u0447\u0435\u043D\u0438\u044F, \u0432\u0435\u0440\u043D\u044B\u0435 \u0434\u0440\u0443\u0437\u044C\u044F \u0438 \u0441\u0430\u043C\u043E\u0435 \u0433\u043B\u0430\u0432\u043D\u043E\u0435 \u2014 \u043A\u043B\u044E\u0447 \u043A \u0440\u0430\u0437\u0433\u0430\u0434\u043A\u0435 \u0442\u0430\u0439\u043D\u044B \u0441\u043C\u0435\u0440\u0442\u0438 \u0435\u0433\u043E \u0440\u043E\u0434\u0438\u0442\u0435\u043B\u0435\u0439.",
+      "Language": "ru-RU"
+    },
+    {
+      "Title": "Harry Potter och de vises sten",
+      "Overview": "Ber\u00E4ttelsen om en pojke som p\u00E5 sin elva\u00E5rsdag f\u00E5r veta att han \u00E4r son till en m\u00E4ktig trollkarl och h\u00E4xa och sj\u00E4lv besitter magiska krafter, vilket leder honom till en v\u00E4rld full av magi och sp\u00E4nnande \u00E4ventyr.",
+      "Language": "sv-SE"
+    },
+    {
+      "Title": "Harry Potter a K\u00E1men mudrc\u016F",
+      "Overview": "Harry Potter se v den sv\u00FDch jeden\u00E1ct\u00FDch narozenin dozv\u00EDd\u00E1, \u017Ee je osi\u0159el\u00FDm synem dvou velk\u00FDch kouzeln\u00EDk\u016F a s\u00E1m m\u00E1 magick\u00E9 schopnosti. Na \u0160kole \u010Dar a kouzel v Bradavic\u00EDch se Harry mimo jin\u00E9 nau\u010D\u00ED hr\u00E1t famfrp\u00E1l na l\u00E9taj\u00EDc\u00EDm ko\u0161t\u011Bti a sehraje vzru\u0161uj\u00EDc\u00ED \u0161achovou partii s \u017Eiv\u00FDmi figurami, aby se mohl postavit Tomu, jeho\u017E jm\u00E9no se nesm\u00ED vyslovit, kter\u00FD je odhodl\u00E1n ho zahubit.",
+      "Language": "cs-CZ"
+    },
+    {
+      "Title": "\u54C8\u5229\u00B7\u6CE2\u7279\u4E0E\u9B54\u6CD5\u77F3",
+      "Overview": "\u4ECE\u5C0F\u5931\u53BB\u53CC\u4EB2\u7684\u54C8\u5229\u00B7\u6CE2\u7279\u4E00\u76F4\u5BC4\u4F4F\u5728\u59E8\u5988\u4E00\u5BB6\uFF0C\u76F4\u523011\u5C81\u751F\u65E5\u90A3\u5929\uFF0C\u4ED6\u610F\u5916\u5F97\u77E5\u81EA\u5DF1\u662F\u4E00\u540D\u5DEB\u5E08\uFF0C\u5E76\u6536\u5230\u4E86\u970D\u683C\u6C83\u8328\u9B54\u6CD5\u5B66\u6821\u7684\u5165\u5B66\u901A\u77E5\u3002\u5728\u6D77\u683C\u7684\u5E26\u9886\u4E0B\uFF0C\u54C8\u5229\u7B2C\u4E00\u6B21\u8D70\u8FDB\u795E\u5947\u7684\u9B54\u6CD5\u4E16\u754C\uFF0C\u4E5F\u5F97\u77E5\u7236\u6BCD\u5F53\u5E74\u6B7B\u4E8E\u9ED1\u5DEB\u5E08\u4F0F\u5730\u9B54\u4E4B\u624B\uFF0C\u800C\u81EA\u5DF1\u5374\u5947\u8FF9\u822C\u5730\u4ECE\u88AD\u51FB\u4E2D\u5E78\u5B58\u3002\u8FDB\u5165\u970D\u683C\u6C83\u8328\u540E\uFF0C\u54C8\u5229\u4E0E\u7F57\u6069\u00B7\u97E6\u65AF\u83B1\u3001\u8D6B\u654F\u00B7\u683C\u5170\u6770\u6210\u4E3A\u597D\u53CB\uFF0C\u5F00\u59CB\u5B66\u4E60\u9B54\u6CD5\u5E76\u5C55\u73B0\u51FA\u51FA\u8272\u7684\u9B41\u5730\u5947\u5929\u8D4B\u3002\u4E0E\u6B64\u540C\u65F6\uFF0C\u4E09\u4EBA\u53D1\u73B0\u5B66\u6821\u91CC\u4E00\u53EA\u4E09\u5934\u72AC\u5B88\u62A4\u7740\u67D0\u4E2A\u79D8\u5BC6\uFF0C\u800C\u4E00\u5757\u62E5\u6709\u795E\u5947\u529B\u91CF\u7684\u201C\u9B54\u6CD5\u77F3\u201D\u4F3C\u4E4E\u6B63\u6210\u4E3A\u67D0\u80A1\u9ED1\u6697\u52BF\u529B\u7684\u76EE\u6807\u2026\u2026",
+      "Language": "zh-CN"
+    },
+    {
+      "Title": "Harry Potter ve Felsefe Ta\u015F\u0131",
+      "Overview": "Harry Potter, muggle (b\u00FCy\u00FCc\u00FC yada cad\u0131 olmayan insanlar) amcas\u0131 ve halas\u0131yla s\u0131radan ve zorluklarla dolu bir hayat\u0131 ya\u015Farken, y\u0131lanlarla konu\u015Fabildi\u011Finin, k\u0131zg\u0131nl\u0131k \u00F6fkesi s\u0131ras\u0131nda e\u015Fyalar\u0131 hareket ettirebildi\u011Finin fark\u0131na varacakt\u0131r. Hogwarts B\u00FCy\u00FCc\u00FCl\u00FCk ve Cad\u0131l\u0131k Okulu\u0027ndan kabul edildi\u011Fini belirten mektup ise hayat\u0131n\u0131n s\u0131radanl\u0131\u011F\u0131n\u0131 de\u011Fi\u015Ftirecektir. Art\u0131k o bir b\u00FCy\u00FCc\u00FC aday\u0131d\u0131r.",
+      "Language": "tr-TR"
+    },
+    {
+      "Title": "Harry Potter y la piedra filosofal",
+      "Overview": "Harry Potter es un hu\u00E9rfano que vive con sus desagradables t\u00EDos, los Dursley, y su repelente primo Dudley. Se acerca su und\u00E9cimo cumplea\u00F1os y tiene pocas esperanzas de recibir alg\u00FAn regalo, ya que nunca nadie se acuerda de \u00E9l. Sin embargo, pocos d\u00EDas antes de su cumplea\u00F1os, una serie de misteriosas cartas dirigidas a \u00E9l y escritas con una estridente tinta verde rompen la monoton\u00EDa de su vida: Harry es un mago y sus padres tambi\u00E9n lo eran.",
+      "Language": "es-ES"
+    },
+    {
+      "Title": "\u0647\u0631\u06CC \u067E\u0627\u062A\u0631 \u0648 \u0633\u0646\u06AF \u062C\u0627\u062F\u0648",
+      "Overview": "\u062F\u0627\u0633\u062A\u0627\u0646 \u062F\u0631 \u0645\u0648\u0631\u062F \u067E\u0633\u0631\u06CC \u0628\u0647 \u0646\u0627\u0645 \u0647\u0631\u06CC \u067E\u0627\u062A\u0631 \u0627\u0633\u062A \u06A9\u0647 \u067E\u06CC\u0634 \u062E\u0627\u0644\u0647 \u0648 \u0634\u0648\u0647\u0631 \u062E\u0627\u0644\u0647\u200C\u0627\u0634 \u0632\u0646\u062F\u06AF\u06CC \u0645\u06CC\u200C\u06A9\u0646\u062F\u060C \u0632\u06CC\u0631\u0627 \u067E\u062F\u0631 \u0648 \u0645\u0627\u062F\u0631\u0634 \u0633\u0627\u0644\u200C\u0647\u0627 \u0642\u0628\u0644 \u062F\u0631 \u06CC\u06A9 \u0627\u062A\u0641\u0627\u0642 \u0628\u0632\u0631\u06AF \u06A9\u0634\u062A\u0647 \u0634\u062F\u0647\u200C\u0627\u0646\u062F. \u0647\u0631\u06CC \u067E\u0627\u062A\u0631 \u06A9\u0647 \u062F\u0631 \u0627\u06CC\u0646 \u06F1\u06F0 \u0633\u0627\u0644 \u0632\u0646\u062F\u06AF\u06CC \u067E\u06CC\u0634 \u062E\u0627\u0646\u0648\u0627\u062F\u0647 \u0645\u0627\u062F\u0631\u06CC \u0648 \u062A\u062D\u0642\u06CC\u0631 \u0631\u0627 \u062A\u062D\u0645\u0644 \u06A9\u0631\u062F\u0647 \u0648 \u0646\u0627\u06AF\u0647\u0627\u0646 \u0628\u0627 \u06CC\u06A9 \u0631\u0627\u0632 \u062E\u06CC\u0644\u06CC \u0628\u0632\u0631\u06AF \u0631\u0648\u0628\u0647 \u0631\u0648 \u0645\u06CC\u0634\u0648\u062F \u06A9\u0647 \u0628\u0627\u0639\u062B \u0645\u06CC \u0634\u0648\u062F \u0632\u0646\u062F\u06AF\u06CC\u0634 \u062F\u06AF\u0631\u06AF\u0648\u0646 \u0634\u0648\u062F \u0648 ...",
+      "Language": "fa-IR"
+    },
+    {
+      "Title": "Harry Potter ja viisasten kivi",
+      "Overview": "Harry Potter saa 11 syntym\u00E4p\u00E4iv\u00E4n\u00E4\u00E4n tiet\u00E4\u00E4 olevansa kahden voimakkaan velhon orpolapsi ja omaavansa itsekin taikavoimia. Tylypahkan noitien ja velhojen koulussa Harry aloittaa el\u00E4m\u00E4ns\u00E4 seikkailun. H\u00E4n oppii korkealentoisen pelin ja pelaa j\u00E4nnitt\u00E4v\u00E4n shakkiottelun el\u00E4vill\u00E4 shakkinappuloilla kohdatakseen pime\u00E4n velhon, joka haluaa tuhota h\u00E4net.",
+      "Language": "fi-FI"
+    },
+    {
+      "Title": "\u039F \u03A7\u03AC\u03C1\u03B9 \u03A0\u03CC\u03C4\u03B5\u03C1 \u03BA\u03B1\u03B9 \u03B7 \u03A6\u03B9\u03BB\u03BF\u03C3\u03BF\u03C6\u03B9\u03BA\u03AE \u039B\u03AF\u03B8\u03BF\u03C2",
+      "Overview": "\u03A4\u03B1 \u03B5\u03BD\u03B4\u03AD\u03BA\u03B1\u03C4\u03B1 \u03B3\u03B5\u03BD\u03AD\u03B8\u03BB\u03B9\u03B1 \u03C4\u03BF\u03C5 \u03BC\u03BF\u03BD\u03B1\u03C7\u03B9\u03BA\u03BF\u03CD \u03A7\u03AC\u03C1\u03B9 \u03A0\u03CC\u03C4\u03B5\u03C1 \u03C3\u03C5\u03BD\u03BF\u03B4\u03B5\u03CD\u03BF\u03BD\u03C4\u03B1\u03B9 \u03B1\u03C0\u03CC \u03BC\u03B9\u03B1 \u03C3\u03C5\u03BD\u03C4\u03B1\u03C1\u03B1\u03BA\u03C4\u03B9\u03BA\u03AE \u03B1\u03C0\u03BF\u03BA\u03AC\u03BB\u03C5\u03C8\u03B7! \u039F\u03B9 \u03BD\u03B5\u03BA\u03C1\u03BF\u03AF \u03B3\u03BF\u03BD\u03B5\u03AF\u03C2 \u03C4\u03BF\u03C5 \u03AE\u03C4\u03B1\u03BD \u03BC\u03AC\u03B3\u03BF\u03B9 \u03BA\u03B9 \u03AD\u03C4\u03C3\u03B9 \u03BF \u03AF\u03B4\u03B9\u03BF\u03C2 \u03B3\u03AF\u03BD\u03B5\u03C4\u03B1\u03B9 \u03B4\u03B5\u03BA\u03C4\u03CC\u03C2 \u03C3\u03C4\u03B7 \u03C3\u03C7\u03BF\u03BB\u03AE \u03BC\u03AC\u03B3\u03C9\u03BD \u03C4\u03BF\u03C5 \u03A7\u03CC\u03B3\u03BA\u03BF\u03C5\u03BF\u03C1\u03C4\u03C2.",
+      "Language": "el-GR"
+    },
+    {
+      "Title": "Harry Potter og de vises sten",
+      "Overview": "P\u00E5 sin 11-\u00E5rs f\u00F8dselsdag bliver Harry Potter, som lever en kummerlig tilv\u00E6relse hos sin tante og onkel, kontaktet af k\u00E6mpen Hagrid, som afsl\u00F8rer at hans afd\u00F8de for\u00E6ldre var magtfulde magikere. Harry bliver derfor tilbudt en plads p\u00E5 den fornemme skole for trolddom, Hogwarts. Her f\u00E5r Harry nye venner, den charmerende og autoritetstro Hermione samt den klodsede, men trofaste Ron. Desuden m\u00F8der han den vise rektor Dumbledore. Langsomt g\u00E5r det op for Harry, at han er noget s\u00E6rligt, hvilket h\u00E6nger sammen med hans for\u00E6ldres d\u00F8d, som slet ikke var et uheld men derimod et mysterium, hvor den ondskabsfulde troldmand Voldemort spiller en vigtig rolle.",
+      "Language": "da-DK"
+    },
+    {
+      "Title": "Harry Potter i Kamie\u0144 Filozoficzny",
+      "Overview": "Harry Potter dowiaduje si\u0119, w dniu swoich 11-tych urodzin, \u017Ce jest osieroconym dzieckiem dwojga pot\u0119\u017Cnych czarodziej\u00F3w i sam posiada magiczne zdolno\u015Bci. W Szkole Magii i Czarodziejstwa w Hogwarcie prze\u017Cywa najwi\u0119ksz\u0105 przygod\u0119 swojego \u017Cycia. Uczy si\u0119 latania na miotle i r\u00F3\u017Cnych po\u017Cytecznych zakl\u0119\u0107. Prze\u017Cywa tak\u017Ce chwile grozy rozwi\u0105zuj\u0105c zagadk\u0119 tajemniczego kamienia filozoficznego i tocz\u0105c walk\u0119 z pot\u0119\u017Cnym i z\u0142ym czarodziejem-Lordem Voldermort.",
+      "Language": "pl-PL"
+    },
+    {
+      "Title": "\u0E41\u0E2E\u0E23\u0E4C\u0E23\u0E35\u0E48 \u0E1E\u0E2D\u0E15\u0E40\u0E15\u0E2D\u0E23\u0E4C \u0E01\u0E31\u0E1A \u0E28\u0E34\u0E25\u0E32\u0E2D\u0E32\u0E16\u0E23\u0E23\u0E1E\u0E4C",
+      "Overview": "\u0E20\u0E32\u0E1E\u0E22\u0E19\u0E15\u0E23\u0E4C\u0E40\u0E23\u0E37\u0E48\u0E2D\u0E07\u0E19\u0E35\u0E49 \u0E14\u0E31\u0E14\u0E41\u0E1B\u0E25\u0E07\u0E08\u0E32\u0E01 \u0E19\u0E34\u0E22\u0E32\u0E22\u0E40\u0E22\u0E32\u0E0A\u0E19\u0E0A\u0E37\u0E48\u0E2D\u0E14\u0E31\u0E07 \u0E02\u0E2D\u0E07 \u0E40\u0E08.\u0E40\u0E04. \u0E42\u0E23\u0E27\u0E4C\u0E25\u0E34\u0E48\u0E07 \u0E40\u0E01\u0E35\u0E48\u0E22\u0E27\u0E01\u0E31\u0E1A\u0E40\u0E14\u0E47\u0E01\u0E01\u0E33\u0E1E\u0E23\u0E49\u0E32\u0E04\u0E19\u0E2B\u0E19\u0E36\u0E48\u0E07 \u0E17\u0E35\u0E48\u0E44\u0E14\u0E49\u0E23\u0E39\u0E49\u0E04\u0E27\u0E32\u0E21\u0E08\u0E23\u0E34\u0E07 \u0E43\u0E19\u0E27\u0E31\u0E19\u0E40\u0E01\u0E34\u0E14\u0E04\u0E23\u0E1A\u0E04\u0E2D\u0E1A 11 \u0E02\u0E27\u0E1A\u0E27\u0E48\u0E32 \u0E1E\u0E48\u0E2D\u0E41\u0E21\u0E48\u0E02\u0E2D\u0E07\u0E40\u0E02\u0E32 \u0E40\u0E1B\u0E47\u0E19\u0E1E\u0E48\u0E2D\u0E21\u0E14\u0E41\u0E25\u0E30.\u0E41\u0E21\u0E48\u0E21\u0E14 \u0E17\u0E35\u0E48\u0E21\u0E35\u0E1E\u0E25\u0E31\u0E07\u0E27\u0E34\u0E40\u0E28\u0E29 \u0E41\u0E25\u0E30.\u0E15\u0E31\u0E27\u0E40\u0E02\u0E32\u0E01\u0E47\u0E21\u0E35\u0E1E\u0E25\u0E31\u0E07\u0E19\u0E31\u0E49\u0E19\u0E14\u0E49\u0E27\u0E22 \u0E40\u0E02\u0E32\u0E08\u0E36\u0E07\u0E40\u0E14\u0E34\u0E19\u0E17\u0E32\u0E07\u0E2A\u0E39\u0E48 \u0E42\u0E23\u0E07\u0E40\u0E23\u0E35\u0E22\u0E19\u0E1E\u0E48\u0E2D\u0E21\u0E14 \u0E2E\u0E2D\u0E01\u0E27\u0E2D\u0E15\u0E2A\u0E4C \u0E41\u0E25\u0E30.\u0E44\u0E14\u0E49\u0E23\u0E39\u0E49\u0E08\u0E31\u0E01\u0E01\u0E31\u0E1A\u0E40\u0E1E\u0E37\u0E48\u0E2D\u0E19\u0E43\u0E2B\u0E21\u0E48 \u0E17\u0E35\u0E48\u0E23\u0E48\u0E27\u0E21\u0E01\u0E31\u0E19\u0E1C\u0E08\u0E0D\u0E20\u0E31\u0E22 \u0E41\u0E25\u0E30.\u0E0A\u0E37\u0E48\u0E19\u0E0A\u0E21\u0E04\u0E27\u0E32\u0E21\u0E2A\u0E27\u0E22\u0E07\u0E32\u0E21 \u0E19\u0E48\u0E32\u0E1B\u0E23\u0E30\u0E17\u0E31\u0E1A\u0E43\u0E08\u0E02\u0E2D\u0E07\u0E42\u0E23\u0E07\u0E40\u0E23\u0E35\u0E22\u0E19 \u0E15\u0E25\u0E2D\u0E14\u0E08\u0E19\u0E04\u0E49\u0E19\u0E2B\u0E32 \u0E04\u0E27\u0E32\u0E21\u0E2A\u0E32\u0E21\u0E32\u0E23\u0E16\u0E1E\u0E34\u0E40\u0E28\u0E29\u0E02\u0E2D\u0E07\u0E15\u0E19 \u0E41\u0E25\u0E30.\u0E1E\u0E1A\u0E1A\u0E49\u0E32\u0E19\u0E41\u0E25\u0E30.\u0E04\u0E23\u0E2D\u0E1A\u0E04\u0E23\u0E31\u0E27 \u0E17\u0E35\u0E48\u0E40\u0E02\u0E32\u0E44\u0E21\u0E48\u0E40\u0E04\u0E22\u0E21\u0E35\u0E21\u0E32\u0E01\u0E48\u0E2D\u0E19 ..",
+      "Language": "th-TH"
+    },
+    {
+      "Title": "\u05D4\u05D0\u05E8\u05D9 \u05E4\u05D5\u05D8\u05E8 \u05D5\u05D0\u05D1\u05DF \u05D4\u05D7\u05DB\u05DE\u05D9\u05DD",
+      "Overview": "\u05DC\u05E2\u05EA \u05D9\u05D5\u05DD \u05D4\u05D5\u05DC\u05D3\u05EA\u05D5 \u05D4-11 \u05DE\u05D2\u05DC\u05D4 \u05D4\u05D0\u05E8\u05D9 \u05E4\u05D5\u05D8\u05E8 \u05E9\u05D0\u05D5\u05DE\u05E5 \u05E2\u05DC \u05D9\u05D3\u05D9 \u05D3\u05D5\u05D3\u05D9\u05D5 \u05D0\u05D7\u05E8\u05D9 \u05E9\u05D4\u05D5\u05E8\u05D9\u05D5 \u05D4\u05DE\u05DB\u05E9\u05E4\u05D9\u05DD \u05E0\u05E1\u05E4\u05D5 \u05D1\u05E4\u05D9\u05D2\u05D5\u05E2 \u05E7\u05D5\u05E1\u05DE\u05D5\u05EA. \u05D4\u05E6\u05DC\u05E7\u05EA \u05E9\u05E2\u05DC \u05DE\u05E6\u05D7\u05D5 \u05D4\u05D9\u05D0 \u05E2\u05D3\u05D5\u05EA \u05DC\u05DE\u05DC\u05D7\u05DE\u05D4 \u05E9\u05D4\u05D5\u05D0 \u05E2\u05E6\u05DE\u05D5 \u05E0\u05DC\u05D7\u05DD \u05D1\u05D9\u05E0\u05E7\u05D5\u05EA\u05D5 \u05E0\u05D2\u05D3 \u05E8\u05D1-\u05DE\u05D2 \u05E0\u05D5\u05E8\u05D0\u05D9, \u05D5\u05D5\u05DC\u05D3\u05DE\u05D5\u05E8\u05D8. \u05DB\u05E2\u05EA \u05D0\u05D9\u05EA\u05E8\u05D5 \u05D0\u05D5\u05EA\u05D5 \u05E2\u05DE\u05D9\u05EA\u05D9\u05D5 \u05D1\u05E2\u05DC\u05D9 \u05D4\u05D9\u05DB\u05D5\u05DC\u05D5\u05EA \u05D4\u05DE\u05D3\u05D4\u05D9\u05DE\u05D5\u05EA, \u05D5\u05D4\u05DD \u05DE\u05D6\u05DE\u05D9\u05E0\u05D9\u05DD \u05D0\u05D5\u05EA\u05D5 \u05DC\u05D1\u05D9\u05EA \u05D4\u05E1\u05E4\u05E8 \u05DC\u05DE\u05DB\u05E9\u05E4\u05D9\u05DD \u05D1\u05D4\u05D5\u05D2\u05D5\u05D5\u05E8\u05D8\u05E1.",
+      "Language": "he-IL"
+    },
+    {
+      "Title": "\u0425\u0430\u0440\u0438 \u041F\u043E\u0442\u0435\u0440 \u0438 \u043A\u0430\u043C\u0435\u043D \u043C\u0443\u0434\u0440\u043E\u0441\u0442\u0438",
+      "Overview": "\u0413\u043B\u0430\u0432\u043D\u0438 \u0458\u0443\u043D\u0430\u043A \u0425\u0430\u0440\u0438 \u0458\u0435 \u043D\u0435\u0432\u043E\u0459\u0435\u043D\u043E \u0441\u0438\u0440\u043E\u0447\u0435. \u041E\u043D \u0458\u0435 \u043E\u0434\u0440\u0430\u0441\u0442\u0430\u043E \u0441 \u043F\u043E\u0440\u043E\u0434\u0438\u0446\u043E\u043C \u0414\u0430\u0440\u0441\u043B\u0438, \u043A\u043E\u0458\u0430 \u0441\u0435 \u043F\u0440\u0435\u043C\u0430 \u045A\u0435\u043C\u0443 \u043E\u043F\u0445\u043E\u0434\u0438\u043B\u0430 \u043A\u0430\u043E \u043F\u0440\u0435\u043C\u0430 \u043B\u0435\u0432\u043E\u043C \u0441\u043C\u0435\u0442\u0430\u043B\u0443. \u0418\u043F\u0430\u043A, \u0458\u0435\u0434\u043D\u043E\u0433\u0430 \u0434\u0430\u043D\u0430, \u043D\u0435\u043F\u043E\u0441\u0440\u0435\u0434\u043D\u043E \u043F\u0440\u0435\u0434 \u0425\u0430\u0440\u0438\u0458\u0435\u0432 \u0458\u0435\u0434\u0430\u043D\u0430\u0435\u0441\u0442\u0438 \u0440\u043E\u0452\u0435\u043D\u0434\u0430\u043D, \u045A\u0435\u043C\u0443 \u043F\u043E\u0447\u0438\u045A\u0443 \u0434\u0430 \u0441\u0442\u0438\u0436\u0443 \u043F\u0438\u0441\u043C\u0430. \u041F\u0440\u0435\u043F\u043E\u0437\u043D\u0430\u0432\u0448\u0438 \u043A\u043E\u0432\u0435\u0440\u0430\u0442 \u0441\u0430 \u0425\u043E\u0433\u0432\u043E\u0440\u0442\u0441\u0430, \u0448\u043A\u043E\u043B\u0435 \u0437\u0430 \u0432\u0435\u0448\u0442\u0438\u0446\u0435 \u0438 \u0447\u0430\u0440\u043E\u0431\u045A\u0430\u043A\u0435, \u045A\u0435\u0433\u043E\u0432\u0438 \u0442\u0435\u0442\u043A\u0430 \u0438 \u0442\u0435\u0447\u0430 \u0442\u043E \u0441\u0430\u043A\u0440\u0438\u0458\u0443 \u043E\u0434 \u0425\u0430\u0440\u0438\u0458\u0430. \u0410\u043B\u0438 \u0434\u0435\u0447\u0430\u043A \u0438\u043F\u0430\u043A \u0441\u0430\u0437\u043D\u0430\u0458\u0435 \u0434\u0430 \u0458\u0435 \u0434\u0440\u0443\u0433\u0430\u0447\u0438\u0458\u0438 \u043E\u0434 \u0441\u0432\u043E\u0458\u0438\u0445 \u0440\u043E\u0452\u0430\u043A\u0430, \u0434\u0430 \u0458\u0435 \u0447\u0430\u0440\u043E\u0431\u045A\u0430\u043A \u0438 \u0434\u0430 \u0458\u0435 \u045A\u0435\u0433\u043E\u0432\u0435 \u0440\u043E\u0434\u0438\u0442\u0435\u0459\u0435 \u0443\u0431\u0438\u043E \u0437\u043B\u0438 \u041B\u043E\u0440\u0434 \u0412\u043E\u043B\u0434\u0435\u043C\u043E\u0440\u0442. \u041D\u0430 \u043F\u0443\u0442\u0443 \u0437\u0430 \u0425\u043E\u0433\u0432\u043E\u0440\u0442\u0441 \u0443\u043F\u043E\u0437\u043D\u0430\u0458\u0435 \u0420\u043E\u043D\u0430 \u0412\u0438\u0437\u043B\u0438\u0458\u0430, \u043A\u043E\u0458\u0438 \u043C\u0443 \u043F\u043E\u0441\u0442\u0430\u0458\u0435 \u043D\u0430\u0458\u0431\u043E\u0459\u0438 \u0434\u0440\u0443\u0433, \u043A\u0430\u043E \u0438 \u0425\u0435\u0440\u043C\u0438\u043E\u043D\u0443 \u0413\u0440\u0435\u043D\u045F\u0435\u0440, \u043A\u043E\u0458\u0430 \u045B\u0435 \u043F\u043E\u0441\u0442\u0430\u0442\u0438 \u0442\u0440\u0435\u045B\u0438 \u0447\u043B\u0430\u043D \u0434\u0440\u0443\u0436\u0438\u043D\u0435...",
+      "Language": "sr-RS"
+    },
+    {
+      "Title": "\u30CF\u30EA\u30FC\u30FB\u30DD\u30C3\u30BF\u30FC\u3068\u8CE2\u8005\u306E\u77F3",
+      "Overview": "\u4E21\u89AA\u306E\u6B7B\u5F8C\u3001\u89AA\u621A\u306E\u5BB6\u306B\u9810\u3051\u3089\u308C\u305F\u30CF\u30EA\u30FC\u30FB\u30DD\u30C3\u30BF\u30FC\u5C11\u5E74\u3002\u305D\u3053\u3067\u306F\u968E\u6BB5\u4E0B\u306E\u7269\u7F6E\u90E8\u5C4B\u3092\u3042\u3066\u304C\u308F\u308C\u3001\u4F55\u304B\u3068\u3053\u304D\u4F7F\u308F\u308C\u308B\u6BCE\u65E5\u3002\u305D\u3093\u306A\u3042\u308B\u65E5\u3001\u30CF\u30EA\u30FC\u306E11\u6B73\u306E\u8A95\u751F\u65E5\u306B\u4E00\u901A\u306E\u624B\u7D19\u304C\u5C4A\u3044\u305F\u3002\u4E2D\u8EAB\u306F\u306A\u3093\u3068\u3001\u9B54\u6CD5\u9B54\u8853\u5B66\u6821\u306E\u5165\u5B66\u8A31\u53EF\u8A3C\u3060\u3063\u305F\u3002\u5B9F\u306F\u3001\u30CF\u30EA\u30FC\u306E\u4E21\u89AA\u306F\u512A\u79C0\u306A\u9B54\u6CD5\u4F7F\u3044\u3060\u3063\u305F\u306E\u3060\u3002\u624B\u7D19\u306B\u5C0E\u304B\u308C\u308B\u307E\u307E\u30DB\u30B0\u30EF\u30FC\u30C4\u9B54\u6CD5\u9B54\u8853\u5B66\u6821\u306B\u305F\u3069\u308A\u7740\u3044\u305F\u30CF\u30EA\u30FC\u306F\u3001\u3055\u3063\u305D\u304F\u9B54\u6CD5\u4F7F\u3044\u306B\u306A\u308B\u305F\u3081\u306E\u52C9\u5F37\u3092\u59CB\u3081\u308B\u3002\u30ED\u30F3\u3068\u30CF\u30FC\u30DE\u30A4\u30AA\u30CB\u30FC\u3068\u3044\u3046\u53CB\u9054\u3082\u3067\u304D\u3001\u697D\u3057\u3044\u6BCE\u65E5\u3092\u9001\u308B\u30CF\u30EA\u30FC\u3060\u3063\u305F\u304C\u3001\u3084\u304C\u3066\u5B66\u6821\u306B\u96A0\u3055\u308C\u305F\u9A5A\u304F\u3079\u304D\u79D8\u5BC6\u306B\u6C17\u3065\u304F\u306E\u3060\u3063\u305F\u2026\u2026\u3002",
+      "Language": "ja-JP"
+    },
+    {
+      "Title": "Harry Potter og de vises stein",
+      "Overview": "Foreldrel\u00F8se Harry f\u00E5r et nytt liv n\u00E5r han kommer inn p\u00E5 trollmannsskolen Galtvort. Her oppdages snart det magiske arret i pannen hans, og det synes klart at gutten er eslet til noe stort.",
+      "Language": "no-NO"
+    },
+    {
+      "Title": "Harry Potter ja tarkade kivi",
+      "Overview": "Harry Potter on pealtn\u00E4ha t\u00E4iesti tavaline, pisut tagasihoidlik poiss, kes peale ema ja isa traagilist surma on sattunud elama oma t\u00E4di juurde. 10 aastat on ta pidanud taluma t\u00E4di Petunia, onu Vernoni ja nende poja Dudley terroriseerimist. \u00DChel p\u00E4eval aga hakkavad saabuma salap\u00E4rased kirjad ning ilmub v\u00E4lja hiiglasekasvu, kuid s\u00F5bralik Hagrid, kes Harryle r\u00E4\u00E4gib, et ta polegi tavaline poiss, vaid hoopis v\u00F5lur. Nii asubki Harry \u00F5ppima Sigat\u00FC\u00FCka kooli, kus ta \u00F5pib v\u00F5lukunsti erinevaid vorme, leiab endale s\u00F5brad Ron\u0027i  ja Hermione\u0027i ning peab vastu astuma igasugustele ohtudele.",
+      "Language": "et-EE"
+    },
+    {
+      "Title": "\uD574\uB9AC \uD3EC\uD130\uC640 \uB9C8\uBC95\uC0AC\uC758 \uB3CC",
+      "Overview": "\uD574\uB9AC \uD3EC\uD130\uB294 \uC704\uC555\uC801\uC778 \uBC84\uB17C \uC219\uBD80\uC640 \uB0C9\uB2F4\uD55C \uC774\uBAA8 \uD398\uD22C\uB2C8\uC544, \uC695\uC2EC \uB9CE\uACE0 \uBC84\uB987\uC5C6\uB294 \uC0AC\uCD0C \uB354\uC990\uB9AC \uBC11\uC5D0\uC11C \uAC16\uC740 \uAD6C\uBC15\uC744 \uACAC\uB514\uBA70 \uACC4\uB2E8 \uBC11 \uBCBD\uC7A5\uC5D0\uC11C \uC0DD\uD65C\uD55C\uB2E4. \uC774\uBAA8\uB124 \uC2DD\uAD6C\uB4E4 \uC5ED\uC2DC \uD574\uB9AC\uC640\uC758 \uB3D9\uAC70\uAC00 \uBD88\uD3B8\uD558\uAE30\uB294 \uB9C8\uCC2C\uAC00\uC9C0. \uC774\uBAA8 \uD398\uD22C\uB2C8\uC544\uC5D0\uAC90 \uD574\uB9AC\uAC00 \uC774\uC0C1\uD55C \uC5B8\uB2C8 \uBD80\uBD80\uC5D0 \uAD00\uD55C \uAE30\uC5B5\uC744 \uB5A0\uC62C\uB9AC\uAC8C \uB9CC\uB4DC\uB294 \uB2EC\uAC11\uC9C0 \uC54A\uC740 \uC874\uC7AC\uB2E4. 11\uC0B4 \uC0DD\uC77C\uC774 \uBA70\uCE60 \uC55E\uC73C\uB85C \uB2E4\uAC00\uC654\uC9C0\uB9CC \uD55C\uBC88\uB3C4 \uC0DD\uC77C\uD30C\uD2F0\uB97C \uCE58\uB974\uAC70\uB098 \uC81C\uB300\uB85C \uB41C \uC0DD\uC77C\uC120\uBB3C\uC744 \uBC1B\uC544 \uBCF8 \uC801\uC774 \uC5C6\uB294 \uD574\uB9AC\uB85C\uC11C\uB294 \uD2B9\uBCC4\uD788 \uC2E0\uB0A0 \uAC83\uB3C4 \uAE30\uB300 \uD560 \uAC83\uB3C4 \uC5C6\uB2E4. 11\uC0B4 \uC0DD\uC77C\uC744 \uBA70\uCE60 \uC55E\uB454 \uC5B4\uB290 \uB0A0 \uD574\uB9AC\uC5D0\uAC8C \uCD08\uB85D\uC0C9 \uC789\uD06C\uB85C \uC4F0\uC5EC\uC9C4 \uD55C \uD1B5\uC758 \uD3B8\uC9C0\uAC00 \uBC30\uB2EC\uB41C\uB2E4. \uADF8 \uD3B8\uC9C0\uC758 \uB0B4\uC6A9\uC740 \uB2E4\uB984 \uC544\uB2CC \uD574\uB9AC\uC758 11\uC0B4 \uC0DD\uC77C\uC744 \uB9DE\uC774\uD558\uC5EC \uD638\uADF8\uC640\uD2B8\uC5D0\uC11C \uBCF4\uB0B8 \uC785\uD559 \uCD08\uB300\uC7A5\uC774\uC5C8\uB2E4. \uADF8\uB9AC\uACE0 \uD574\uB9AC\uC758 \uC0DD\uC77C\uC744 \uCD95\uD558\uD558\uB7EC \uC628 \uAC70\uC778 \uD574\uADF8\uB9AC\uB4DC\uB294 \uD574\uB9AC\uAC00 \uBAA8\uB974\uACE0 \uC788\uC5C8\uB358 \uD574\uB9AC\uC758 \uC9C4\uC815\uD55C \uC815\uCCB4\uB97C \uC54C\uB824\uC8FC\uB294\uB370...",
+      "Language": "ko-KR"
+    },
+    {
+      "Title": "Harijs Poters un Filozofu akmens",
+      "Overview": "Harijs Poters visu m\u016B\u017Eu ir nodz\u012Bvojis k\u0101p\u0146u telp\u0101, savas tantes un t\u0113vo\u010Da m\u0101j\u0101s. Ta\u010Du, sav\u0101 vienpadsmitaj\u0101 dzim\u0161anas dien\u0101 vi\u0146\u0161 uzzina, ka vi\u0146\u0161 ir sp\u0113c\u012Bgs burvis un vi\u0146am ir paredz\u0113ta vieta C\u016Bkk\u0101rpas burvju un raganu \u0101rodskol\u0101. Kam\u0113r Harijs m\u0101c\u0101s izmantot savas sp\u0113jas, vi\u0146\u0161 uzzina paties\u012Bbu par savu vec\u0101ku n\u0101vi, k\u0101 ar\u012B par \u013Caundari, kas par to atbild\u012Bgs.",
+      "Language": "lv-LV"
+    },
+    {
+      "Title": "Harry Potter \u0219i Piatra Filozofal\u0103",
+      "Overview": "Harry Potter, un b\u0103iat orfan crescut de rudele sale r\u0103ut\u0103cioase, afl\u0103 la v\u00E2rsta de unsprezece ani c\u0103 este vr\u0103jitor \u0219i prime\u0219te invita\u021Bia de a studia la Hogwarts. Pe m\u0103sur\u0103 ce descoper\u0103 lumea magiei \u0219i \u00EE\u0219i face primii prieteni, Harry \u00EEncepe s\u0103 \u00EEn\u021Beleag\u0103 leg\u0103tura dintre trecutul s\u0103u \u0219i cel mai temut vr\u0103jitor \u00EEntunecat.",
+      "Language": "ro-RO"
+    },
+    {
+      "Title": "Harry Potter e a Pedra Filosofal",
+      "Overview": "Harry Potter \u00E9 um garoto \u00F3rf\u00E3o que vive infeliz com seus tios, os Dursley. Em seu anivers\u00E1rio de 11 anos ele recebe uma carta que mudar\u00E1 sua vida: um convite para ingressar em Hogwarts, uma Escola de Magia e Bruxaria.",
+      "Language": "pt-BR"
+    },
+    {
+      "Title": "\u0413\u0430\u0440\u0440\u0456 \u041F\u043E\u0442\u0442\u0435\u0440 \u0456 \u0444\u0456\u043B\u043E\u0441\u043E\u0444\u0441\u044C\u043A\u0438\u0439 \u043A\u0430\u043C\u0456\u043D\u044C",
+      "Overview": "\u0416\u0438\u0442\u0442\u044F \u0434\u0435\u0441\u044F\u0442\u0438\u0440\u0456\u0447\u043D\u043E\u0433\u043E \u0413\u0430\u0440\u0440\u0456 \u041F\u043E\u0442\u0442\u0435\u0440\u0430 \u043D\u0435 \u043C\u043E\u0436\u043D\u0430 \u043D\u0430\u0437\u0432\u0430\u0442\u0438 \u0441\u043E\u043B\u043E\u0434\u043A\u0438\u043C: \u0431\u0430\u0442\u044C\u043A\u0438 \u043F\u043E\u043C\u0435\u0440\u043B\u0438, \u0449\u043E\u0439\u043D\u043E \u0439\u043E\u043C\u0443 \u0432\u0438\u043F\u043E\u0432\u043D\u0438\u0432\u0441\u044F \u0440\u0456\u043A, \u0430 \u0434\u044F\u0434\u044C\u043A\u043E \u0456 \u0442\u0456\u0442\u043A\u0430, \u044F\u043A\u0456 \u0432\u0437\u044F\u043B\u0438 \u0441\u0438\u0440\u043E\u0442\u0443 \u043D\u0430 \u0432\u0438\u0445\u043E\u0432\u0430\u043D\u043D\u044F, \u043D\u0435 \u0434\u0443\u0436\u0435 \u0456 \u043F\u0456\u043A\u043B\u0443\u044E\u0442\u044C\u0441\u044F \u043F\u0440\u043E \u043D\u044C\u043E\u0433\u043E. \u0410\u043B\u0435 \u043E\u0434\u0438\u043D\u0430\u0434\u0446\u044F\u0442\u0438\u0439 \u0434\u0435\u043D\u044C \u043D\u0430\u0440\u043E\u0434\u0436\u0435\u043D\u043D\u044F \u0432\u0441\u0435 \u0437\u043C\u0456\u043D\u044E\u0454. \u0414\u0438\u0432\u043D\u0438\u0439 \u0433\u0456\u0441\u0442\u044C, \u044F\u043A\u0438\u0439 \u043D\u0435\u0441\u043F\u043E\u0434\u0456\u0432\u0430\u043D\u043E \u0437\u0027\u044F\u0432\u0438\u0432\u0441\u044F \u043D\u0430 \u043F\u043E\u0440\u043E\u0437\u0456, \u043F\u0440\u0438\u043D\u043E\u0441\u0438\u0442\u044C \u043B\u0438\u0441\u0442\u0430, \u0437 \u044F\u043A\u043E\u0433\u043E \u0445\u043B\u043E\u043F\u0447\u0438\u043A \u0434\u0456\u0437\u043D\u0430\u0454\u0442\u044C\u0441\u044F, \u0449\u043E \u043D\u0430\u0441\u043F\u0440\u0430\u0432\u0434\u0456 \u0432\u0456\u043D - \u0447\u0430\u0440\u0456\u0432\u043D\u0438\u043A, \u0456 \u0437\u0430\u0440\u0430\u0445\u043E\u0432\u0430\u043D\u0438\u0439 \u0434\u043E \u0448\u043A\u043E\u043B\u0438 \u043C\u0430\u0433\u0456\u0457 \u043F\u0456\u0434 \u043D\u0430\u0437\u0432\u043E\u044E \u0413\u043E\u0491\u0432\u043E\u0440\u0442\u0441. \u0410 \u0432\u0436\u0435 \u0437\u0430 \u043A\u0456\u043B\u044C\u043A\u0430 \u0442\u0438\u0436\u043D\u0456\u0432 \u0413\u0430\u0440\u0440\u0456 \u043C\u0447\u0430\u0442\u0438\u043C\u0435 \u0432 \u043F\u043E\u0457\u0437\u0434\u0456 \u0413\u043E\u0491\u0432\u043E\u0440\u0442\u0441-\u0435\u043A\u0441\u043F\u0440\u0435\u0441 \u043D\u0430\u0437\u0443\u0441\u0442\u0440\u0456\u0447 \u043D\u043E\u0432\u043E\u043C\u0443 \u0436\u0438\u0442\u0442\u044E, \u0434\u0435 \u043D\u0430 \u043D\u044C\u043E\u0433\u043E \u0447\u0435\u043A\u0430\u044E\u0442\u044C \u043D\u0435\u0439\u043C\u043E\u0432\u0456\u0440\u043D\u0456 \u043F\u0440\u0438\u0433\u043E\u0434\u0438 \u0442\u0430 \u0432\u0456\u0440\u043D\u0456 \u0434\u0440\u0443\u0437\u0456!",
+      "Language": "uk-UA"
+    },
+    {
+      "Title": "\u54C8\u5229\u6CE2\u7279\uFF1A\u795E\u79D8\u7684\u9B54\u6CD5\u77F3",
+      "Overview": "\u4E00\u76F4\u8A8D\u70BA\u81EA\u5DF1\u53EA\u662F\u500B\u5E73\u51E1\u5B64\u5152\u7684\u54C8\u5229\u6CE2\u7279\uFF0C\u610F\u5916\u767C\u73FE\u81EA\u5DF1\u8EAB\u61F7\u9B54\u6CD5\uFF0C\u56E0\u70BA\u88AB\u90AA\u60E1\u5DEB\u5E2B\u6BBA\u5BB3\u7684\u7236\u6BCD\u90FD\u66FE\u662F\u512A\u79C0\u7684\u9B54\u6CD5\u5E2B\u3002\u4ED6\u56E0\u7DE3\u969B\u6703\u5730\u9032\u5165\u970D\u683C\u83EF\u8332\u9B54\u6CD5\u5B78\u9662\u5B78\u7FD2\u5404\u7A2E\u9B54\u6CD5\uFF0C\u4E26\u5728\u9B41\u5730\u5947\u7403\u8CFD\u4E2D\u5C55\u793A\u4E86\u8207\u751F\u4FF1\u4F86\u7684\u624D\u83EF\uFF0C\u6700\u5F8C\u54C8\u5229\u3001\u69AE\u6069\u8207\u5999\u9E97\u4E09\u4F4D\u597D\u670B\u53CB\u5F97\u4E00\u540C\u7834\u58DE\u798F\u723E\u5F97\u6469\u7279\u596A\u53D6\u9EDE\u91D1\u77F3\u7684\u8A08\u756B\uFF0C\u963B\u6B62\u90AA\u60E1\u9670\u8B00\u7684\u767C\u751F\u2026\u2026",
+      "Language": "zh-TW"
+    },
+    {
+      "Title": "Harry Potter i la pedra filosofal",
+      "Overview": "Harry Potter \u00E9s un orfe que viu amb els seus desagradables oncles, els Dursley, i el seu repel\u00B7lent cos\u00ED Dudley. S\u0027acosta el seu onz\u00E8 aniversari i t\u00E9 poques esperances de rebre algun regal, ja que mai ning\u00FA es recorda d\u0027ell. No obstant aix\u00F2, pocs dies abans del seu aniversari, una s\u00E8rie de misterioses cartes dirigides a ell i escrites amb una estrident tinta verda trenquen la monotonia de la seva vida: Harry \u00E9s un mag i els seus pares tamb\u00E9 ho eren.",
+      "Language": "ca-ES"
+    },
+    {
+      "Title": "Harry Potter \u00E0 l\u0027\u00E9cole des sorciers",
+      "Overview": "Orphelin, Harry Potter a \u00E9t\u00E9 recueilli en bas \u00E2ge par sa tante P\u00E9tunia et son oncle Vernon, deux abominables cr\u00E9atures qui, depuis dix ans, prennent un malin plaisir \u00E0 l\u2019humilier, le houspiller et le malmemer. Contraint de se nourrir de restes et de dormir dans un placard infest\u00E9 d\u2019araign\u00E9es, le malheureux est en butte \u00E0 l\u2019hostilit\u00E9 de son cousin Dudley, ob\u00E8se imb\u00E9cile qui ne manque pas une occasion de le rouer de coups. L\u2019ann\u00E9e de ses 11 ans, Harry ne s\u2019attend pas \u00E0 recevoir de cadeaux, pourtant cette ann\u00E9e l\u00E0, une lettre myst\u00E9rieuse va lui parvenir qui va changer son existence...",
+      "Language": "fr-CA"
+    },
+    {
+      "Title": "Harry Potter y la piedra filosofal",
+      "Overview": "Al cumplir los once a\u00F1os, Harry Potter descubre que es un mago y que es hijo de dos destacados hechiceros. Mientras estudia en la escuela Hogwarts de Magia y Hechicer\u00EDa, poco a poco descubre m\u00E1s la verdad sobre la muerte de sus padres hechiceros.",
+      "Language": "es-MX"
+    },
+    {
+      "Title": "Harry Potter i Kamen Mudraca",
+      "Overview": "Na osnovi prvog u nizu popularnih dje\u010Djih romana o Harryju Potteru, J. K. Rowling, akcijski obiteljski avanturisti\u010Dki film \u0022Harry Potter i kamen mudraca\u0022 donosi pri\u010Du o dje\u010Daku koji na svoj jedanaesti ro\u0111endan doznaje da je siro\u010De dvoje mo\u0107nih \u010Darobnjaka i da posjeduje vlastite jedinstvene magi\u010Dne mo\u0107i.\r Pozvan da poha\u0111a \u0160kolu \u010Darobnja\u0161tva i vje\u0161ti\u010Darenja \u0022Hogwarts\u0022, Harry se upu\u0161ta u avanturu svog \u017Eivota. U \u0022Hogwartsu\u0022 pronalazi dom i obitelj koje nikada nije imao.",
+      "Language": "hr-HR"
+    },
+    {
+      "Title": "\u0425\u0430\u0440\u0438 \u041F\u043E\u0442\u044A\u0440 \u0438 \u0424\u0438\u043B\u043E\u0441\u043E\u0444\u0441\u043A\u0438\u044F\u0442 \u043A\u0430\u043C\u044A\u043A",
+      "Overview": "\u0424\u0438\u043B\u043C\u044A\u0442 \u0435 \u0441\u0430\u043C\u043E \u043D\u0430\u0447\u0430\u043B\u043E\u0442\u043E \u043D\u0430 \u0441\u0435\u0440\u0438\u044F\u0442\u0430 \u043E\u0442 \u043F\u0440\u0438\u043A\u043B\u044E\u0447\u0435\u043D\u0438\u044F \u0437\u0430 \u043C\u0430\u043B\u043A\u0438\u044F \u0425\u0430\u0440\u0438, \u043A\u043E\u0439\u0442\u043E \u043E\u0449\u0435 \u043A\u0430\u0442\u043E \u0431\u0435\u0431\u0435 \u0435 \u0437\u0430\u0433\u0443\u0431\u0438\u043B \u0440\u043E\u0434\u0438\u0442\u0435\u043B\u0438\u0442\u0435 \u0441\u0438 \u043F\u0440\u0438 \u043C\u0438\u0441\u0442\u0435\u0440\u0438\u043E\u0437\u0435\u043D \u0438\u043D\u0446\u0438\u0434\u0435\u043D\u0442 \u0438 \u0436\u0438\u0432\u0435\u0435 \u043F\u0440\u0438 \u0434\u043E\u0441\u0430\u0434\u043D\u0438\u0442\u0435 \u0441\u0438 \u043B\u0435\u043B\u044F \u0438 \u0447\u0438\u0447\u043E. \u041D\u043E \u043D\u0430 \u0441\u0432\u043E\u044F 11-\u0438 \u0440\u043E\u0436\u0434\u0435\u043D \u0434\u0435\u043D, \u0442\u043E\u0439 \u043D\u0430\u0443\u0447\u0430\u0432\u0430, \u0447\u0435 \u043F\u0440\u0438\u0442\u0435\u0436\u0430\u0432\u0430 \u043D\u0435\u043E\u0431\u0438\u0447\u0430\u0439\u043D\u0438 \u0434\u0430\u0440\u0431\u0438.",
+      "Language": "bg-BG"
+    },
+    {
+      "Title": "Haris Poteris ir I\u0161minties akmuo",
+      "Overview": "Tai istorija apie berniuk\u0105 Har\u012F Poter\u012F, kuris 10 met\u0173 pragyveno po laiptais ir tik\u0117jo apgaulingais d\u0117d\u0117s ir tetos pasakojimais, kad jo t\u0117vai \u017Euvo autoavarijoje, nors i\u0161 tikr\u0173j\u0173 jie buvo nu\u017Eudyti per Helovyno \u0161vent\u0119.  Per vien\u0105 savo gimtadien\u012F Haris Poteris vis d\u0117lto i\u0161siai\u0161kina vis\u0105 teisyb\u0119 apie t\u0117vus ir apie rand\u0105 savo galvoje. Be to, jis gauna netik\u0117t\u0105 pasi\u016Blym\u0105-lai\u0161k\u0105, kur\u012F atne\u0161\u0117 pa\u0161to pel\u0117da,- mokytis Hogvartso jaun\u0173j\u0173 raganiuk\u0173 ir burtinink\u0173 mokykloje, kur Hario laukia daug draug\u0173 ir daug prie\u0161\u0173. Vienas toki\u0173 yra tamsos lordas Voldemortas, kuris suorganizavo Hario  Poterio t\u0117v\u0173 nu\u017Eudym\u0105, o dabar ketina Anapilin i\u0161si\u0173sti ir talenting\u0105j\u012F berniuk\u0105. Prasideda nepamir\u0161tami nuotykiai: jis i\u0161moksta keis\u010Diausi\u0173 burt\u0173, tampa kvidi\u010Do ( lyg ir krep\u0161inio ant \u0161luot\u0173 ) \u010Dempionu, padeda i\u0161perinti slibini\u016Bk\u0161t\u012F ir, slepiamas neregimojo apsiausto, leid\u017Eiasi \u012F pavojing\u0105 \u017Eyg\u012F. Su keletu tikr\u0173 draug\u0173 Haris Poteris eina pasitikti stebuklingos savo lemties...",
+      "Language": "lt-LT"
+    },
+    {
+      "Title": "Harry Potter og viskusteinninn",
+      "Overview": "",
+      "Language": "is-IS"
+    },
+    {
+      "Title": "Harry Potter og de vises stein",
+      "Overview": "Harry Potter har levd under trappen i sin tante og onkels hus hele sitt liv. Men p\u00E5 hans 11-\u00E5rsdag f\u00E5r han vite at han er en mektig trollmann - med en plass som venter p\u00E5 ham p\u00E5 Galtvort h\u00F8yere skole for hekseri og trolldom. Da han l\u00E6rer seg \u00E5 utnytte sine nye krefter ved hjelp av skolens snille rektor, oppdager Harry sannheten om foreldrenes d\u00F8d - og om skurken som st\u00E5r bak.",
+      "Language": "nb-NO"
+    },
+    {
+      "Title": "Harry Potter v\u00E0 H\u00F2n \u0110\u00E1 Ph\u00F9 Th\u1EE7y",
+      "Overview": "Harry Potter v\u00E0 H\u00F2n \u0110\u00E1 Ph\u00F9 Th\u1EE7y l\u00E0 b\u1ED9 phim \u0111\u1EA7u ti\u00EAn trong series phim \u201CHarry Potter\u201D \u0111\u01B0\u1EE3c x\u00E2y d\u1EF1ng d\u1EF1a tr\u00EAn ti\u1EC3u thuy\u1EBFt c\u1EE7a nh\u00E0 v\u0103n J.K.Rowling. Nh\u00E2n v\u1EADt ch\u00EDnh c\u1EE7a phim, Harry Potter - m\u1ED9t c\u1EADu b\u00E9 11 tu\u1ED5i sau khi m\u1ED3 c\u00F4i cha m\u1EB9 \u0111\u00E3 b\u1ECB g\u1EEDi \u0111\u1EBFn nh\u00E0 d\u00EC d\u01B0\u1EE3ng c\u1EE7a m\u00ECnh, gia \u0111\u00ECnh Dursley. Tuy nhi\u00EAn, c\u1EADu b\u00E9 b\u1ECB ng\u01B0\u1EE3c \u0111\u00E3i v\u00E0 kh\u00F4ng h\u1EC1 bi\u1EBFt v\u1EC1 th\u00E2n ph\u1EADn th\u1EF1c s\u1EF1 c\u1EE7a m\u00ECnh.  V\u00E0o sinh nh\u1EADt th\u1EE9 11 c\u1EE7a Harry, m\u1ED9t ng\u01B0\u1EDDi lai kh\u1ED5ng l\u1ED3 l\u00E0 Rubeus Hagrid \u0111\u00E3 \u0111\u1EBFn t\u00ECm c\u1EADu b\u00E9 \u0111\u1EC3 \u0111\u01B0a c\u1EADu v\u1EC1 tr\u01B0\u1EDDng Ph\u00E1p Thu\u1EADt Hogwarts. L\u00FAc n\u00E0y, Harry m\u1EDBi bi\u1EBFt \u0111\u01B0\u1EE3c m\u00ECnh l\u00E0 ph\u00F9 th\u1EE7y v\u00E0 m\u1ED9t ph\u1EA7n c\u00E2u chuy\u1EC7n v\u1EC1 cha m\u1EB9 m\u00ECnh, nh\u1EEFng ng\u01B0\u1EDDi \u0111\u00E3 b\u1ECB Voldemort gi\u1EBFt h\u1EA1i. C\u00F9ng v\u1EDBi tr\u00ED th\u00F4ng minh v\u00E0 l\u00F2ng d\u0169ng c\u1EA3m, c\u1EADu b\u00E9 \u0111\u00E3 c\u00F9ng nh\u1EEFng ng\u01B0\u1EDDi b\u1EA1n c\u1EE7a m\u00ECnh kh\u00E1m ph\u00E1 nh\u1EEFng \u0111i\u1EC1u b\u00ED m\u1EADt nguy hi\u1EC3m v\u1EC1 th\u1EBF gi\u1EDBi c\u1EE7a ph\u00E9p thu\u1EADt...",
+      "Language": "vi-VN"
+    },
+    {
+      "Title": "\u0647\u0627\u0631\u064A \u0628\u0648\u062A\u0631 \u0648\u062D\u062C\u0631 \u0627\u0644\u0641\u064A\u0644\u0633\u0648\u0641",
+      "Overview": "\u064A\u0644\u062A\u062D\u0642 \u0635\u0628\u064A \u064A\u062A\u064A\u0645 \u0628\u0645\u062F\u0631\u0633\u0629 \u0644\u0644\u0633\u062D\u0631\u060C \u062D\u064A\u062B \u064A\u0643\u062A\u0634\u0641 \u062D\u0642\u064A\u0642\u0629 \u0646\u0641\u0633\u0647 \u0648\u0639\u0627\u0626\u0644\u062A\u0647 \u0648\u0627\u0644\u0634\u0631 \u0627\u0644\u0631\u0647\u064A\u0628 \u0627\u0644\u0630\u064A \u064A\u0637\u0627\u0631\u062F \u0639\u0627\u0644\u0645 \u0627\u0644\u0633\u062D\u0631.",
+      "Language": "ar-SA"
+    },
+    {
+      "Title": "Harry Potter e a Pedra Filosofal",
+      "Overview": "Harry Potter \u00E9 un orfo de 10 anos que vive infeliz cos seus t\u00EDos at\u00E9 que recibe unha carta contendo un convite para ingresar en Hogwarts, unha famosa escola para meigallos novos. Inicialmente \u00E9 impedido de ler as cartas polo t\u00EDo, mais remata por recibir a visita de Hagrid, garda dos campos de Hogwarts, que o leva \u00E1 escola. A partir de a\u00ED, Harry pasa a co\u00F1ecer un mundo m\u00E1xico que endexam\u00E1is imaxinara.",
+      "Language": "gl-ES"
+    },
+    {
+      "Title": "\u54C8\u5229\u6CE2\u7279\uFF1A\u795E\u79D8\u7684\u9B54\u6CD5\u77F3",
+      "Overview": "\u4E00\u76F4\u8A8D\u70BA\u81EA\u5DF1\u53EA\u662F\u500B\u5E73\u51E1\u5B64\u5152\u7684\u54C8\u5229\u6CE2\u7279\uFF0C\u53D7\u76E1\u59E8\u5ABD\u4E00\u5BB6\u4EBA\u7684\u8650\u5F85\uFF0C\u4E00\u5929\u4ED6\u6536\u5230\u970D\u683C\u83EF\u8332\u9B54\u6CD5\u5B78\u6821\u7684\u5165\u5B78\u901A\u77E5\u66F8\uFF0C\u4E26\u9010\u6F38\u767C\u73FE\u4ED6\u7684\u8EAB\u4E16\uFF0C\u9032\u5165\u9B54\u6CD5\u5B78\u6821\u5B78\u7FD2\u9B54\u6CD5\u5F8C\uFF0C\u5728\u5B78\u6821\u88CF\u767C\u751F\u4E86\u4E00\u9023\u4E32\u9A5A\u5947\u6709\u8DA3\u7684\u4E8B\u3002",
+      "Language": "zh-HK"
+    },
+    {
+      "Title": "Harry Potter dan Batu Bertuah",
+      "Overview": "Harry Potter telah tinggal di bawah tangga di rumah bibinya dan rumah pamannya sepanjang hidupnya. Tetapi pada ulang tahunnya yang ke-11, ia mengetahui bahwa ia adalah penyihir yang kuat - dengan tempat yang menunggunya di Sekolah Sihir dan Penyihir Hogwarts. Ketika dia belajar untuk memanfaatkan kekuatan yang baru ditemukannya dengan bantuan kepala sekolah yang ramah, Harry mengungkap kebenaran tentang kematian orangtuanya - dan tentang penjahat yang harus disalahkan.",
+      "Language": "id-ID"
+    },
+    {
+      "Title": "Harry Potter in kamen modrosti",
+      "Overview": "Harry Potter je sirota, ki \u017Eivi s svojo grdo teto in stricem, Dursleyjem in svojim groznim bratrancem Dudleyem. Bli\u017Ea se njegov enajsti rojstni dan in ima malo upanja, da bo prejel kakr\u0161na koli darila, saj se ga nih\u010De nikoli ne spomni. Vendar pa le nekaj dni pred rojstnim dnem niz skrivnostnih pisem, naslovljenih nanj in napisanih s \u0161krlatno zelenim \u010Drnilom, razbije monotonijo njegovega \u017Eivljenja: Harry je \u010Darovnik in tudi njegovi star\u0161i",
+      "Language": "sl-SI"
+    },
+    {
+      "Title": "\u0425\u0430\u0440\u0438 \u041F\u043E\u0442\u0435\u0440 \u0438 \u041A\u0430\u043C\u0435\u043D\u043E\u0442 \u043D\u0430 \u043C\u0443\u0434\u0440\u043E\u0441\u0442\u0430",
+      "Overview": "\u0425\u0430\u0440\u0438 \u041F\u043E\u0442\u0435\u0440 \u0435 \u0441\u0438\u0440\u0430\u043A \u043A\u043E\u0458 \u0436\u0438\u0432\u0435\u0435 \u0441\u043E \u043D\u0435\u0433\u043E\u0432\u0430\u0442\u0430 \u0433\u0430\u0434\u0435\u043D \u0442\u0435\u0442\u043A\u0430 \u0438 \u0447\u0438\u0447\u043A\u043E, \u0414\u0430\u0440\u0441\u043B\u0438\u0441 \u0438 \u043D\u0435\u0433\u043E\u0432\u0430\u0442\u0430 \u0433\u0430\u0434\u0435\u043D \u0431\u0440\u0430\u0442\u0443\u0447\u0435\u0434 \u0414\u0430\u0434\u043B\u0438. \u0422\u043E\u0458 \u0441\u0435 \u043F\u0440\u0438\u0431\u043B\u0438\u0436\u0443\u0432\u0430 \u0434\u043E \u0435\u0434\u0438\u043D\u0430\u0435\u0441\u0435\u0442\u0442\u0438\u043E\u0442 \u0440\u043E\u0434\u0435\u043D\u0434\u0435\u043D \u0438 \u043D\u0435\u043C\u0430 \u043C\u043D\u043E\u0433\u0443 \u043D\u0430\u0434\u0435\u0436 \u0434\u0430 \u043F\u0440\u0438\u043C\u0438 \u043F\u043E\u0434\u0430\u0440\u043E\u0446\u0438, \u0437\u0430\u0442\u043E\u0430 \u0448\u0442\u043E \u043D\u0438\u043A\u043E\u0458 \u043D\u0435 \u0433\u043E \u043F\u0430\u043C\u0435\u0442\u0438. \u0421\u0435\u043F\u0430\u043A, \u0441\u0430\u043C\u043E \u043D\u0435\u043A\u043E\u043B\u043A\u0443 \u0434\u0435\u043D\u0430 \u043F\u0440\u0435\u0434 \u043D\u0435\u0433\u043E\u0432\u0438\u043E\u0442 \u0440\u043E\u0434\u0435\u043D\u0434\u0435\u043D, \u0441\u0435\u0440\u0438\u0458\u0430 \u043C\u0438\u0441\u0442\u0435\u0440\u0438\u043E\u0437\u043D\u0438 \u043F\u0438\u0441\u043C\u0430 \u0443\u043F\u0430\u0442\u0435\u043D\u0438 \u0434\u043E \u043D\u0435\u0433\u043E \u0438 \u043D\u0430\u043F\u0438\u0448\u0430\u043D\u0438 \u0441\u043E \u0437\u0430\u0441\u0438\u043B\u0435\u043D\u043E \u0437\u0435\u043B\u0435\u043D\u043E \u043C\u0430\u0441\u0442\u0438\u043B\u043E \u0458\u0430 \u0440\u0430\u0437\u0431\u0438\u0432\u0430\u0430\u0442 \u043C\u043E\u043D\u043E\u0442\u043E\u043D\u0438\u0458\u0430\u0442\u0430 \u043D\u0430 \u043D\u0435\u0433\u043E\u0432\u0438\u043E\u0442 \u0436\u0438\u0432\u043E\u0442: \u0425\u0430\u0440\u0438 \u0435 \u0432\u043E\u043B\u0448\u0435\u0431\u043D\u0438\u043A \u0438 \u0442\u0430\u043A\u0430 \u0431\u0435\u0430 \u0438 \u043D\u0435\u0433\u043E\u0432\u0438\u0442\u0435 \u0440\u043E\u0434\u0438\u0442\u0435\u043B\u0438",
+      "Language": "mk-MK"
+    },
+    {
+      "Title": "\u10F0\u10D0\u10E0\u10D8 \u10DE\u10DD\u10E2\u10D4\u10E0\u10D8 \u10D3\u10D0 \u10E4\u10D8\u10DA\u10DD\u10E1\u10DD\u10E4\u10D8\u10E3\u10E0\u10D8 \u10E5\u10D5\u10D0",
+      "Overview": "\u10E9\u10D5\u10D4\u10E3\u10DA\u10D4\u10D1\u10E0\u10D8\u10D5 \u10DA\u10DD\u10DC\u10D3\u10DD\u10DC\u10D4\u10DA\u10D8 \u10D1\u10D8\u10ED\u10D8 \u10F0\u10D0\u10E0\u10D8 \u10DE\u10DD\u10E2\u10D4\u10E0\u10D8, \u10E0\u10DD\u10DB\u10D4\u10DA\u10E1\u10D0\u10EA 11 \u10EC\u10D4\u10DA\u10D8 \u10E8\u10D4\u10E3\u10E1\u10E0\u10E3\u10DA\u10D3\u10D0, \u10D8\u10D2\u10D4\u10D1\u10E1 \u10E0\u10DD\u10DB \u10D8\u10E1 \u10DD\u10E0\u10D8 \u10E3\u10EB\u10DA\u10D8\u10D4\u10E0\u10D4\u10E1\u10D8 \u10EF\u10D0\u10D3\u10DD\u10E5\u10E0\u10D8\u10E1 \u10E8\u10D5\u10D8\u10DA\u10D8\u10D0 \u10D3\u10D0 \u10D7\u10D5\u10D8\u10D7\u10DD\u10DC\u10D0\u10EA \u10DB\u10D0\u10D2\u10D8\u10E3\u10E0 \u10EB\u10D0\u10DA\u10D0\u10E1 \u10E4\u10DA\u10DD\u10D1\u10E1. \u10EE\u10DD\u10D2\u10D5\u10D0\u10E0\u10D3\u10D8\u10E1 \u10E1\u10D9\u10DD\u10DA\u10D0\u10E8\u10D8, \u10E1\u10D0\u10D3\u10D0\u10EA \u10D0\u10E1\u10EC\u10D0\u10D5\u10DA\u10D8\u10D0\u10DC \u10EF\u10D0\u10D3\u10DD\u10E5\u10E0\u10DD\u10D1\u10D0\u10E1 \u10F0\u10D0\u10E0\u10D8 \u10D0\u10E0\u10D0\u10E9\u10D5\u10D4\u10E3\u10DA\u10D4\u10D1\u10E0\u10D8\u10D5\u10D8 \u10D7\u10D0\u10D5\u10D2\u10D0\u10D3\u10D0\u10E1\u10D5\u10DA\u10D4\u10D1\u10D8\u10E1 \u10DD\u10E0\u10DD\u10DB\u10E2\u10E0\u10D8\u10D0\u10DA\u10E8\u10D8 \u10D0\u10E6\u10DB\u10DD\u10E9\u10DC\u10D3\u10D4\u10D1\u10D0...",
+      "Language": "ka-GE"
+    },
+    {
+      "Title": "Harry Potter eta Sorgin-Harria",
+      "Overview": "Harry Potter mutiko famatua da, bere gurasoengatik. Gurasoak hil zirenez, bere osaba-izeba eta bere lehengusu Dudley-kin biziko da, baina etxe horretan inork ez du Harry maite. Bere izeba eta Harryren ama, ez ziren oso ondo konpontzen eta horren ondorioz, Harryri kalte egingo dio. Harry Potterren egun guztiak berdintsuak dira, baina egun batean gutun bat helduko zaio, Hogwarts eskolan onartuko dutela jakinaraziko diote. Momentu horretatik Harryren bizitzak bira handi bat emango du. Eskola hartan benetako lagunak egingo ditu eta magia egiten ikasiko du.",
+      "Language": "eu-ES"
+    },
+    {
+      "Title": "Hari Poter kaj la \u015Ctono de la Sa\u011Duloj",
+      "Overview": "",
+      "Language": "eo-EO"
+    },
+    {
+      "Title": "Harry Potter en de Steen der Wijzen",
+      "Overview": "De jonge Harry Potter woont na de dood van zijn ouders bij zijn oom en tante, waar hij slecht wordt behandeld en voortdurend de pesterijen van zijn verwende neefje moet ondergaan. Op zijn elfde verjaardag verneemt Harry dat zijn ouders machtige tovenaars waren en dat ook hij unieke magische krachten heeft.",
+      "Language": "nl-BE"
+    },
+    {
+      "Title": "\u0939\u0948\u0930\u0940 \u092A\u094C\u091F\u0930 \u0914\u0930 \u092A\u093E\u0930\u0938 \u092A\u0924\u094D\u0925\u0930",
+      "Overview": "",
+      "Language": "hi-IN"
+    },
+    {
+      "Title": "\u0DC4\u0DD0\u0DBB\u0DD3 \u0DB4\u0DDC\u0DA7\u0DBB\u0DCA \u0DC3\u0DC4 \u0DB8\u0DCF\u0DBA\u0DCF \u0D9C\u0DBD",
+      "Overview": "\u0DC4\u0DD0\u0DBB\u0DD3 \u0DB4\u0DDC\u0DA7\u0DBB\u0DCA, \u0D94\u0DC4\u0DD4\u0D9C\u0DDA \u0DB8\u0DCF\u0DBA\u0DCF\u0D9A\u0DCF\u0DBB\u0DD3 \u0DB1\u0DDC\u0DC0\u0DB1 (\u0D9A\u0DD4\u0DAB\u0DD4 \u0DBD\u0DDA) \u0DB1\u0DD0\u0DB1\u0DCA\u0DAF\u0DCF, \u0DB8\u0DCF\u0DB8\u0DCF \u0DC3\u0DC4 \u0DA5\u0DCF\u0DAD\u0DD2 \u0DC3\u0DC4\u0DDD\u0DAF\u0DBB\u0DBA\u0DCF \u0DC3\u0DB8\u0D9F \u0DAF\u0DD4\u0D9A\u0DCA\u0D9B\u0DD2\u0DAD, \u0DC3\u0DCF\u0DB8\u0DCF\u0DB1\u0DCA\u200D\u0DBA \u0DA2\u0DD3\u0DC0\u0DD2\u0DAD\u0DBA\u0D9A\u0DCA \u0D9C\u0DAD \u0D9A\u0DBB \u0D87\u0DAD. \u0D94\u0DC4\u0DD4\u0D9C\u0DDA \u0D91\u0D9A\u0DDC\u0DC5\u0DDC\u0DC3\u0DCA\u0DC0\u0DB1 \u0D8B\u0DB4\u0DB1\u0DCA\u0DAF\u0DD2\u0DB1\u0DBA\u0DDA\u0DAF\u0DD3, \u0DBA\u0DDD\u0DB0 \u0DBB\u0DD6\u0DB6\u0DD2\u0DBA\u0DC3\u0DCA \u0DC4\u0DD0\u0D9C\u0DCA\u200D\u0DBB\u0DD2\u0DA9\u0DCA \u0DC4\u0DD0\u0DBB\u0DD3\u0DA7 \u0DAF\u0DB1\u0DCA\u0DC0\u0DB1\u0DCA\u0DB1\u0DDA \u0D94\u0DC4\u0DD4 \u0DB8\u0DCF\u0DBA\u0DCF\u0D9A\u0DCF\u0DBB\u0DBA\u0DD9\u0D9A\u0DD4 \u0DB6\u0DC0\u0DAD\u0DCA, \u0D94\u0DC4\u0DD4\u0D9C\u0DDA \u0DAF\u0DD9\u0DB8\u0DC0\u0DCA\u0DB4\u0DD2\u0DBA\u0DB1\u0DCA \u0D85\u0DB3\u0DD4\u0DBB\u0DD4 \u0DB8\u0DCF\u0DBA\u0DCF\u0D9A\u0DCF\u0DBB\u0DBA\u0DD9\u0D9A\u0DD4 \u0DC0\u0DB1 \u0DC0\u0DDC\u0DBD\u0DCA\u0DA9\u0DCA\u0DB8\u0DDD\u0DBB\u0DCA\u0DA7\u0DCA \u0DC0\u0DD2\u0DC3\u0DD2\u0DB1\u0DCA \u0D9D\u0DCF\u0DAD\u0DB1\u0DBA \u0D9A\u0DBB\u0DB1 \u0DBD\u0DAF \u0DB6\u0DC0\u0DAD\u0DCA\u0DBA. \u0DC4\u0DD0\u0DBB\u0DD3 \u0DC0 \u0DC5\u0DAF\u0DBB\u0DD4 \u0D85\u0DC0\u0DB0\u0DD2\u0DBA\u0DDA \u0DAF\u0DD3 \u0DB8\u0DBB\u0DCF \u0DAF\u0DD0\u0DB8\u0DD3\u0DB8\u0DA7 \u0D8B\u0DAD\u0DCA\u0DC3\u0DCF\u0DC4 \u0D9A\u0DC5 \u0DC0\u0DD2\u0DA7 \u0DC0\u0DDC\u0DBD\u0DCA\u0DA9\u0DCA\u0DB8\u0DDD\u0DBB\u0DCA\u0DA7\u0DCA \u0D85\u0DB7\u0DD2\u0DBB\u0DC4\u0DC3\u0DCA \u0DBD\u0DD9\u0DC3 \u0DB4\u0DBB\u0DCF\u0DA2\u0DBA\u0DA7 \u0DB4\u0DAD\u0DCA \u0DC0\u0DD6 \u0D85\u0DAD\u0DBB, \u0DC4\u0DD0\u0DBB\u0DD3\u0D9C\u0DDA \u0DB1\u0DC5\u0DBD\u0DD9\u0DC4\u0DD2 \u0D85\u0D9A\u0DD4\u0DAB\u0DD4 \u0DC3\u0DD0\u0DBB \u0D9A\u0DD0\u0DC5\u0DBD\u0D9A\u0DCA \u0DB4\u0DB8\u0DAB\u0D9A\u0DCA \u0D89\u0DAD\u0DD2\u0DBB\u0DD2 \u0DC0\u0DD2\u0DBA.",
+      "Language": "si-LK"
+    },
+    {
+      "Title": "Harri Potter v\u0259 F\u0259ls\u0259f\u0259 Da\u015F\u0131",
+      "Overview": "Harri Potter b\u00FCt\u00FCn \u00F6mr\u00FC boyu xalas\u0131 v\u0259 \u0259misinin evind\u0259, pill\u0259k\u0259n alt\u0131ndak\u0131 ki\u00E7ik bir m\u0259kanda ya\u015Fay\u0131b. Lakin 11 ya\u015F\u0131 tamam olan g\u00FCn o, g\u00FCcl\u00FC bir sehrbaz oldu\u011Funu v\u0259 Hoqvarts Sehr v\u0259 Cadug\u0259rlik M\u0259kt\u0259bind\u0259 onun \u00FC\u00E7\u00FCn yer ayr\u0131ld\u0131\u011F\u0131n\u0131 \u00F6yr\u0259nir. M\u0259kt\u0259bin mehriban direktorunun k\u00F6m\u0259yi il\u0259 yeni k\u0259\u015Ff etdiyi sehrli g\u00FCcl\u0259rd\u0259n istifad\u0259 etm\u0259yi \u00F6yr\u0259n\u0259rk\u0259n, Harri valideynl\u0259rinin \u00F6l\u00FCm\u00FC v\u0259 buna s\u0259b\u0259b olan \u015F\u0259r q\u00FCvv\u0259 haqq\u0131ndak\u0131 h\u0259qiq\u0259ti \u00FCz\u0259 \u00E7\u0131xar\u0131r.",
+      "Language": "az-AZ"
+    }
+  ],
+  "Recommendations": [
+    {
+      "TmdbId": 672,
+      "Title": "Harry Potter and the Chamber of Secrets"
+    },
+    {
+      "TmdbId": 673,
+      "Title": "Harry Potter and the Prisoner of Azkaban"
+    },
+    {
+      "TmdbId": 674,
+      "Title": "Harry Potter and the Goblet of Fire"
+    },
+    {
+      "TmdbId": 12445,
+      "Title": "Harry Potter and the Deathly Hallows: Part 2"
+    },
+    {
+      "TmdbId": 12444,
+      "Title": "Harry Potter and the Deathly Hallows: Part 1"
+    },
+    {
+      "TmdbId": 767,
+      "Title": "Harry Potter and the Half-Blood Prince"
+    },
+    {
+      "TmdbId": 630,
+      "Title": "The Wizard of Oz"
+    },
+    {
+      "TmdbId": 10439,
+      "Title": "Hocus Pocus"
+    },
+    {
+      "TmdbId": 6435,
+      "Title": "Practical Magic"
+    },
+    {
+      "TmdbId": 10957,
+      "Title": "The Black Cauldron"
+    }
+  ],
+  "Credits": {
+    "Cast": [
+      {
+        "Name": "Daniel Radcliffe",
+        "Order": 0,
+        "Character": "Harry Potter",
+        "TmdbId": 10980,
+        "CreditId": "52fe4267c3a36847f801be91",
+        "Images": [
+          {
+            "CoverType": "Headshot",
+            "Url": "https://image.tmdb.org/t/p/original/uUFfo8RANo7tuckB6AZAnESne55.jpg"
+          }
+        ]
+      },
+      {
+        "Name": "Rupert Grint",
+        "Order": 1,
+        "Character": "Ron Weasley",
+        "TmdbId": 10989,
+        "CreditId": "52fe4267c3a36847f801beb9",
+        "Images": [
+          {
+            "CoverType": "Headshot",
+            "Url": "https://image.tmdb.org/t/p/original/iFlkpTaOF6fGLqxz8b0PhI0i0zN.jpg"
+          }
+        ]
+      },
+      {
+        "Name": "Emma Watson",
+        "Order": 2,
+        "Character": "Hermione Granger",
+        "TmdbId": 10990,
+        "CreditId": "531736ea92514138c00010a3",
+        "Images": [
+          {
+            "CoverType": "Headshot",
+            "Url": "https://image.tmdb.org/t/p/original/mf0OANvWYSzU1d8yggrhyw8IbIz.jpg"
+          }
+        ]
+      },
+      {
+        "Name": "Richard Harris",
+        "Order": 3,
+        "Character": "Albus Dumbledore",
+        "TmdbId": 194,
+        "CreditId": "52fe4267c3a36847f801be81",
+        "Images": [
+          {
+            "CoverType": "Headshot",
+            "Url": "https://image.tmdb.org/t/p/original/oJIS8QUOCfLUhsfK7kROkLHVyJh.jpg"
+          }
+        ]
+      },
+      {
+        "Name": "Tom Felton",
+        "Order": 4,
+        "Character": "Draco Malfoy",
+        "TmdbId": 10993,
+        "CreditId": "52fe4267c3a36847f801bec9",
+        "Images": [
+          {
+            "CoverType": "Headshot",
+            "Url": "https://image.tmdb.org/t/p/original/etmtUBzJ1i1XJTLS6MkotJFE1se.jpg"
+          }
+        ]
+      },
+      {
+        "Name": "Alan Rickman",
+        "Order": 5,
+        "Character": "Severus Snape",
+        "TmdbId": 4566,
+        "CreditId": "52fe4267c3a36847f801bed5",
+        "Images": [
+          {
+            "CoverType": "Headshot",
+            "Url": "https://image.tmdb.org/t/p/original/7tADZs4ILE93oJ5pAh6mKQFEq2m.jpg"
+          }
+        ]
+      },
+      {
+        "Name": "Robbie Coltrane",
+        "Order": 6,
+        "Character": "Hagrid",
+        "TmdbId": 1923,
+        "CreditId": "52fe4267c3a36847f801be89",
+        "Images": [
+          {
+            "CoverType": "Headshot",
+            "Url": "https://image.tmdb.org/t/p/original/kK4YIz7SUdhbPndApdi12CsZ43K.jpg"
+          }
+        ]
+      },
+      {
+        "Name": "Maggie Smith",
+        "Order": 7,
+        "Character": "Professor McGonagall",
+        "TmdbId": 10978,
+        "CreditId": "52fe4267c3a36847f801be85",
+        "Images": [
+          {
+            "CoverType": "Headshot",
+            "Url": "https://image.tmdb.org/t/p/original/hjoWy2WB7RayROumynH3wuCa9aL.jpg"
+          }
+        ]
+      },
+      {
+        "Name": "Richard Griffiths",
+        "Order": 8,
+        "Character": "Uncle Vernon Dursley",
+        "TmdbId": 10983,
+        "CreditId": "52fe4267c3a36847f801be9d",
+        "Images": [
+          {
+            "CoverType": "Headshot",
+            "Url": "https://image.tmdb.org/t/p/original/j4dwpPT91cRkx0yMGu76jORKNfX.jpg"
+          }
+        ]
+      },
+      {
+        "Name": "Ian Hart",
+        "Order": 9,
+        "Character": "Professor Quirrell / Voldemort (voice)",
+        "TmdbId": 10985,
+        "CreditId": "52fe4267c3a36847f801bea5",
+        "Images": [
+          {
+            "CoverType": "Headshot",
+            "Url": "https://image.tmdb.org/t/p/original/xMC8aPDwhEZcjRHEFcgytSr3BzM.jpg"
+          }
+        ]
+      },
+      {
+        "Name": "Fiona Shaw",
+        "Order": 10,
+        "Character": "Aunt Petunia Dursley",
+        "TmdbId": 10981,
+        "CreditId": "52fe4267c3a36847f801be95",
+        "Images": [
+          {
+            "CoverType": "Headshot",
+            "Url": "https://image.tmdb.org/t/p/original/8X7fZybxtwh2nTvYk6kjRYo9RIY.jpg"
+          }
+        ]
+      },
+      {
+        "Name": "John Hurt",
+        "Order": 11,
+        "Character": "Mr Ollivander",
+        "TmdbId": 5049,
+        "CreditId": "52fe4267c3a36847f801beb1",
+        "Images": [
+          {
+            "CoverType": "Headshot",
+            "Url": "https://image.tmdb.org/t/p/original/bjNSzt1d7uK3q5PbtFXUJrRt4qg.jpg"
+          }
+        ]
+      },
+      {
+        "Name": "David Bradley",
+        "Order": 12,
+        "Character": "Mr Filch",
+        "TmdbId": 11180,
+        "CreditId": "55022362c3a3685bab003478",
+        "Images": [
+          {
+            "CoverType": "Headshot",
+            "Url": "https://image.tmdb.org/t/p/original/znpkwHitb3pcaJbUmgDqG0YenYp.jpg"
+          }
+        ]
+      },
+      {
+        "Name": "Matthew Lewis",
+        "Order": 13,
+        "Character": "Neville Longbottom",
+        "TmdbId": 96841,
+        "CreditId": "52fe4267c3a36847f801bed1",
+        "Images": [
+          {
+            "CoverType": "Headshot",
+            "Url": "https://image.tmdb.org/t/p/original/aPQCLK2gxWOallsFoEwjb1p9lWE.jpg"
+          }
+        ]
+      },
+      {
+        "Name": "Sean Biggerstaff",
+        "Order": 14,
+        "Character": "Oliver Wood",
+        "TmdbId": 11179,
+        "CreditId": "5502218bc3a3685ba6003950",
+        "Images": [
+          {
+            "CoverType": "Headshot",
+            "Url": "https://image.tmdb.org/t/p/original/6g9cQWg3ikD3xboDtyF8qKdpmgl.jpg"
+          }
+        ]
+      },
+      {
+        "Name": "Warwick Davis",
+        "Order": 15,
+        "Character": "Goblin Bank Teller / Professor Flitwick / Griphook (voice)",
+        "TmdbId": 11184,
+        "CreditId": "54ecf79cc3a3680be60022eb",
+        "Images": [
+          {
+            "CoverType": "Headshot",
+            "Url": "https://image.tmdb.org/t/p/original/vUwjgAYcBEcCv0OVAN00qUUXX3V.jpg"
+          }
+        ]
+      },
+      {
+        "Name": "Harry Melling",
+        "Order": 16,
+        "Character": "Dudley Dursley",
+        "TmdbId": 10982,
+        "CreditId": "52fe4267c3a36847f801be99",
+        "Images": [
+          {
+            "CoverType": "Headshot",
+            "Url": "https://image.tmdb.org/t/p/original/b0pHwi2MeqxEpeWnF4Llihu53aJ.jpg"
+          }
+        ]
+      },
+      {
+        "Name": "James Phelps",
+        "Order": 17,
+        "Character": "Fred Weasley",
+        "TmdbId": 96851,
+        "CreditId": "58f1c6b29251412fb9004a38",
+        "Images": [
+          {
+            "CoverType": "Headshot",
+            "Url": "https://image.tmdb.org/t/p/original/dk7kTamtnbgSA40Lg00aE36hljs.jpg"
+          }
+        ]
+      },
+      {
+        "Name": "Oliver Phelps",
+        "Order": 18,
+        "Character": "George Weasley",
+        "TmdbId": 140368,
+        "CreditId": "58f1c6bd9251412fb9004a3f",
+        "Images": [
+          {
+            "CoverType": "Headshot",
+            "Url": "https://image.tmdb.org/t/p/original/kb00uK7sCDB5K6tiH5rav9kzAfl.jpg"
+          }
+        ]
+      },
+      {
+        "Name": "John Cleese",
+        "Order": 19,
+        "Character": "Nearly Headless Nick",
+        "TmdbId": 8930,
+        "CreditId": "55021c2a9251413da800389e",
+        "Images": [
+          {
+            "CoverType": "Headshot",
+            "Url": "https://image.tmdb.org/t/p/original/nQpBf77cStmR35V0XOinm2zZMWG.jpg"
+          }
+        ]
+      },
+      {
+        "Name": "Chris Rankin",
+        "Order": 20,
+        "Character": "Percy Weasley",
+        "TmdbId": 10992,
+        "CreditId": "52fe4267c3a36847f801bec5",
+        "Images": [
+          {
+            "CoverType": "Headshot",
+            "Url": "https://image.tmdb.org/t/p/original/bGrWreM4CeXWLJ7VulJnXoJfSgj.jpg"
+          }
+        ]
+      },
+      {
+        "Name": "Alfred Enoch",
+        "Order": 21,
+        "Character": "Dean Thomas",
+        "TmdbId": 234923,
+        "CreditId": "57b42075c3a3686f6d004933",
+        "Images": [
+          {
+            "CoverType": "Headshot",
+            "Url": "https://image.tmdb.org/t/p/original/eEVvPHmxRBcEGqtoTujncmwNDhR.jpg"
+          }
+        ]
+      },
+      {
+        "Name": "Devon Murray",
+        "Order": 22,
+        "Character": "Seamus Finnegan",
+        "TmdbId": 234922,
+        "CreditId": "58f1c6d89251412fdf00498c",
+        "Images": [
+          {
+            "CoverType": "Headshot",
+            "Url": "https://image.tmdb.org/t/p/original/2z6tYeavTWh7muPvfTOKEZGyjjM.jpg"
+          }
+        ]
+      },
+      {
+        "Name": "Jamie Waylett",
+        "Order": 23,
+        "Character": "Crabbe",
+        "TmdbId": 956224,
+        "CreditId": "58f1c6f49251412fdf00499c",
+        "Images": [
+          {
+            "CoverType": "Headshot",
+            "Url": "https://image.tmdb.org/t/p/original/2Eg3ImAsq5c5tNAyJFHcFC1lejf.jpg"
+          }
+        ]
+      },
+      {
+        "Name": "Josh Herdman",
+        "Order": 24,
+        "Character": "Goyle",
+        "TmdbId": 11212,
+        "CreditId": "58f1c7019251412ff4004a3b",
+        "Images": [
+          {
+            "CoverType": "Headshot",
+            "Url": "https://image.tmdb.org/t/p/original/dUWM0gIhQJayVTp30EsoafhLOWt.jpg"
+          }
+        ]
+      },
+      {
+        "Name": "Zo\u00EB Wanamaker",
+        "Order": 25,
+        "Character": "Madam Hooch",
+        "TmdbId": 20240,
+        "CreditId": "52fe4267c3a36847f801bed9",
+        "Images": [
+          {
+            "CoverType": "Headshot",
+            "Url": "https://image.tmdb.org/t/p/original/keFC6KG1ewLW0ZaP7YkmLVECRrQ.jpg"
+          }
+        ]
+      },
+      {
+        "Name": "Julie Walters",
+        "Order": 26,
+        "Character": "Mrs Weasley",
+        "TmdbId": 477,
+        "CreditId": "52fe4267c3a36847f801becd",
+        "Images": [
+          {
+            "CoverType": "Headshot",
+            "Url": "https://image.tmdb.org/t/p/original/bCTkV2OUgzbJdQEoCk3GesE4DXq.jpg"
+          }
+        ]
+      },
+      {
+        "Name": "Bonnie Wright",
+        "Order": 27,
+        "Character": "Ginny Weasley",
+        "TmdbId": 10991,
+        "CreditId": "52fe4267c3a36847f801bec1",
+        "Images": [
+          {
+            "CoverType": "Headshot",
+            "Url": "https://image.tmdb.org/t/p/original/7iJeSYYbysCiQgvoRDs2m4jiROu.jpg"
+          }
+        ]
+      },
+      {
+        "Name": "Luke Youngblood",
+        "Order": 28,
+        "Character": "Lee Jordan",
+        "TmdbId": 871100,
+        "CreditId": "58f1c7379251412fb1004a5a",
+        "Images": [
+          {
+            "CoverType": "Headshot",
+            "Url": "https://image.tmdb.org/t/p/original/fUHblnZSNAf1AnbPLMhDE16Sen.jpg"
+          }
+        ]
+      },
+      {
+        "Name": "Verne Troyer",
+        "Order": 29,
+        "Character": "Griphook",
+        "TmdbId": 10987,
+        "CreditId": "52fe4267c3a36847f801bead",
+        "Images": [
+          {
+            "CoverType": "Headshot",
+            "Url": "https://image.tmdb.org/t/p/original/iNjzleUvrnhN4PDuuJerF2SCFfn.jpg"
+          }
+        ]
+      }
+    ],
+    "Crew": [
+      {
+        "Name": "Chris Columbus",
+        "Order": 0,
+        "Job": "Director",
+        "Department": "Directing",
+        "TmdbId": 10965,
+        "CreditId": "52fe4267c3a36847f801be05",
+        "Images": [
+          {
+            "CoverType": "Headshot",
+            "Url": "https://image.tmdb.org/t/p/original/yCyEz90NqjEXKZ7HYcEhDXlLlPc.jpg"
+          }
+        ]
+      },
+      {
+        "Name": "Steve Kloves",
+        "Order": 1,
+        "Job": "Screenplay",
+        "Department": "Writing",
+        "TmdbId": 10967,
+        "CreditId": "52fe4267c3a36847f801be11",
+        "Images": [
+          {
+            "CoverType": "Headshot",
+            "Url": "https://image.tmdb.org/t/p/original/cqXWKsUKcAClzlwzMuShLWVBQPz.jpg"
+          }
+        ]
+      },
+      {
+        "Name": "David Heyman",
+        "Order": 2,
+        "Job": "Producer",
+        "Department": "Production",
+        "TmdbId": 10968,
+        "CreditId": "52fe4267c3a36847f801be17",
+        "Images": [
+          {
+            "CoverType": "Headshot",
+            "Url": "https://image.tmdb.org/t/p/original/m39R6xbVfHfCEO4H0s2Fhwh9mkt.jpg"
+          }
+        ]
+      },
+      {
+        "Name": "Chris Columbus",
+        "Order": 3,
+        "Job": "Executive Producer",
+        "Department": "Production",
+        "TmdbId": 10965,
+        "CreditId": "5569059a92514173b3000126",
+        "Images": [
+          {
+            "CoverType": "Headshot",
+            "Url": "https://image.tmdb.org/t/p/original/yCyEz90NqjEXKZ7HYcEhDXlLlPc.jpg"
+          }
+        ]
+      },
+      {
+        "Name": "Duncan Henderson",
+        "Order": 4,
+        "Job": "Executive Producer",
+        "Department": "Production",
+        "TmdbId": 6870,
+        "CreditId": "556905b19251416b04000524",
+        "Images": []
+      },
+      {
+        "Name": "Michael Barnathan",
+        "Order": 5,
+        "Job": "Executive Producer",
+        "Department": "Production",
+        "TmdbId": 17828,
+        "CreditId": "55690584c3a3687698000132",
+        "Images": [
+          {
+            "CoverType": "Headshot",
+            "Url": "https://image.tmdb.org/t/p/original/2XAesngkOyEycG4r7tDJy9cPEq6.jpg"
+          }
+        ]
+      },
+      {
+        "Name": "Mark Radcliffe",
+        "Order": 6,
+        "Job": "Executive Producer",
+        "Department": "Production",
+        "TmdbId": 11222,
+        "CreditId": "556905bdc3a36854890004a4",
+        "Images": [
+          {
+            "CoverType": "Headshot",
+            "Url": "https://image.tmdb.org/t/p/original/1jXjMIPGdcyTzGtVgGmlMIYMDnD.jpg"
+          }
+        ]
+      },
+      {
+        "Name": "John Seale",
+        "Order": 7,
+        "Job": "Director of Photography",
+        "Department": "Camera",
+        "TmdbId": 2702,
+        "CreditId": "52fe4267c3a36847f801be23",
+        "Images": [
+          {
+            "CoverType": "Headshot",
+            "Url": "https://image.tmdb.org/t/p/original/zXPBy00hdpW41TAtvxPnJP2NxbB.jpg"
+          }
+        ]
+      },
+      {
+        "Name": "J.K. Rowling",
+        "Order": 8,
+        "Job": "Novel",
+        "Department": "Writing",
+        "TmdbId": 10966,
+        "CreditId": "52fe4267c3a36847f801be0b",
+        "Images": [
+          {
+            "CoverType": "Headshot",
+            "Url": "https://image.tmdb.org/t/p/original/8VDx3K8NBGJDEWr4KdsGsuT8wuj.jpg"
+          }
+        ]
+      },
+      {
+        "Name": "Simon Finney",
+        "Order": 9,
+        "Job": "Camera Operator",
+        "Department": "Camera",
+        "TmdbId": 1430188,
+        "CreditId": "6716a84983bb33cf3e509051",
+        "Images": [
+          {
+            "CoverType": "Headshot",
+            "Url": "https://image.tmdb.org/t/p/original/emoOw435IIt0xhGhAOYIj4l2Up5.jpg"
+          }
+        ]
+      },
+      {
+        "Name": "John Williams",
+        "Order": 10,
+        "Job": "Original Music Composer",
+        "Department": "Sound",
+        "TmdbId": 491,
+        "CreditId": "52fe4267c3a36847f801be1d",
+        "Images": [
+          {
+            "CoverType": "Headshot",
+            "Url": "https://image.tmdb.org/t/p/original/wswitHP5jQNvsIxd6Yypa1Crmn1.jpg"
+          }
+        ]
+      },
+      {
+        "Name": "Stephenie McMillan",
+        "Order": 11,
+        "Job": "Set Decoration",
+        "Department": "Art",
+        "TmdbId": 5331,
+        "CreditId": "52fe4267c3a36847f801be53",
+        "Images": [
+          {
+            "CoverType": "Headshot",
+            "Url": "https://image.tmdb.org/t/p/original/hsDEB3aN8hCU2eysNM7DRCoDcXR.jpg"
+          }
+        ]
+      },
+      {
+        "Name": "Greg Powell",
+        "Order": 12,
+        "Job": "Stunt Coordinator",
+        "Department": "Crew",
+        "TmdbId": 10976,
+        "CreditId": "52fe4267c3a36847f801be7d",
+        "Images": [
+          {
+            "CoverType": "Headshot",
+            "Url": "https://image.tmdb.org/t/p/original/dSzgUFmauLnaKNzhf1j0R9s9Qsu.jpg"
+          }
+        ]
+      },
+      {
+        "Name": "Gary Powell",
+        "Order": 13,
+        "Job": "Stunts",
+        "Department": "Crew",
+        "TmdbId": 1398107,
+        "CreditId": "64a1d44781da39014d4a8e98",
+        "Images": [
+          {
+            "CoverType": "Headshot",
+            "Url": "https://image.tmdb.org/t/p/original/eUxi90MIr0coNyRK516dzEzElfA.jpg"
+          }
+        ]
+      },
+      {
+        "Name": "Simon Williams",
+        "Order": 14,
+        "Job": "Modelling Supervisor",
+        "Department": "Visual Effects",
+        "TmdbId": 32160,
+        "CreditId": "6771efb0e9cac07ec412a421",
+        "Images": [
+          {
+            "CoverType": "Headshot",
+            "Url": "https://image.tmdb.org/t/p/original/zBsPN0SdZuYGZxaOwNEj6IpvAZs.jpg"
+          }
+        ]
+      },
+      {
+        "Name": "David R. Ellis",
+        "Order": 15,
+        "Job": "Second Unit Director",
+        "Department": "Directing",
+        "TmdbId": 4755,
+        "CreditId": "5c55e372c3a36805e882e967",
+        "Images": [
+          {
+            "CoverType": "Headshot",
+            "Url": "https://image.tmdb.org/t/p/original/zw1ccRyxUBy0y7JDdXTZAYg96xd.jpg"
+          }
+        ]
+      },
+      {
+        "Name": "John Richardson",
+        "Order": 16,
+        "Job": "Special Effects Supervisor",
+        "Department": "Visual Effects",
+        "TmdbId": 1513639,
+        "CreditId": "56ed8d8fc3a36822600077de",
+        "Images": []
+      },
+      {
+        "Name": "Jane Jenkins",
+        "Order": 17,
+        "Job": "Casting",
+        "Department": "Production",
+        "TmdbId": 3275,
+        "CreditId": "52fe4267c3a36847f801be3b",
+        "Images": []
+      },
+      {
+        "Name": "Susie Figgis",
+        "Order": 18,
+        "Job": "Casting",
+        "Department": "Production",
+        "TmdbId": 1302,
+        "CreditId": "52fe4267c3a36847f801be2f",
+        "Images": [
+          {
+            "CoverType": "Headshot",
+            "Url": "https://image.tmdb.org/t/p/original/yW6eiXF0CEXCHpqxqvEUZmq2mUq.jpg"
+          }
+        ]
+      },
+      {
+        "Name": "Stuart Craig",
+        "Order": 19,
+        "Job": "Production Design",
+        "Department": "Art",
+        "TmdbId": 5491,
+        "CreditId": "52fe4267c3a36847f801be47",
+        "Images": [
+          {
+            "CoverType": "Headshot",
+            "Url": "https://image.tmdb.org/t/p/original/iI9F5WDkTrkxMHlAdq9XVXkfP3i.jpg"
+          }
+        ]
+      },
+      {
+        "Name": "Nick Davis",
+        "Order": 20,
+        "Job": "Visual Effects Supervisor",
+        "Department": "Visual Effects",
+        "TmdbId": 256928,
+        "CreditId": "69b07a107116cc828957731f",
+        "Images": [
+          {
+            "CoverType": "Headshot",
+            "Url": "https://image.tmdb.org/t/p/original/xiS6GP2se6qJFEDyKuQCcQa9Ced.jpg"
+          }
+        ]
+      },
+      {
+        "Name": "Graham Churchyard",
+        "Order": 21,
+        "Job": "Costume Supervisor",
+        "Department": "Costume \u0026 Make-Up",
+        "TmdbId": 1323295,
+        "CreditId": "56ed8753c3a368224e007345",
+        "Images": [
+          {
+            "CoverType": "Headshot",
+            "Url": "https://image.tmdb.org/t/p/original/xxRDb60lI0QX7tdxELT0gnvQtBg.jpg"
+          }
+        ]
+      },
+      {
+        "Name": "Judianna Makovsky",
+        "Order": 22,
+        "Job": "Costume Design",
+        "Department": "Costume \u0026 Make-Up",
+        "TmdbId": 10970,
+        "CreditId": "52fe4267c3a36847f801be59",
+        "Images": [
+          {
+            "CoverType": "Headshot",
+            "Url": "https://image.tmdb.org/t/p/original/k6Kfa6qIePTmu83zrStsDhKTTZg.jpg"
+          }
+        ]
+      },
+      {
+        "Name": "Drew Struzan",
+        "Order": 23,
+        "Job": "Art Designer",
+        "Department": "Art",
+        "TmdbId": 1198496,
+        "CreditId": "67db2fb52dba6686257f7db3",
+        "Images": [
+          {
+            "CoverType": "Headshot",
+            "Url": "https://image.tmdb.org/t/p/original/xTpTC2YUCI5vwyWDuMDL7mqhNvW.jpg"
+          }
+        ]
+      },
+      {
+        "Name": "Janine Modder",
+        "Order": 24,
+        "Job": "Production Supervisor",
+        "Department": "Production",
+        "TmdbId": 1408795,
+        "CreditId": "69dbf0268334d7060c02750b",
+        "Images": []
+      },
+      {
+        "Name": "Chris Lyons",
+        "Order": 25,
+        "Job": "Special Effects Makeup Artist",
+        "Department": "Costume \u0026 Make-Up",
+        "TmdbId": 1635006,
+        "CreditId": "69804773ac79b87201b212b8",
+        "Images": []
+      },
+      {
+        "Name": "Paula DuPr\u00E9 Pesmen",
+        "Order": 26,
+        "Job": "Associate Producer",
+        "Department": "Production",
+        "TmdbId": 11711,
+        "CreditId": "569fe34cc3a36858cb009b4e",
+        "Images": [
+          {
+            "CoverType": "Headshot",
+            "Url": "https://image.tmdb.org/t/p/original/ej4dBVNJfvnFPpHgk9tEIa80n2f.jpg"
+          }
+        ]
+      },
+      {
+        "Name": "Zoe Tahir",
+        "Order": 27,
+        "Job": "Hairstylist",
+        "Department": "Costume \u0026 Make-Up",
+        "TmdbId": 1425971,
+        "CreditId": "69f14a79b9ed04aac999b3fe",
+        "Images": [
+          {
+            "CoverType": "Headshot",
+            "Url": "https://image.tmdb.org/t/p/original/ucuABvzZxh4xJLeBcgsoKMB3ziO.jpg"
+          }
+        ]
+      },
+      {
+        "Name": "Ben Shepherd",
+        "Order": 28,
+        "Job": "CG Animator",
+        "Department": "Visual Effects",
+        "TmdbId": 1379051,
+        "CreditId": "65b3fb9ea0f1a2017abebb55",
+        "Images": [
+          {
+            "CoverType": "Headshot",
+            "Url": "https://image.tmdb.org/t/p/original/gxPt7fOkA6yrGXPgmXSfG1bO5iH.jpg"
+          }
+        ]
+      },
+      {
+        "Name": "Richard Francis-Bruce",
+        "Order": 29,
+        "Job": "Editor",
+        "Department": "Editing",
+        "TmdbId": 6581,
+        "CreditId": "52fe4267c3a36847f801be29",
+        "Images": [
+          {
+            "CoverType": "Headshot",
+            "Url": "https://image.tmdb.org/t/p/original/pZUcIBbaWsX64d5Qy3SyGKcl88U.jpg"
+          }
+        ]
+      }
+    ]
+  },
+  "Studio": "Warner Bros. Pictures",
+  "YoutubeTrailerId": "l91Km49W9qI",
+  "Certifications": [
+    {
+      "Country": "AR",
+      "Certification": "ATP"
+    },
+    {
+      "Country": "AT",
+      "Certification": "6"
+    },
+    {
+      "Country": "AU",
+      "Certification": "PG"
+    },
+    {
+      "Country": "BE",
+      "Certification": "6"
+    },
+    {
+      "Country": "BR",
+      "Certification": "L"
+    },
+    {
+      "Country": "CA",
+      "Certification": "PG"
+    },
+    {
+      "Country": "CH",
+      "Certification": "12"
+    },
+    {
+      "Country": "CZ",
+      "Certification": "U"
+    },
+    {
+      "Country": "DE",
+      "Certification": "6"
+    },
+    {
+      "Country": "DK",
+      "Certification": "11"
+    },
+    {
+      "Country": "ES",
+      "Certification": "7"
+    },
+    {
+      "Country": "FI",
+      "Certification": "K-12"
+    },
+    {
+      "Country": "FR",
+      "Certification": "TP"
+    },
+    {
+      "Country": "GB",
+      "Certification": "PG"
+    },
+    {
+      "Country": "GR",
+      "Certification": "K"
+    },
+    {
+      "Country": "HK",
+      "Certification": "IIA"
+    },
+    {
+      "Country": "HU",
+      "Certification": "16"
+    },
+    {
+      "Country": "ID",
+      "Certification": "SU"
+    },
+    {
+      "Country": "IE",
+      "Certification": "PG"
+    },
+    {
+      "Country": "IL",
+      "Certification": "All"
+    },
+    {
+      "Country": "IN",
+      "Certification": "U"
+    },
+    {
+      "Country": "IT",
+      "Certification": "T"
+    },
+    {
+      "Country": "JP",
+      "Certification": "G"
+    },
+    {
+      "Country": "KR",
+      "Certification": "ALL"
+    },
+    {
+      "Country": "MO",
+      "Certification": "B"
+    },
+    {
+      "Country": "MX",
+      "Certification": "A"
+    },
+    {
+      "Country": "NL",
+      "Certification": "6"
+    },
+    {
+      "Country": "NO",
+      "Certification": "9"
+    },
+    {
+      "Country": "NZ",
+      "Certification": "PG"
+    },
+    {
+      "Country": "PH",
+      "Certification": "PG"
+    },
+    {
+      "Country": "PL",
+      "Certification": "12"
+    },
+    {
+      "Country": "PT",
+      "Certification": "M/6"
+    },
+    {
+      "Country": "RO",
+      "Certification": "AP"
+    },
+    {
+      "Country": "RU",
+      "Certification": "12\u002B"
+    },
+    {
+      "Country": "SE",
+      "Certification": "11"
+    },
+    {
+      "Country": "SG",
+      "Certification": "PG"
+    },
+    {
+      "Country": "SK",
+      "Certification": "12"
+    },
+    {
+      "Country": "TH",
+      "Certification": "13"
+    },
+    {
+      "Country": "TR",
+      "Certification": "10\u002B"
+    },
+    {
+      "Country": "TW",
+      "Certification": "0\u002B"
+    },
+    {
+      "Country": "UA",
+      "Certification": "0\u002B"
+    },
+    {
+      "Country": "US",
+      "Certification": "PG"
+    },
+    {
+      "Country": "ZA",
+      "Certification": "PG"
+    }
+  ],
+  "Status": null,
+  "Collection": {
+    "TmdbId": 1241,
+    "Name": "Harry Potter Collection",
+    "Images": null,
+    "Overview": null,
+    "Translations": null,
+    "Parts": null
+  },
+  "Homepage": "https://www.warnerbros.com/movies/harry-potter-and-sorcerers-stone"
+}

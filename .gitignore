@@ -1,0 +1,5 @@
+target/
+src-tauri/target-test/
+node_modules/
+.superpowers/
+target-test/

@@ -1,0 +1,18 @@
+<Config>
+  <Port>8989</Port>
+  <EnableSsl>False</EnableSsl>
+  <LogLevel>debug</LogLevel>
+  <UrlBase></UrlBase>
+  <LaunchBrowser>True</LaunchBrowser>
+  <AuthenticationMethod>Forms</AuthenticationMethod>
+  <AuthenticationRequired>DisabledForLocalAddresses</AuthenticationRequired>
+  <Branch>main</Branch>
+  <InstanceName>Sonarr</InstanceName>
+  <ApiKey>00000000000000000000000000000000</ApiKey>
+  <BindAddress>*</BindAddress>
+  <SslPort>9898</SslPort>
+  <SslCertPath></SslCertPath>
+  <SslCertPassword></SslCertPassword>
+  <AllowedHosts></AllowedHosts>
+  <TrustedNetworks></TrustedNetworks>
+</Config>

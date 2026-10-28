@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <script>
+    /* Never a blank page inside Jellyfin's web pages: if Chillarr hasn't drawn
+       anything at all in 15 s, or one of its scripts fails to even parse or
+       finds a name missing before then, this goes to Jellyfin's own home and
+       loader.js stays out of the way for the rest of the visit. A separate
+       script in ES5 on purpose, so it runs on browsers the app itself can't.
+       The desktop app (not under /web/chillarr-) skips it. */
+    (function () {
+      if (!/\/web\/chillarr-[^\/]+\//.test(location.pathname)) return;
+      var done = false;
+      function out() {
+        if (done || window.__CHILLARR_BOOTED__) return;
+        done = true;
+        try { sessionStorage.setItem("chillarr_fallback", "1"); } catch (e) { /* storage blocked */ }
+        location.replace("../index.html#/home");
+      }
+      setTimeout(out, 15000);
+      window.addEventListener("error", function (e) {
+        var err = e && e.error, file = (e && e.filename) || "";
+        if (window.__CHILLARR_BOOTED__ || !err || file.indexOf("/web/chillarr-") < 0) return;
+        if (err instanceof SyntaxError || err instanceof ReferenceError) out();
+      });
+    })();
+  </script>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0b0c10">
+  <title>Chillarr</title>
+  <link rel="icon" href="logo.svg">
+  <link rel="stylesheet" href="styles.css">
+  <!-- Hover-card trailers: have the connection to YouTube ready before the first one -->
+  <link rel="preconnect" href="https://www.youtube-nocookie.com">
+  <link rel="preconnect" href="https://i.ytimg.com">
+</head>
+<body>
+  <a class="skip" href="#view">Skip to content</a>
+
+  <header class="topbar" id="topbar">
+    <a class="brand" href="#home" aria-label="Chillarr home">
+      <img src="logo.svg" alt="" width="30" height="30">
+      <span>Chillarr</span>
+    </a>
+    <nav class="tabs" aria-label="Sections">
+      <!-- On a phone these are the bar along the bottom, with icons and short names. -->
+      <a href="#home" data-tab="home"><svg class="tab-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></svg><span>Home</span></a>
+      <a href="#movies" data-tab="movies"><svg class="tab-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v16H4zM8 4v16M16 4v16M4 9h4M4 15h4M16 9h4M16 15h4"/></svg><span>Movies</span></a>
+      <a href="#series" data-tab="series"><svg class="tab-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h18v12H3zM8 3l4 4 4-4"/></svg><span>Series</span></a>
+      <a href="#anime" data-tab="anime"><svg class="tab-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l2.4 5.6L20 11l-5.6 2.4L12 19l-2.4-5.6L4 11l5.6-2.4z"/></svg><span>Anime</span></a>
+      <a href="#downloads" data-tab="downloads"><svg class="tab-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg><span class="t-long">My downloads</span><span class="t-short">Downloads</span></a>
+      <a href="#mylist" data-tab="mylist"><svg class="tab-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span>My List</span></a>
+    </nav>
+    <div class="top-actions">
+      <label class="search">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input id="search" type="search" placeholder="Movies, series, anime" aria-label="Search" spellcheck="false" autocomplete="off">
+      </label>
+      <button class="icon-btn together-btn" id="together-btn" aria-label="Watch together" title="Watch together"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 19v-1a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v1"/><circle cx="9.5" cy="7" r="3"/><path d="M21 19v-1a4 4 0 0 0-3-3.9M15.5 4.1a3 3 0 0 1 0 5.8"/></svg></button>
+      <button class="icon-btn" id="fs-btn" aria-label="Full screen" title="Full screen (F11)"><svg viewBox="0 0 24 24" aria-hidden="true"><path class="fs-in" d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/><path class="fs-out" d="M9 4v5H4M20 9h-5V4M15 20v-5h5M4 15h5v5"/></svg></button>
+      <a class="icon-btn" href="#settings" data-tab="settings" aria-label="Settings" title="Settings">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+        <span class="health-dot" id="health-dot" data-level="unknown"></span>
+      </a>
+      <span id="profile-slot"></span>
+    </div>
+  </header>
+
+  <main id="view" tabindex="-1"></main>
+
+  <!-- Watch together (syncplay.js) -->
+  <dialog class="ask together" id="together" aria-label="Watch together"></dialog>
+
+  <!-- Who's watching? (profiles.js) -->
+  <section class="profiles" id="profiles" hidden aria-label="Profiles"></section>
+
+  <!-- Detail: what a title is, and play or download it -->
+  <dialog class="detail" id="detail" aria-labelledby="detail-title">
+    <div class="detail-hero" id="detail-hero">
+      <button class="close" id="detail-close" aria-label="Close">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
+      <div class="detail-head">
+        <h2 id="detail-title"></h2>
+        <p class="meta" id="detail-meta"></p>
+        <div class="actions" id="detail-actions"></div>
+      </div>
+    </div>
+    <div class="detail-body">
+      <p class="overview" id="detail-overview"></p>
+      <section class="ep-pick" id="detail-pick" hidden></section>
+      <section class="about" id="detail-about" hidden></section>
+      <section class="episodes" id="detail-episodes" hidden>
+        <div class="episodes-head">
+          <h3>Episodes</h3>
+          <select id="season-pick" aria-label="Season"></select>
+        </div>
+        <ol id="episode-list"></ol>
+      </section>
+      <section class="where" id="detail-where" aria-label="Where you're at" hidden></section>
+    </div>
+  </dialog>
+
+  <!-- Player -->
+  <section class="player" id="player" hidden aria-label="Player">
+    <video id="video" playsinline crossorigin="anonymous"></video>
+    <div class="p-subs" id="p-subs" aria-hidden="true"></div>
+    <div class="p-top">
+      <button class="p-btn" id="p-back" aria-label="Back">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
+      </button>
+      <div class="p-title"><strong id="p-title"></strong><span id="p-sub"></span></div>
+      <button class="p-btn together-btn" id="p-together" aria-label="Watch together" title="Watch together"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 19v-1a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v1"/><circle cx="9.5" cy="7" r="3"/><path d="M21 19v-1a4 4 0 0 0-3-3.9M15.5 4.1a3 3 0 0 1 0 5.8"/></svg></button>
+    </div>
+    <div class="p-center" id="p-spinner" hidden><span class="spinner"></span></div>
+    <!-- The big play / pause sign after a click or Space (player.js) -->
+    <div class="p-center"><span class="p-flash" id="p-flash"><svg viewBox="0 0 24 24" aria-hidden="true"><path id="p-flash-icon" d="M8 5v14l11-7z"/></svg></span></div>
+    <!-- Watch now: the wait before the first minutes are in (player.js) -->
+    <div class="p-wait" id="p-wait" hidden>
+      <div class="p-wait-bg" id="p-wait-bg"></div>
+      <div class="p-wait-box">
+        <span class="p-wait-kicker">Watch now</span>
+        <p class="p-wait-stage" id="p-wait-stage" aria-live="polite"></p>
+        <div class="p-wait-bar"><span id="p-wait-fill"></span></div>
+      </div>
+    </div>
+    <!-- Skip intro / recap, and the next episode at the credits (player.js) -->
+    <button class="p-skip" id="p-skip" type="button"></button>
+    <div class="p-upnext" id="p-upnext" role="dialog" aria-label="Next episode"></div>
+    <div class="p-bottom">
+      <div class="p-seek">
+        <input type="range" id="p-seek" min="0" max="1000" value="0" step="1" aria-label="Seek">
+        <span class="p-seek-tip" id="p-seek-tip" hidden><span class="p-seek-pic" id="p-seek-pic" hidden></span><span id="p-seek-time"></span></span>
+        <div class="p-times"><span id="p-now">0:00</span><span id="p-left">0:00</span></div>
+      </div>
+      <div class="p-controls">
+        <button class="p-btn" id="p-play" aria-label="Play or pause"><svg viewBox="0 0 24 24" aria-hidden="true"><path id="p-play-icon" d="M8 5v14l11-7z"/></svg></button>
+        <button class="p-btn" id="p-back10" aria-label="Back 10 seconds"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 6 5 12l6 6M19 6l-6 6 6 6"/></svg></button>
+        <button class="p-btn" id="p-fwd10" aria-label="Forward 10 seconds"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m13 6 6 6-6 6M5 6l6 6-6 6"/></svg></button>
+        <label class="p-vol"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9z"/><path d="M16 9a4 4 0 0 1 0 6"/></svg><input type="range" id="p-volume" min="0" max="3" step="0.05" value="1" aria-label="Volume"></label>
+        <span class="p-spacer"></span>
+        <button class="p-btn p-text" id="p-next" hidden>Next episode</button>
+        <div class="p-menu-wrap">
+          <button class="p-btn" id="p-tracks" aria-label="Audio and subtitles" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 12h4M13 12h4M7 15h7"/></svg></button>
+          <div class="p-menu" id="p-menu" hidden></div>
+        </div>
+        <button class="p-btn" id="p-full" aria-label="Full screen"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+      </div>
+      <!-- Controller mode: big buttons and the pad's glyphs, filled by player.js -->
+      <div class="pad-bar" id="pad-bar" role="toolbar" aria-label="Controller controls"></div>
+      <div class="pad-hints" id="pad-hints" aria-hidden="true"></div>
+    </div>
+    <div class="pad-panel" id="pad-panel" hidden></div>
+    <div class="pad-osd" id="pad-osd" aria-live="polite"></div>
+  </section>
+
+  <!-- First-run setup -->
+  <section class="setup" id="setup" hidden aria-labelledby="setup-title"></section>
+
+  <!-- Questions that need a yes -->
+  <dialog class="ask" id="ask">
+    <form method="dialog">
+      <h2 id="ask-title"></h2>
+      <p id="ask-body"></p>
+      <ul id="ask-list"></ul>
+      <div class="ask-actions">
+        <button class="btn ghost" value="no">Not now</button>
+        <button class="btn primary" value="yes" id="ask-yes">Install</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+  <script src="vendor/hls.min.js"></script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
