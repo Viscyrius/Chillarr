@@ -56,3 +56,8 @@ cd src-tauri
 cargo test --lib
 cargo tauri build
 ```
+
+## License
+
+Chillarr is free software under the [GNU General Public License v3.0](LICENSE), the same licence as Sonarr and Radarr.
+

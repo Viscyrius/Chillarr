@@ -3,6 +3,7 @@ name = "chillarr"
 version = "0.9.1"
 description = "Keeps Prowlarr, Sonarr, Radarr, FlareSolverr and qBittorrent running and fixed"
 authors = ["Viscyrius"]
+license = "GPL-3.0-or-later"
 edition = "2021"
 
 [lib]
