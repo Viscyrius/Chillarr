@@ -1007,7 +1007,8 @@ async fn run_as_user_step(app: &AppHandle, rep: &mut FixReport) {
     }
     // All of them on one Windows prompt.
     let script = procs::ps_all(&lines);
-    let done = tokio::task::spawn_blocking(move || procs::run_elevated(&script)).await.unwrap_or_else(|e| Err(e.to_string()));
+    // A folder of a long-used app holds many files, and each is changed in turn.
+    let done = tokio::task::spawn_blocking(move || procs::run_elevated_for(&script, 300_000)).await.unwrap_or_else(|e| Err(e.to_string()));
     for (id, scan) in list {
         if !todo.contains(&id) {
             continue;

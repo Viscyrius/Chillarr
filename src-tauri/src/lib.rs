@@ -692,11 +692,11 @@ async fn set_settings(app: AppHandle, mut s: settings::Settings) -> Result<Vec<A
         let st = app.state::<SettingsState>();
         // Chillarr's own record of what Defender already allows, never the window's copy.
         s.defender_allowed = st.current.lock().unwrap().defender_allowed.clone();
+        // Theme has its own command; the window's copy may be older.
+        s.theme = st.current.lock().unwrap().theme.clone();
         settings::save(&st.path, &s)?;
         let remux_changed = st.current.lock().unwrap().skip_remux != s.skip_remux;
         let dubs_changed = st.current.lock().unwrap().skip_dubs != s.skip_dubs || st.current.lock().unwrap().audio_pref != s.audio_pref;
-        // Theme has its own command; the window's copy may be older.
-        s.theme = st.current.lock().unwrap().theme.clone();
         *st.current.lock().unwrap() = s.clone();
         if remux_changed {
             let a = app.clone();

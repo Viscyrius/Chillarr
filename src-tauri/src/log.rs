@@ -43,8 +43,8 @@ fn append_file(line: &LogLine) {
 /// their indexer test errors, and those errors are logged as-is. A quoted
 /// value (`Token="..."`, JSON `"apiKey": "..."`) is hidden up to its closing quote.
 pub fn redact(text: &str) -> String {
-    const KEYS: [&str; 13] = [
-        "apikey=", "api_key=", "x-api-key: ", "token=", "x-emby-token: ", "\"apikey\":", "\"api_key\":", "\"token\":", "\"accesstoken\":", "password=", "\"password\":", "\"pw\":", "<apikey>",
+    const KEYS: [&str; 15] = [
+        "apikey=", "api_key=", "x-api-key: ", "token=", "x-emby-token: ", "\"apikey\":", "\"api_key\":", "\"token\":", "\"accesstoken\":", "password=", "\"password\":", "\"pw\":", "<apikey>", "\"attemptedvalue\":", "\"propertyvalue\":",
     ];
     let lower = text.to_ascii_lowercase();
     let bytes = text.as_bytes();
@@ -70,7 +70,7 @@ pub fn redact(text: &str) -> String {
                 let c = bytes[i];
                 let end = match quote {
                     Some(q) => c == q || c == b'\n',
-                    None => matches!(c, b'&' | b' ' | b']' | b'"' | b'\'' | b'\n' | b'\r' | b',' | b'}' | b';'),
+                    None => matches!(c, b'&' | b' ' | b']' | b'"' | b'\'' | b'\n' | b'\r' | b',' | b'}' | b';' | b'<'),
                 };
                 if end {
                     break;
@@ -138,6 +138,8 @@ mod tests {
         assert_eq!(redact(r#"{"token":"t0k3n"}"#), r#"{"token":"***"}"#);
         assert_eq!(redact(r#"{"Pw":"hunter22","x":1}"#), r#"{"Pw":"***","x":1}"#);
         assert_eq!(redact("password=hunter22&next=1"), "password=***&next=1");
+        assert_eq!(redact(r#"{"attemptedValue":"hunter22"}"#), r#"{"attemptedValue":"***"}"#);
+        assert_eq!(redact("<ApiKey>abc123</ApiKey>"), "<ApiKey>***</ApiKey>");
         assert_eq!(redact("Token='abc def'"), "Token='***'");
         // An unquoted value still stops at the usual places.
         assert_eq!(redact("token=abc,next"), "token=***,next");

@@ -111,7 +111,7 @@ pub async fn save(app: &AppHandle) -> Result<String, String> {
         section(&mut out, "Jellyfin's log", jf.and_then(|d| newest(&d, "log_")).and_then(|f| tail(&f, PER_LOG)));
         let qb = mine.as_ref().and_then(|d| d.parent().map(|p| p.join("qBittorrent").join("logs").join("qbittorrent.log")));
         section(&mut out, "qBittorrent's log", qb.and_then(|f| tail(&f, PER_LOG)));
-        std::fs::write(&path, out).map_err(|e| format!("Couldn't save the logs: {e}"))
+        std::fs::write(&path, redact(&out)).map_err(|e| format!("Couldn't save the logs: {e}"))
     })
     .await
     .map_err(|e| e.to_string())??;

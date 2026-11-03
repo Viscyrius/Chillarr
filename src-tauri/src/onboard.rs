@@ -1041,18 +1041,27 @@ pub async fn one_tray_icon(app: &AppHandle) {
             continue;
         }
         let Some(arr) = crate::arr::Arr::new(&cfg) else { continue };
-        if arr.shutdown().await.is_err() {
-            continue;
-        }
-        for _ in 0..30 {
+        // An error here can still mean it's closing, so what counts is whether it goes.
+        let _ = arr.shutdown().await;
+        let mut gone = false;
+        for _ in 0..40 {
             tokio::time::sleep(Duration::from_millis(500)).await;
             let check = tray_name.clone();
             if !tokio::task::spawn_blocking(move || crate::procs::process_running(&check)).await.unwrap_or(false) {
+                gone = true;
                 break;
             }
         }
-        if let Err(e) = crate::procs::start_arr(&exe, id.label()) {
-            log(app, Level::Red, e);
+        // Still up: it stays as it is. A second copy beside it would quit anyway.
+        if !gone {
+            continue;
+        }
+        match crate::procs::start_arr(&exe, id.label()) {
+            // Answering before the first check, which would otherwise start another.
+            Ok(()) => {
+                crate::procs::wait_until(&cfg.base_url, 30).await;
+            }
+            Err(e) => log(app, Level::Red, e),
         }
     }
     let mut rep = fix::FixReport::default();

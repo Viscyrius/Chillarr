@@ -18,6 +18,7 @@ async function loadForm() {
   state.movies = [...(f.movies || [])];
   state.series = [...(f.series || [])];
   state.custom = !!(state.movies.length || state.series.length);
+  state.audio = store.settings?.audio_pref || "sub";
   if (suggest) { state.base = suggest.path; state.free = suggest.free; }
   state.loaded = true;
 }
@@ -74,6 +75,7 @@ async function showForm() {
     e.preventDefault();
     err.textContent = "";
     const req = { audio_pref: state.audio };
+    store.settings.audio_pref = state.audio;
     if (state.custom) {
       if (!state.movies.length || !state.series.length) { err.textContent = "Add at least one movie folder and one series folder."; return; }
       req.movies = state.movies; req.series = state.series; req.downloads = state.downloads;
