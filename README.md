@@ -70,9 +70,11 @@ Chillarr's look also runs inside Jellyfin's own web pages. That means your phone
 
 You need Windows 10 or 11.
 
-Releases are on the way. Until then, build it yourself (see [Build](#build)).
+Download `Chillarr_x.y.z_x64-setup.exe` from [Releases](../../releases) and run it. The installer isn't signed yet, so Windows SmartScreen may warn you the first time: choose More info, then Run anyway.
 
-The first time you open Chillarr, setup asks where movies, series and anime go, sets up Jellyfin, and installs whatever is missing.
+The first time you open Chillarr, one screen asks for a folder, a login, your audio choice and a colour. Press Set up Chillarr and it installs and connects everything else. Windows asks for permission once.
+
+If something goes wrong, Settings > Logs > Save logs makes one file to send. Keys and passwords are hidden.
 
 ## What it changes on your PC
 
