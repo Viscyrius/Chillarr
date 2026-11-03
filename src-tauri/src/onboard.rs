@@ -1052,9 +1052,16 @@ pub async fn one_tray_icon(app: &AppHandle) {
                 break;
             }
         }
-        // Still up: it stays as it is. A second copy beside it would quit anyway.
         if !gone {
-            continue;
+            // Still answering: the close didn't take, so it stays as it is.
+            if crate::procs::port_open(&cfg.base_url).await {
+                continue;
+            }
+            // Its server closed but the tray process stays (measured on Sonarr and
+            // Radarr 4.x/6.x, 2026-11-03). It holds the app's lock, so a new copy
+            // would quit: this one has to go.
+            let name = tray_name.clone();
+            let _ = tokio::task::spawn_blocking(move || crate::procs::force_close(&name)).await;
         }
         match crate::procs::start_arr(&exe, id.label()) {
             // Answering before the first check, which would otherwise start another.

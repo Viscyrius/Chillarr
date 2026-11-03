@@ -338,8 +338,9 @@ async fn start_if_down(app: &AppHandle, cfg: &AppConfig, trigger: Trigger, rep: 
                 log(app, Level::Ok, &msg);
                 rep.actions.push(msg);
             } else {
-                // The button tries once more: an old copy stuck without answering holds the app's lock.
-                if cfg.id.is_arr() && cfg.service.is_none() && trigger == Trigger::Button {
+                // One more try: an old copy stuck without answering holds the app's lock.
+                // Safe from the background too: it hasn't answered for this whole wait.
+                if cfg.id.is_arr() && cfg.service.is_none() {
                     if let Some(exe) = cfg.exe.clone() {
                         let (a, b) = (format!("{name}.exe"), format!("{name}.Console.exe"));
                         let _ = tokio::task::spawn_blocking(move || {
