@@ -106,9 +106,11 @@ export function tile(t, wide = false, rank = 0) {
 }
 
 /* ---------- Hover preview card ---------- */
-// The card grows out of the poster (transform + opacity only, on its own
-// layer), its picture is fetched and decoded while the pointer is still
-// settling, and after a moment it fades into a muted trailer snippet.
+// A poster opens like a door: the poster stays under the pointer, a little
+// larger, and the details swing out to the side with room to read, with the
+// trailer playing above them. Wide cards (Continue watching) already are the
+// picture, so they just grow. Its picture is fetched and decoded while the
+// pointer is still settling, and the trailer takes over once it's clean.
 let preview = null;
 let previewTimer;
 let leaveTimer;
@@ -163,7 +165,12 @@ function trailerId(t) {
 
 const REMOVE = "M18 6 6 18M6 6l12 12";
 
-function previewCard(t) {
+/* The card's fixed size: the shape never depends on what's loaded, so it opens in one go. */
+const INFO_W = 356;
+const CARD_H = 418;
+const POSTER_W = Math.round(CARD_H * 2 / 3);
+
+function previewCard(t, door) {
   const actions = el("div", { class: "pv-actions" });
   const act = (fn) => (e) => { e.stopPropagation(); hidePreview(true); fn(); };
   const round = (cls, label, path, onclick) => el("button", { class: `pv-btn ${cls}`, "aria-label": label, title: label, onclick: act(onclick) }, icon(path));
@@ -199,12 +206,17 @@ function previewCard(t) {
   else if (isWatchNow(t)) meta.push(el("span", { class: "owned", text: t.status || "Watch now" }));
   else if (t.jf_id) meta.push(el("span", { class: "owned", text: "In your library" }));
   else if (t.status) meta.push(el("span", { class: "owned", text: t.status }));
-  return el("div", { class: "preview", role: "dialog", "aria-label": t.title },
-    el("div", { class: "pv-art" }, pic, el("strong", { class: "pv-title", text: t.title })),
-    el("div", { class: "pv-body" }, actions,
+  const info = el("div", { class: "pv-info" },
+    el("div", { class: "pv-art" }, pic),
+    el("div", { class: "pv-body" },
+      el("strong", { class: "pv-title", text: t.title }),
       meta.length ? el("div", { class: "pv-meta" }, meta) : null,
       t.overview ? el("p", { class: "pv-overview", text: t.overview }) : null,
-      t.genres?.length ? el("div", { class: "pv-genres" }, t.genres.slice(0, 3).map((g) => el("span", { text: g }))) : null));
+      t.genres?.length ? el("div", { class: "pv-genres" }, t.genres.slice(0, 3).map((g) => el("span", { text: g }))) : null,
+      actions));
+  const poster = door ? el("div", { class: "pv-poster" }, el("img", { src: t.poster, alt: "", decoding: "async" }),
+    t.progress != null && (t.jf_id || t.status) ? el("div", { class: "pv-progress" }, el("span", { style: `width:${Math.round(t.progress * 100)}%` })) : null) : null;
+  return el("div", { class: door ? "preview door" : "preview", role: "dialog", "aria-label": t.title }, poster, info);
 }
 
 /** My List from the card: flips in place, the card stays open. */
@@ -246,23 +258,44 @@ async function showPreview(anchor, t) {
   hidePreview();
   trailerId(t); // look it up while the card grows
   const r = art.getBoundingClientRect();
-  const w = Math.min(Math.max(r.width * 2, 340), 420);
-  const left = Math.min(Math.max(12, r.left + r.width / 2 - w / 2), innerWidth - w - 12);
-  const card = previewCard(t);
-  const h = w * 9 / 16 + (t.overview ? 186 : 120) + (t.genres?.length ? 36 : 0);
+  // A portrait poster with room to open beside it; otherwise the card alone.
+  const door = !!t.poster && r.height > r.width && innerWidth >= POSTER_W + INFO_W + 40;
+  const w = door ? POSTER_W + INFO_W : Math.min(Math.max(r.width * 1.5, 340), INFO_W + 40);
+  const h = door ? CARD_H : w * 9 / 16 + (CARD_H - INFO_W * 9 / 16);
+  const cx = r.left + r.width / 2;
+  // The poster stays under the pointer. It opens to the right unless that runs off the screen.
+  const flip = door && cx + POSTER_W / 2 + INFO_W > innerWidth - 12;
+  let left = door ? (flip ? cx + POSTER_W / 2 - w : cx - POSTER_W / 2) : cx - w / 2;
+  left = Math.min(Math.max(12, left), innerWidth - w - 12);
   const top = Math.min(Math.max(76, r.top + r.height / 2 - h / 2), innerHeight - h - 12);
-  card.style.cssText = `left:${left}px;top:${top}px;width:${w}px`;
+  const card = previewCard(t, door);
+  if (flip) card.classList.add("flip");
+  card.style.cssText = `left:${left}px;top:${top}px;width:${w}px;height:${h}px;--pw:${POSTER_W}px`;
   card.addEventListener("mouseenter", () => clearTimeout(leaveTimer));
   card.addEventListener("mouseleave", () => leaveSoon());
   card.addEventListener("click", () => { hidePreview(true); open(t); });
   document.body.append(card);
-  // Grow out of the poster: start at the poster's centre and width.
-  const dx = r.left + r.width / 2 - (left + w / 2);
-  const dy = r.top + r.height / 2 - (top + h / 2);
-  card.animate(
-    [{ opacity: 0, transform: `translate(${dx}px, ${dy}px) scale(${Math.max(0.5, r.width / w)})` }, { opacity: 1, transform: "none" }],
-    { duration: 300, easing: "cubic-bezier(0.16, 1, 0.3, 1)" },
-  );
+  const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (door && !still) {
+    // The part over the poster starts at the poster's exact size and place, and the rest is uncovered from it.
+    const px = flip ? w - POSTER_W : 0;
+    const s = Math.max(0.5, r.width / POSTER_W);
+    const dx = cx - (left + px + POSTER_W / 2);
+    const dy = r.top + r.height / 2 - (top + h / 2);
+    card.style.transformOrigin = `${px + POSTER_W / 2}px ${h / 2}px`;
+    const shut = flip ? `inset(0 0 0 ${w - POSTER_W}px round 10px)` : `inset(0 ${w - POSTER_W}px 0 0 round 10px)`;
+    card.animate(
+      [{ transform: `translate(${dx}px, ${dy}px) scale(${s})`, clipPath: shut }, { transform: "none", clipPath: "inset(0 0 0 0 round 10px)" }],
+      { duration: 340, easing: "cubic-bezier(0.16, 1, 0.3, 1)" },
+    );
+  } else if (!still) {
+    const dx = cx - (left + w / 2);
+    const dy = r.top + r.height / 2 - (top + h / 2);
+    card.animate(
+      [{ opacity: 0, transform: `translate(${dx}px, ${dy}px) scale(${Math.max(0.5, r.width / w)})` }, { opacity: 1, transform: "none" }],
+      { duration: 300, easing: "cubic-bezier(0.16, 1, 0.3, 1)" },
+    );
+  }
   preview = card;
   clearTimeout(trailerTimer);
   trailerTimer = setTimeout(() => startTrailer(card, t), TRAILER_DELAY);

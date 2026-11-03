@@ -126,9 +126,21 @@ impl Procs {
     }
 }
 
-/// An `*arr` app's own tray exe (Sonarr here), told not to open a browser tab.
+/// `Sonarr.Console.exe` beside `Sonarr.exe`: the same app with no tray icon.
+pub fn console_of(exe: &Path) -> Option<std::path::PathBuf> {
+    let stem = exe.file_stem()?.to_string_lossy().to_string();
+    if stem.ends_with(".Console") {
+        return None;
+    }
+    let c = exe.with_file_name(format!("{stem}.Console.exe"));
+    c.exists().then_some(c)
+}
+
+/// An `*arr` app with no tray icon of its own (Chillarr's is the only one) and
+/// no browser tab. Its tray version only if a very old install has nothing else.
 pub fn start_arr(exe: &Path, name: &str) -> Result<(), String> {
-    Command::new(exe)
+    let run = console_of(exe).unwrap_or_else(|| exe.to_path_buf());
+    Command::new(&run)
         .arg("/nobrowser")
         .current_dir(exe.parent().unwrap_or(Path::new(".")))
         .creation_flags(DETACHED_PROCESS | CREATE_NO_WINDOW)
@@ -162,13 +174,49 @@ pub fn start_jellyfin(exe: &Path, webdir: Option<&Path>) -> Result<(), String> {
         .map_err(|e| format!("Couldn't start Jellyfin: {e}"))
 }
 
-/// qBittorrent opens minimized and does not take focus.
+/// Any top-level qBittorrent window goes out of sight. With its tray icon off
+/// it would otherwise sit on the taskbar. Its Web UI is still there to open.
+pub fn hide_qbit_windows() {
+    use windows::Win32::Foundation::{BOOL, HWND, LPARAM};
+    use windows::Win32::System::Threading::{OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION};
+    use windows::Win32::UI::WindowsAndMessaging::{EnumWindows, GetWindowThreadProcessId, IsWindowVisible, ShowWindow, SW_HIDE};
+    unsafe extern "system" fn each(hwnd: HWND, _: LPARAM) -> BOOL {
+        unsafe {
+            if !IsWindowVisible(hwnd).as_bool() {
+                return BOOL(1);
+            }
+            let mut pid = 0u32;
+            GetWindowThreadProcessId(hwnd, Some(&mut pid));
+            let Ok(h) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else { return BOOL(1) };
+            let mut buf = [0u16; 520];
+            let mut len = buf.len() as u32;
+            let ok = QueryFullProcessImageNameW(h, PROCESS_NAME_WIN32, windows::core::PWSTR(buf.as_mut_ptr()), &mut len).is_ok();
+            let _ = CloseHandle(h);
+            if ok && String::from_utf16_lossy(&buf[..len as usize]).to_ascii_lowercase().ends_with("\\qbittorrent.exe") {
+                let _ = ShowWindow(hwnd, SW_HIDE);
+            }
+        }
+        BOOL(1)
+    }
+    unsafe {
+        let _ = EnumWindows(Some(each), LPARAM(0));
+    }
+}
+
+/// qBittorrent opens out of sight and does not take focus.
 pub fn start_qbit(exe: &Path) -> Result<(), String> {
     let r = unsafe {
         ShellExecuteW(None, &HSTRING::from("open"), &HSTRING::from(exe.as_os_str()), None, None, SW_SHOWMINNOACTIVE)
     };
     // ShellExecuteW returns a value above 32 on success.
     if r.0 as isize > 32 {
+        // Its window appears a moment after it starts, slower on a first run.
+        std::thread::spawn(|| {
+            for _ in 0..40 {
+                hide_qbit_windows();
+                std::thread::sleep(Duration::from_millis(500));
+            }
+        });
         Ok(())
     } else {
         Err(format!("Couldn't start qBittorrent (code {})", r.0 as isize))
@@ -317,6 +365,11 @@ fn encoded_args(script: &str) -> String {
 /// a path into a command line); its exit code is the result. Errors contain
 /// "{what}" for the caller to fill in.
 pub fn run_elevated(script: &str) -> Result<(), String> {
+    run_elevated_for(script, SERVICE_WAIT_MS)
+}
+
+/// `run_elevated` for a script that takes longer than a service does.
+pub fn run_elevated_for(script: &str, wait_ms: u32) -> Result<(), String> {
     let verb = HSTRING::from("runas");
     let file = HSTRING::from(powershell().as_os_str());
     let params = HSTRING::from(encoded_args(script));
@@ -340,7 +393,7 @@ pub fn run_elevated(script: &str) -> Result<(), String> {
         if info.hProcess.is_invalid() {
             return Err("{what} didn't start".into());
         }
-        let waited = WaitForSingleObject(info.hProcess, SERVICE_WAIT_MS);
+        let waited = WaitForSingleObject(info.hProcess, wait_ms);
         let mut code = 1u32;
         let _ = GetExitCodeProcess(info.hProcess, &mut code);
         let _ = CloseHandle(info.hProcess);

@@ -9,6 +9,9 @@ mod fix;
 mod guard;
 mod history;
 mod imports;
+mod indexers;
+mod onboard;
+mod theme;
 mod install;
 mod jellyfin;
 mod jfweb;
@@ -119,7 +122,38 @@ async fn rediscover(app: AppHandle) -> Vec<AppConfig> {
 
 #[tauri::command]
 async fn install_app(app: AppHandle, id: AppId) -> Result<(), String> {
-    fix::install_app(&app, id).await
+    match fix::install_apps(&app, vec![id]).await.into_iter().next() {
+        Some((_, e)) => Err(e),
+        None => Ok(()),
+    }
+}
+
+/// The whole of setup on a new PC, from one press (onboard.rs).
+#[tauri::command]
+async fn setup_run(app: AppHandle, req: onboard::Request) -> Result<onboard::Meter, String> {
+    onboard::run(&app, req).await
+}
+
+#[tauri::command]
+fn setup_progress(app: AppHandle) -> onboard::Meter {
+    onboard::snapshot(&app)
+}
+
+/// Where setup suggests putting everything.
+#[tauri::command]
+fn setup_suggest() -> serde_json::Value {
+    onboard::suggested_folder()
+}
+
+#[tauri::command]
+fn theme_save(app: AppHandle, theme: theme::Theme) -> Result<(), String> {
+    theme::save(&app, theme)
+}
+
+/// The logo in the theme's colours, for the window, the tray and the shortcuts.
+#[tauri::command]
+async fn theme_icon(app: AppHandle, accent: String, pngs: Vec<(u32, String)>, rgba: Option<String>, side: u32) -> Result<(), String> {
+    theme::apply_icon(&app, accent, pngs, rgba, side).await
 }
 
 #[tauri::command]
@@ -295,6 +329,12 @@ fn marker_set(app: AppHandle, tvdb: i64, season: i64, episode: i64) -> Result<()
 #[tauri::command]
 async fn marker_restart(app: AppHandle, tvdb: i64, season: Option<i64>) -> Result<String, String> {
     pick::restart(&app, tvdb, season).await
+}
+
+/// Marks episodes watched or not watched, for the watching profile.
+#[tauri::command]
+async fn media_set_watched(app: AppHandle, tvdb: Option<i64>, title: String, episodes: Vec<(i64, i64, Option<String>)>, played: bool) -> Result<(), String> {
+    pick::set_watched(&app, tvdb, &title, episodes, played).await
 }
 
 /// My List > Completed for this profile, asked for once My List is on screen.
@@ -547,6 +587,14 @@ async fn watchnow_leave(app: AppHandle, key: String, position: f64, duration: Op
     }
 }
 
+/// Back during a start that's still looking for a copy.
+#[tauri::command]
+fn watchnow_cancel(app: AppHandle, key: String) {
+    if let Some(uid) = media::active_user(&app) {
+        watchnow::cancel_start(&app, &uid, &key);
+    }
+}
+
 /// Every 10 s while Watch now plays: where you are, nothing else.
 #[tauri::command]
 async fn watchnow_progress(app: AppHandle, key: String, position: f64, duration: Option<f64>, uid: String) -> Result<(), String> {
@@ -600,12 +648,14 @@ async fn install_apps(app: AppHandle, ids: Vec<AppId>) -> Vec<(AppId, String)> {
 
 #[tauri::command]
 async fn setup_indexers(app: AppHandle) -> serde_json::Value {
-    media::indexers(&app).await
+    indexers::status(&app).await
 }
 
 #[tauri::command]
 async fn setup_add_indexer(app: AppHandle, definition: String) -> Result<String, String> {
-    media::add_indexer(&app, &definition).await
+    let msg = media::add_indexer(&app, &definition).await?;
+    indexers::note_added(&app, &definition);
+    Ok(msg)
 }
 
 #[tauri::command]
@@ -643,7 +693,9 @@ async fn set_settings(app: AppHandle, mut s: settings::Settings) -> Result<Vec<A
         s.defender_allowed = st.current.lock().unwrap().defender_allowed.clone();
         settings::save(&st.path, &s)?;
         let remux_changed = st.current.lock().unwrap().skip_remux != s.skip_remux;
-        let dubs_changed = st.current.lock().unwrap().skip_dubs != s.skip_dubs;
+        let dubs_changed = st.current.lock().unwrap().skip_dubs != s.skip_dubs || st.current.lock().unwrap().audio_pref != s.audio_pref;
+        // Theme has its own command; the window's copy may be older.
+        s.theme = st.current.lock().unwrap().theme.clone();
         *st.current.lock().unwrap() = s.clone();
         if remux_changed {
             let a = app.clone();
@@ -718,6 +770,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(Logs::default())
         .manage(login::Pending::default())
+        .manage(onboard::Onboard::default())
         .invoke_handler(tauri::generate_handler![
             window_fullscreen,
             open_link,
@@ -786,6 +839,7 @@ pub fn run() {
             media_watched_keys,
             media_show_episodes,
             marker_set,
+            media_set_watched,
             marker_restart,
             subs_setup,
             subs_search,
@@ -803,6 +857,7 @@ pub fn run() {
             media_stop_waiting,
             watchnow_start,
             watchnow_leave,
+            watchnow_cancel,
             watchnow_progress,
             watchnow_remove,
             watchnow_list,
@@ -810,6 +865,11 @@ pub fn run() {
             library_scan,
             open_folder,
             setup_folders,
+            setup_run,
+            setup_progress,
+            setup_suggest,
+            theme_save,
+            theme_icon,
             setup_set_folders,
             setup_indexers,
             setup_add_indexer,
@@ -850,8 +910,11 @@ pub fn run() {
             app.manage(media::Media::load(data_dir));
             // A profile with a PIN: nobody watches until a profile is picked.
             profiles::lock_if_pinned(app.handle());
-            remote::start(app.handle().clone());
-            bridge::start(app.handle().clone());
+            // A new PC: not until setup has made the firewall rules (onboard.rs).
+            let set_up = app.state::<SettingsState>().current.lock().unwrap().setup_done;
+            if set_up {
+                onboard::start_servers(app.handle());
+            }
             storage::start_cleanup(app.handle().clone());
             // The catalogs grow quietly in the background.
             let h = app.handle().clone();
@@ -882,7 +945,7 @@ pub fn run() {
             guard::spawn(app.handle().clone());
             waiting::spawn(app.handle().clone());
             watchnow::spawn(app.handle().clone());
-            discover_shelf::spawn(app.handle().clone());
+            indexers::spawn(app.handle().clone());
             subfetch::spawn(app.handle().clone());
             search_tap::spawn(app.handle().clone());
             jfweb::spawn(app.handle().clone());

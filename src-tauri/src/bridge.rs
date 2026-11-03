@@ -286,8 +286,8 @@ fn need(cmd: &str) -> Option<Need> {
     Some(match cmd {
         "web_viewer" | "media_status" | "media_rows" | "media_episodes" | "media_search" | "media_search_live" | "media_play" | "media_report" | "media_forget_resume" | "media_get" | "media_get_picked" | "media_seasons" | "media_trailer"
         | "media_explore" | "media_filter" | "media_filter_genres" | "media_filter_studios" | "media_anime_tags" | "media_details" | "media_similar" | "media_my_list" | "media_my_list_marks" | "media_completed"
-        | "media_watched_keys" | "completed_remove" | "media_show_episodes" | "marker_set" | "marker_restart" | "media_segments" | "subs_search" | "subs_download" | "subs_sync" | "subs_choice" | "subs_set"
-        | "media_waiting" | "media_downloads" | "watchnow_start" | "watchnow_leave" | "watchnow_progress" | "watchnow_list" | "syncplay_info" | "syncplay_call" | "syncplay_tile"
+        | "media_watched_keys" | "completed_remove" | "media_show_episodes" | "marker_set" | "marker_restart" | "media_set_watched" | "media_segments" | "subs_search" | "subs_download" | "subs_sync" | "subs_choice" | "subs_set"
+        | "media_waiting" | "media_downloads" | "watchnow_start" | "watchnow_leave" | "watchnow_cancel" | "watchnow_progress" | "watchnow_list" | "syncplay_info" | "syncplay_call" | "syncplay_tile"
         // Takes a title off the viewer's own Watch now (watchnow.rs keeps one
         // list per Jellyfin user), and only stops a download Watch now itself
         // started and nobody else wants.
@@ -334,7 +334,14 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
     let app = app.clone();
     let app = &app;
     match cmd {
-        "web_viewer" => ok(json!({ "user_id": me.session.user_id, "name": me.session.user, "admin": me.admin, "can_delete": me.can_delete })),
+        "web_viewer" => {
+            let (theme, audio_pref) = {
+                let st = app.state::<crate::SettingsState>();
+                let s = st.current.lock().unwrap();
+                (s.theme.clone(), s.audio_pref.clone())
+            };
+            ok(json!({ "user_id": me.session.user_id, "name": me.session.user, "admin": me.admin, "can_delete": me.can_delete, "theme": theme, "audio_pref": audio_pref }))
+        }
         // The viewer's own name; the PC's addresses and the owner's account
         // are the window's business.
         "media_status" => {
@@ -372,6 +379,7 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
         "media_show_episodes" => res(pick::show_episodes(app, &arg::<Tile>(a, "tile")?).await),
         "marker_set" => res(marker::set(app, arg(a, "tvdb")?, marker::Spot { season: arg(a, "season")?, episode: arg(a, "episode")? })),
         "marker_restart" => res(pick::restart(app, arg(a, "tvdb")?, arg(a, "season")?).await),
+        "media_set_watched" => res(pick::set_watched(app, arg(a, "tvdb")?, &arg::<String>(a, "title")?, arg(a, "episodes")?, arg(a, "played")?).await),
         "media_segments" => ok(skip::segments(app, &arg::<String>(a, "id")?).await),
         "subs_search" => res(subs::search(app, &arg::<String>(a, "id")?, &arg::<String>(a, "lang")?).await),
         "subs_download" => res(subs::download(app, &arg::<String>(a, "id")?, &arg::<String>(a, "sub")?).await),
@@ -391,6 +399,10 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
         "watchnow_start" => res(watchnow::start(app, arg(a, "tile")?, arg(a, "season")?, arg(a, "episode")?).await),
         // Positions are kept per Jellyfin user: always the viewer's own,
         // whatever user id the page sent.
+        "watchnow_cancel" => {
+            watchnow::cancel_start(app, &me.session.user_id, &arg::<String>(a, "key")?);
+            ok(json!(null))
+        }
         "watchnow_leave" => res(watchnow::leave_as(app, &me.session.user_id, &arg::<String>(a, "key")?, arg(a, "position")?, arg(a, "duration")?).await),
         "watchnow_progress" => res(watchnow::progress_as(app, &me.session.user_id, &arg::<String>(a, "key")?, arg(a, "position")?, arg(a, "duration")?)),
         "watchnow_remove" => res(watchnow::remove(app, &arg::<String>(a, "key")?).await),

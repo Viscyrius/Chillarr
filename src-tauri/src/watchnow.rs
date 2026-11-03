@@ -83,6 +83,45 @@ pub struct WatchNow {
     profiles: Mutex<HashMap<String, Saved>>,
     /// The last save that failed, for `take_error` (`remove` can't return it).
     error: Mutex<Option<String>>,
+    /// "uid|key" of starts someone backed out of while they ran.
+    cancelled: Mutex<std::collections::HashSet<String>>,
+}
+
+impl WatchNow {
+    fn cancel_mark(&self, uid: &str, key: &str, on: bool) {
+        let mark = format!("{uid}|{key}");
+        let mut set = self.cancelled.lock().unwrap_or_else(|e| e.into_inner());
+        if on {
+            set.insert(mark);
+        } else {
+            set.remove(&mark);
+        }
+    }
+
+    fn is_cancelled(&self, uid: &str, key: &str) -> bool {
+        self.cancelled.lock().unwrap_or_else(|e| e.into_inner()).contains(&format!("{uid}|{key}"))
+    }
+}
+
+/// Back was pressed while a start was still looking for a copy. A new press of
+/// the same title clears this and takes that start over.
+pub fn cancel_start(app: &tauri::AppHandle, uid: &str, key: &str) {
+    use tauri::Manager;
+    app.state::<WatchNow>().cancel_mark(uid, key, true);
+}
+
+/// A film asked for by a start that was cancelled, before anything was found:
+/// the request goes too, or it would download in full later with nobody having
+/// asked for that. Only a request this press made, and not for an episode:
+/// stopping one reaches further than the one episode.
+async fn drop_cancelled_request(app: &tauri::AppHandle, e: &Entry) {
+    if !e.owned || e.kind != "movie" {
+        return;
+    }
+    let Some(tmdb) = e.tmdb else { return };
+    if let Some(w) = crate::waiting::list(app).await.into_iter().find(|w| w.app == "radarr" && w.tile.tmdb == Some(tmdb)) {
+        let _ = crate::waiting::stop(app, w.app, w.id).await;
+    }
 }
 
 pub fn file(dir: &Path, uid: &str) -> PathBuf {
@@ -117,7 +156,7 @@ impl WatchNow {
                 }
             }
         }
-        WatchNow { dir, profiles: Mutex::new(map), error: Mutex::new(None) }
+        WatchNow { dir, profiles: Mutex::new(map), error: Mutex::new(None), cancelled: Default::default() }
     }
 
     /// Runs `f` on the profile's state; saves afterwards when it says so.
@@ -1228,6 +1267,8 @@ async fn start_as(app: &tauri::AppHandle, uid: &str, key: &str, tile: crate::til
     let q = crate::waiting::qbit(app).ok_or("qBittorrent isn't set up. Install it first.")?;
     let existing = wn.entry(&uid, &key);
     let fresh = existing.is_none();
+    // A press after a cancel: this one means it.
+    wn.cancel_mark(&uid, &key, false);
     let mut e = match existing {
         Some(e) => e,
         None => {
@@ -1284,9 +1325,21 @@ async fn start_as(app: &tauri::AppHandle, uid: &str, key: &str, tile: crate::til
         }
         let until = std::time::Instant::now() + FIND_WAIT;
         while e.hash.is_none() {
+            if wn.is_cancelled(&uid, &key) {
+                wn.cancel_mark(&uid, &key, false);
+                if fresh {
+                    drop_entry(app, &uid, &key, &e);
+                    drop_cancelled_request(app, &e).await;
+                }
+                return Err("Cancelled.".into());
+            }
             emit_state(app, &key, "searching", 0.0);
             match arr_state(app, &e).await.map(|s| s.hash) {
                 Ok(crate::qbit::Pick::Hash(h)) => {
+                    // Taken out or backed out of while this looked: it stays out.
+                    if wn.is_cancelled(&uid, &key) {
+                        continue;
+                    }
                     e.hash = Some(h);
                     // Saved straight away, so the stream tunes this torrent and no other.
                     note(app, wn.upsert(&uid, fresher(&wn, &uid, &e)));
@@ -1381,6 +1434,7 @@ pub async fn leave_as(app: &tauri::AppHandle, uid: &str, key: &str, position: f6
     };
     note(app, wn.set_position(&uid, key, position, duration));
     note(app, wn.set_watching(&uid, key, false));
+    undo_false_watched(app, &uid, &e, position, duration);
     // Finished: where you're at moves on now (the rewatch rule is the
     // marker's), and the download goes on to the end so the file reaches
     // the library.
@@ -1397,6 +1451,24 @@ pub async fn leave_as(app: &tauri::AppHandle, uid: &str, key: &str, position: f6
         q.stop(&hash).await.map_err(qb_err)?;
     }
     Ok(())
+}
+
+/// A .strm has no length, so Jellyfin calls any stop "watched to the end", and
+/// that mark carries to the real file once it's in the library, where the
+/// clean-up reads it. Stopped before the end: the mark comes off once Jellyfin
+/// has written it, before the watch log's next read.
+fn undo_false_watched(app: &tauri::AppHandle, uid: &str, e: &Entry, position: f64, duration: Option<f64>) {
+    if finished(position, duration.or(e.duration)) {
+        return;
+    }
+    let Some(id) = e.strm_jf_id.clone() else { return };
+    let (app, uid) = (app.clone(), uid.to_string());
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        if let Some(j) = crate::media::jf_admin(&app) {
+            let _ = j.delete_path(&format!("/UserPlayedItems/{id}?userId={uid}")).await;
+        }
+    });
 }
 
 /// While it plays (every 10 s, and VLC's poll): where you are, saved, so a
@@ -1417,6 +1489,12 @@ pub async fn remove(app: &tauri::AppHandle, key: &str) -> Result<String, String>
     let uid = uid(app)?;
     let wn = app.state::<WatchNow>();
     let e = wn.entry(&uid, key).ok_or("That isn't in Watch now any more.")?;
+    // A start still looking for a copy would otherwise put it straight back.
+    if e.hash.as_deref().unwrap_or("").is_empty() {
+        wn.cancel_mark(&uid, key, true);
+    }
+    // Finished in the last two minutes: into the watch log before it goes.
+    crate::history::sync(app).await;
     // Read before anything is taken out: with qBittorrent or Sonarr down a
     // guess could delete a download someone else wants, or hide one Watch now
     // still owns.
@@ -1902,6 +1980,10 @@ async fn tidy_torrents(app: &tauri::AppHandle) {
         let shelf = shelf_wants(app, &e);
         let mut complete = info["progress"].as_f64().unwrap_or(0.0) >= 1.0;
         let paused = paused_state(&info);
+        // Another episode's Back stopped the pack while this one was starting.
+        if watched && paused && !complete {
+            let _ = q.start(&o.hash).await;
+        }
         let mut kept = !on_it.is_empty() || shelf;
         // A file a normal Download still needs keeps the torrent going.
         let mut needed = false;

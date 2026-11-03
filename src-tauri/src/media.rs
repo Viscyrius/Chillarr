@@ -1903,19 +1903,23 @@ pub async fn set_download_folder(app: &AppHandle, path: &str) -> Result<(), Stri
     Ok(())
 }
 
-/// Prowlarr's indexers by name, and whether the recommended ones are there.
-pub async fn indexers(app: &AppHandle) -> Value {
-    let Some(p) = arr(app, AppId::Prowlarr) else { return json!({ "have": [], "ok": false }) };
-    let list = p.list("indexer").await.unwrap_or_default();
-    json!({
-        "ok": true,
-        "have": list.iter().map(|i| json!({ "name": i["name"], "definition": i["definitionName"] })).collect::<Vec<_>>(),
-    })
+/// Gets FlareSolverr running and set up in Prowlarr, ahead of adding the sites that need it.
+pub async fn prepare_flare(app: &AppHandle) {
+    if let Some(p) = arr(app, AppId::Prowlarr) {
+        flare_tag(app, &p).await;
+    }
 }
 
 /// Adds a public indexer from Prowlarr's catalogue by its definition name
 /// (e.g. "1337x", "nyaasi"). Cloudflare-protected ones get FlareSolverr's tag.
 pub async fn add_indexer(app: &AppHandle, definition: &str) -> Result<String, String> {
+    add_indexer_with(app, definition, true).await
+}
+
+/// `sync` false: the caller sends one sync after a batch. Several running at
+/// once race each other to Sonarr and Radarr, which then answer "UNIQUE
+/// constraint failed: Indexers.Name" (seen in a friend's Prowlarr log, 2026-11-03).
+pub async fn add_indexer_with(app: &AppHandle, definition: &str, sync: bool) -> Result<String, String> {
     let p = arr(app, AppId::Prowlarr).ok_or("Prowlarr isn't set up")?;
     if p.list("indexer").await.unwrap_or_default().iter().any(|i| i["definitionName"] == definition) {
         return Ok("Already added".into());
@@ -1959,7 +1963,9 @@ pub async fn add_indexer(app: &AppHandle, definition: &str) -> Result<String, St
             format!("Prowlarr couldn't add {name}: {e}")
         }
     })?;
-    let _ = p.command("ApplicationIndexerSync").await;
+    if sync {
+        let _ = p.command("ApplicationIndexerSync").await;
+    }
     let msg = format!("Added {name} to Prowlarr and passed it to Sonarr and Radarr.");
     log(app, Level::Ok, &msg);
     Ok(msg)

@@ -15,8 +15,9 @@ pub fn show_main(app: &AppHandle) {
 pub fn build(app: &AppHandle) -> tauri::Result<()> {
     let open = MenuItem::with_id(app, "open", "Open", true, None::<&str>)?;
     let fix = MenuItem::with_id(app, "fix", "Fix everything", true, None::<&str>)?;
+    let stop = MenuItem::with_id(app, "stop", "Stop everything and quit", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&open, &fix, &quit])?;
+    let menu = Menu::with_items(app, &[&open, &fix, &stop, &quit])?;
 
     TrayIconBuilder::with_id("main")
         .icon(app.default_window_icon().cloned().expect("bundled icon"))
@@ -27,6 +28,13 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
             "open" => show_main(app),
             "fix" => crate::spawn_fix(app.clone()),
             "quit" => app.exit(0),
+            "stop" => {
+                let app = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    crate::onboard::stop_everything(&app).await;
+                    app.exit(0);
+                });
+            }
             _ => {}
         })
         .on_tray_icon_event(|tray, e| {

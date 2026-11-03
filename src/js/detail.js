@@ -68,6 +68,53 @@ const epName = (r) => r.title || `Episode ${r.episode}`;
 const seasonName = (n) => (n === 0 ? "Specials" : `Season ${n}`);
 const atSpot = (r) => !!show?.data.spot && r.season === show.data.spot.season && r.episode === show.data.spot.episode;
 const spotRow = () => show?.data.episodes.find(atSpot) || null;
+/** The ones that can count: what's out, and for tick-keeping what Chillarr can store. */
+const markable = (r) => r.aired && (r.jf_id || show?.data.tvdb);
+const seasonRows = (season) => show.data.episodes.filter((r) => r.season === season);
+const countSeen = (rows) => { const m = rows.filter(markable); return [m.filter((r) => r.played).length, m.length]; };
+
+/** Ticks now, tells the back end after, and takes the ticks back if that fails. */
+async function setWatched(rows, played) {
+  const change = rows.filter((r) => markable(r) && !!r.played !== played);
+  if (!change.length) return;
+  const seq = openSeq;
+  const hadSpot = change.some(atSpot);
+  change.forEach((r) => { r.played = played; });
+  drawSeasonNow();
+  try {
+    await invoke("media_set_watched", { tvdb: show.data.tvdb ?? null, title: show.tile.title, episodes: change.map((r) => [r.season, r.episode, r.jf_id ?? null]), played });
+    // Finishing where you're at moves "where you're at" on.
+    if (hadSpot && seq === openSeq) await reloadShow(show.view);
+  } catch (e) {
+    if (seq === openSeq) { change.forEach((r) => { r.played = !played; }); drawSeasonNow(); }
+    toast(String(e), true);
+  }
+}
+
+/** Redraws ticks and counts without moving the list. */
+function drawSeasonNow() {
+  for (const li of $("#episode-list").children) {
+    const r = show.data.episodes.find((x) => String(x.season) === li.dataset.s && String(x.episode) === li.dataset.e);
+    if (r) li.replaceWith(episodeRow(r, 0, true));
+  }
+  drawCounts();
+}
+
+/** "8 of 12 watched" and the season's own button; the dropdown shows every season's count. */
+function drawCounts() {
+  const head = $("#detail-episodes .episodes-head");
+  let box = head.querySelector(".season-seen");
+  if (!box) { box = el("div", { class: "season-seen" }); head.insertBefore(box, $("#season-pick")); }
+  const [seen, all] = countSeen(seasonRows(show.view));
+  const done = all > 0 && seen === all;
+  const btn = el("button", { class: "btn soft small", type: "button", onclick: () => setWatched(seasonRows(show.view), !done) }, done ? "Mark season not watched" : "Mark season watched");
+  box.replaceChildren(el("span", { class: "seen-text", text: `${seen} of ${all} watched` }), el("span", { class: "seen-bar" }, el("i", { style: `width:${all ? Math.round((seen / all) * 100) : 0}%` })), all ? btn : "");
+  for (const o of $("#season-pick").options) {
+    const n = Number(o.value);
+    const [a, b] = countSeen(seasonRows(n));
+    o.textContent = b && a === b ? `${seasonName(n)} (watched)` : a ? `${seasonName(n)} (${a}/${b})` : seasonName(n);
+  }
+}
 const playable = () => show.data.episodes.filter((r) => r.tile).map((r) => r.tile);
 /**
  * A show's Play / Resume from a hover card: the episode you're at (as the
@@ -116,7 +163,7 @@ export function episodeActions(r) {
   return out;
 }
 
-function episodeRow(r, i) {
+function episodeRow(r, i, still = false) {
   const here = atSpot(r);
   const thumb = el("div", { class: "thumb" });
   if (r.still) thumb.append(el("img", { src: r.still, alt: "", loading: "lazy", decoding: "async" }));
@@ -125,6 +172,7 @@ function episodeRow(r, i) {
   if (r.tile) thumb.append(el("span", { class: "ep-play", "aria-hidden": "true" }, icon(ICON.play)));
   const state = el("span", { class: `ep-state ${r.aired ? r.state : "later"}` }, r.state === "downloading" ? el("i", { style: `--p:${Math.round((r.pct || 0) * 100)}%` }) : null, stateText(r));
   const foot = el("div", { class: "ep-foot" }, state);
+  if (r.played) foot.prepend(el("span", { class: "ep-seen", text: "Watched" }));
   if (!r.tile && r.aired && r.state === "missing") {
     for (const a of episodeActions(r)) {
       const b = el("button", { class: `btn small ${a.plays ? "soft wn-btn" : "ghost"}` }, icon(a.icon), a.label);
@@ -139,7 +187,11 @@ function episodeRow(r, i) {
       foot.append(b);
     }
   }
-  const li = el("li", { class: `ep${r.tile || r.watch_key ? "" : " off"}${here ? " here" : ""}${r.played ? " seen" : ""}`, dataset: { s: String(r.season), e: String(r.episode) } },
+  if (markable(r)) {
+    foot.append(el("button", { class: "ep-mark", type: "button", onclick: (e) => { e.stopPropagation(); setWatched([r], !r.played); },
+      onkeydown: (e) => e.stopPropagation() }, icon(r.played ? "M6 6l12 12M18 6 6 18" : ICON.check), r.played ? "Mark not watched" : "Mark watched"));
+  }
+  const li = el("li", { class: `ep${r.tile || r.watch_key ? "" : " off"}${here ? " here" : ""}${r.played ? " seen" : ""}${still ? " still" : ""}`, dataset: { s: String(r.season), e: String(r.episode) } },
     el("span", { class: "num", text: String(r.episode) }), thumb,
     el("div", { class: "ep-body" },
       el("div", { class: "ep-title" }, el("h4", { text: epName(r) }), here ? el("span", { class: "here-tag", text: "You're here" }) : null),
@@ -162,7 +214,8 @@ function drawSeason(season, toSpot = false) {
   $("#season-pick").value = String(season);
   syncRestartSeason();
   const list = $("#episode-list");
-  list.replaceChildren(...show.data.episodes.filter((r) => r.season === season).map(episodeRow));
+  list.replaceChildren(...show.data.episodes.filter((r) => r.season === season).map((r, i) => episodeRow(r, i)));
+  drawCounts();
   if (toSpot) {
     const here = list.querySelector(".ep.here");
     // After the panel has opened, so the scroll is seen.

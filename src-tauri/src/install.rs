@@ -5,6 +5,7 @@
 //! fetched and checked against a SHA-256 compiled in here.
 
 use crate::model::AppId;
+#[cfg(test)]
 use sha2::{Digest, Sha256};
 use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
@@ -39,6 +40,7 @@ pub fn source(id: AppId) -> Source {
 }
 
 /// `want` is the pinned hex SHA-256. No hash, no trust.
+#[cfg(test)]
 pub fn sha256_matches(bytes: &[u8], want: &str) -> bool {
     let got: String = Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect();
     want.len() == 64 && got.eq_ignore_ascii_case(want)
@@ -49,6 +51,7 @@ pub fn asset_url(repo: &str, tag: &str, asset: &str) -> String {
     format!("https://github.com/{repo}/releases/download/{tag}/{asset}")
 }
 
+#[cfg(test)]
 pub fn trusted_download(url: &str) -> bool {
     url.starts_with("https://github.com/")
 }
@@ -58,7 +61,7 @@ pub fn flare_dir() -> PathBuf {
     PathBuf::from(std::env::var_os("LOCALAPPDATA").unwrap_or_default()).join("Chillarr").join("FlareSolverr")
 }
 
-fn winget(id: &str) -> Result<(), String> {
+pub(crate) fn winget(id: &str) -> Result<(), String> {
     let out = Command::new("winget")
         .args([
             "install",
@@ -84,6 +87,7 @@ fn winget(id: &str) -> Result<(), String> {
     Err(format!("winget couldn't install it: {last}"))
 }
 
+#[cfg(test)]
 async fn github_zip(repo: &str, tag: &str, asset: &str, sha256: &str, dir: &std::path::Path) -> Result<(), String> {
     let http = reqwest::Client::builder()
         .user_agent("Chillarr")
@@ -108,19 +112,30 @@ async fn github_zip(repo: &str, tag: &str, asset: &str, sha256: &str, dir: &std:
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let zip = dir.join(asset);
     std::fs::write(&zip, &bytes).map_err(|e| e.to_string())?;
-    // Windows' own tar unpacks zips.
-    let status = Command::new(crate::procs::sys32("tar.exe"))
-        .arg("-xf")
-        .arg(&zip)
-        .arg("-C")
-        .arg(dir)
-        .creation_flags(CREATE_NO_WINDOW)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map_err(|e| format!("Couldn't unpack it: {e}"))?;
+    let done = unpack_zip(&zip, dir).await;
     let _ = std::fs::remove_file(&zip);
+    done
+}
+
+/// Windows' own tar unpacks zips.
+pub async fn unpack_zip(zip: &std::path::Path, dir: &std::path::Path) -> Result<(), String> {
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let (zip, dir) = (zip.to_path_buf(), dir.to_path_buf());
+    let status = tokio::task::spawn_blocking(move || {
+        Command::new(crate::procs::sys32("tar.exe"))
+            .arg("-xf")
+            .arg(&zip)
+            .arg("-C")
+            .arg(&dir)
+            .creation_flags(CREATE_NO_WINDOW)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| format!("Couldn't unpack it: {e}"))?;
     if !status.success() {
         return Err("Couldn't unpack the download.".into());
     }
@@ -177,17 +192,6 @@ pub async fn upgrade(id: AppId) -> Result<(), String> {
         Ok(())
     } else {
         Err("winget couldn't update it".into())
-    }
-}
-
-/// Installs one app. Blocking parts run off the async runtime.
-pub async fn install(id: AppId) -> Result<(), String> {
-    match source(id) {
-        Source::Winget(pkg) => {
-            let pkg = pkg.to_string();
-            tokio::task::spawn_blocking(move || winget(&pkg)).await.map_err(|e| e.to_string())?
-        }
-        Source::GithubZip { repo, tag, asset, sha256 } => github_zip(repo, tag, asset, sha256, &flare_dir()).await,
     }
 }
 

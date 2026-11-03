@@ -147,6 +147,12 @@ pub fn enable_webui(ini: &str, port: u16) -> String {
     out
 }
 
+/// No tray icon of its own: Chillarr's is the only one.
+pub fn quiet_tray(ini: &str) -> String {
+    let out = set_ini_value(ini, "Preferences", "General\\SystemTrayEnabled", "false");
+    set_ini_value(&out, "Preferences", "General\\StartMinimized", "true")
+}
+
 /// The `[WebUI] Enabled=true` that qBittorrent 5 reads.
 fn webui_enabled_new(ini: &str) -> bool {
     let mut section = "";
@@ -234,6 +240,14 @@ pub fn pick_schema(schemas: &[Value], implementation: &str) -> Option<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn qbittorrents_tray_goes_off_once() {
+        let once = quiet_tray("[Preferences]\nGeneral\\CloseToTrayNotified=true\n");
+        assert!(once.contains(r"General\SystemTrayEnabled=false"), "{once}");
+        assert!(once.contains(r"General\StartMinimized=true"), "{once}");
+        assert_eq!(quiet_tray(&once), once, "a second look changes nothing, so qBittorrent isn't restarted again");
+    }
 
     #[test]
     fn save_paths_are_written_the_way_qsettings_reads_them() {

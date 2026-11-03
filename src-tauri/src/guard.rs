@@ -55,6 +55,7 @@ pub fn spawn(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
         let mut notifier = Notifier::default();
         tokio::time::sleep(FIRST_CHECK).await;
+        crate::onboard::one_tray_icon(&app).await;
         // Start what is down once at launch, even with "Fix automatically" off:
         // Radarr/Sonarr switched to run as the user rely on Chillarr for this.
         fix::fix_all(&app, Trigger::Guard).await;

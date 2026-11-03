@@ -26,7 +26,7 @@ pub enum Trigger {
 
 #[derive(Default)]
 pub struct Fixer {
-    running: tokio::sync::Mutex<()>,
+    pub(crate) running: tokio::sync::Mutex<()>,
     /// What holds `running` right now; `None` for an install or nothing.
     current: Mutex<Option<Trigger>>,
     last_indexer_test: Mutex<Option<Instant>>,
@@ -209,13 +209,32 @@ async fn card_for(core: &Core, cfg: &AppConfig) -> CardState {
 pub async fn refresh_cards(app: &AppHandle) -> Vec<CardState> {
     let core = app.state::<Core>();
     let configs = core.configs.read().unwrap().clone();
-    let mut out = Vec::new();
-    for cfg in &configs {
-        let card = card_for(&core, cfg).await;
-        set_card(app, card.clone());
-        out.push(card);
+    // All at once: one app slow to answer doesn't hold up the others' cards.
+    let mut set = tokio::task::JoinSet::new();
+    for (i, cfg) in configs.into_iter().enumerate() {
+        let app = app.clone();
+        set.spawn(async move {
+            let core = app.state::<Core>();
+            let card = card_for(&core, &cfg).await;
+            set_card(&app, card.clone());
+            (i, card)
+        });
     }
-    out
+    let mut out = Vec::new();
+    while let Some(done) = set.join_next().await {
+        if let Ok(x) = done {
+            out.push(x);
+        }
+    }
+    out.sort_by_key(|(i, _)| *i);
+    out.into_iter().map(|(_, c)| c).collect()
+}
+
+/// Where Fix everything is, for the bar on Settings > System.
+fn fix_step(app: &AppHandle, trigger: Trigger, n: u32, line: &str) {
+    if trigger == Trigger::Button {
+        let _ = app.emit("fix-step", serde_json::json!({ "n": n, "of": 5, "line": line }));
+    }
 }
 
 pub async fn indexer_table_now(app: &AppHandle) -> Vec<IndexerRow> {
@@ -253,6 +272,7 @@ async fn start_if_down(app: &AppHandle, cfg: &AppConfig, trigger: Trigger, rep: 
     let core = app.state::<Core>();
     let name = cfg.id.label();
     let since = qbit_log_now();
+    let arr_since = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
     let (started, wait) = match cfg.id {
         AppId::FlareSolverr => match &cfg.exe {
             Some(exe) if procs::should_spawn(core.procs.owns_flaresolverr(), false) => {
@@ -301,7 +321,12 @@ async fn start_if_down(app: &AppHandle, cfg: &AppConfig, trigger: Trigger, rep: 
                     .unwrap_or_else(|e| Err(e.to_string()));
                 (r, WAIT_ARR_SECS)
             }
-            (None, Some(exe)) => (procs::start_arr(exe, name), WAIT_ARR_SECS),
+            (None, Some(exe)) => {
+                if !unlock_data(app, cfg.id, trigger, rep).await {
+                    return;
+                }
+                (procs::start_arr(exe, name), WAIT_ARR_SECS)
+            }
             (None, None) => return,
         },
     };
@@ -313,12 +338,95 @@ async fn start_if_down(app: &AppHandle, cfg: &AppConfig, trigger: Trigger, rep: 
                 log(app, Level::Ok, &msg);
                 rep.actions.push(msg);
             } else {
-                let why = (cfg.id == AppId::QBittorrent).then(|| qbit_webui_failure(&since)).flatten();
-                let why = why.map(|w| format!(" qBittorrent says: {w}")).unwrap_or_default();
+                // The button tries once more: an old copy stuck without answering holds the app's lock.
+                if cfg.id.is_arr() && cfg.service.is_none() && trigger == Trigger::Button {
+                    if let Some(exe) = cfg.exe.clone() {
+                        let (a, b) = (format!("{name}.exe"), format!("{name}.Console.exe"));
+                        let _ = tokio::task::spawn_blocking(move || {
+                            procs::force_close(&a);
+                            procs::force_close(&b);
+                        })
+                        .await;
+                        if procs::start_arr(&exe, name).is_ok() && procs::wait_until(&cfg.base_url, wait).await {
+                            let msg = format!("{name} was stuck. Restarted it.");
+                            log(app, Level::Ok, &msg);
+                            rep.actions.push(msg);
+                            return;
+                        }
+                    }
+                }
+                let why = if cfg.id == AppId::QBittorrent {
+                    qbit_webui_failure(&since).map(|w| format!(" qBittorrent says: {w}"))
+                } else if cfg.id.is_arr() {
+                    arr_data_dir(cfg.id).and_then(|d| std::fs::read(d.join("logs").join(format!("{}.txt", name.to_ascii_lowercase()))).ok()).and_then(|b| arr_log_failure(&String::from_utf8_lossy(&b), &arr_since)).map(|w| format!(" {name} says: {w}"))
+                } else {
+                    None
+                }
+                .unwrap_or_default();
                 log(app, Level::Red, format!("Started {name}, but it didn't answer within {wait} seconds.{why}"));
             }
         }
         Err(e) => log(app, Level::Red, e),
+    }
+}
+
+/// `C:\\ProgramData\\Sonarr`.
+fn arr_data_dir(id: AppId) -> Option<std::path::PathBuf> {
+    Some(std::path::PathBuf::from(std::env::var_os("ProgramData")?).join(id.label()))
+}
+
+/// The last error an *arr app logged since `since`, for "didn't answer". Its log
+/// lines start `2026-11-03 21:58:44.7|Error|Logger|text`.
+pub fn arr_log_failure(log: &str, since: &str) -> Option<String> {
+    log.lines()
+        .rev()
+        .take(400)
+        .filter(|l| l.len() > 19 && l.is_char_boundary(19) && &l[..19] >= since)
+        .find_map(|l| {
+            let mut p = l.splitn(4, '|');
+            let (_, level, _, text) = (p.next()?, p.next()?, p.next()?, p.next()?);
+            matches!(level, "Error" | "Fatal").then(|| text.chars().take(200).collect())
+        })
+}
+
+/// A data folder made by an app's Windows service belongs to that service, so
+/// the app run as the user can't open its own database and quits on the spot.
+pub fn is_locked(dir: &std::path::Path, name: &str) -> bool {
+    let denied = |p: std::path::PathBuf| std::fs::OpenOptions::new().append(true).open(p).is_err_and(|e| e.kind() == std::io::ErrorKind::PermissionDenied);
+    denied(dir.join("config.xml")) || denied(dir.join(format!("{}.db", name.to_ascii_lowercase())))
+}
+
+/// True when the app can open its folder (now). The button fixes it with one
+/// Windows prompt; the background guard only says so, it never prompts.
+async fn unlock_data(app: &AppHandle, id: AppId, trigger: Trigger, rep: &mut FixReport) -> bool {
+    let name = id.label();
+    let Some(dir) = arr_data_dir(id) else { return true };
+    if !is_locked(&dir, name) {
+        return true;
+    }
+    if trigger == Trigger::Guard {
+        let msg = format!("{name} can't open its own files. Press Fix everything to repair that.");
+        if !rep.needs_button.contains(&msg) {
+            log(app, Level::Red, &msg);
+            rep.needs_button.push(msg);
+        }
+        return false;
+    }
+    let Some(account) = std::env::var("USERDOMAIN").ok().zip(std::env::var("USERNAME").ok()).map(|(d, u)| format!("{d}\\{u}")) else { return false };
+    busy(app, id, "Repairing...");
+    let line = crate::imports::grant_user_line(&dir.to_string_lossy(), &account);
+    let done = tokio::task::spawn_blocking(move || procs::run_elevated(&format!("{line}\nexit $LASTEXITCODE"))).await.unwrap_or_else(|e| Err(e.to_string()));
+    match done {
+        Ok(()) => {
+            let msg = format!("Repaired {name}'s access to its own files.");
+            log(app, Level::Ok, &msg);
+            rep.actions.push(msg);
+            true
+        }
+        Err(e) => {
+            log(app, Level::Red, e.replace("{what}", &format!("Repairing {name}")));
+            false
+        }
     }
 }
 
@@ -490,24 +598,25 @@ async fn restart_if_stale(app: &AppHandle, id: AppId, passed: &[String], proxies
 /// is closed (a running qBittorrent would overwrite the file on exit). One
 /// whose file already has the Web UI on is left running: it is still
 /// starting, or listens on the port its file names.
-async fn wire_qbit_ini(app: &AppHandle, rep: &mut FixReport) {
+pub(crate) async fn wire_qbit_ini(app: &AppHandle, rep: &mut FixReport) {
     let Some(cfg) = app.state::<Core>().config(AppId::QBittorrent) else { return };
     let Some(exe) = cfg.exe.clone() else { return };
     let running = procs::process_running("qbittorrent.exe");
-    if running && !cfg.base_url.is_empty() && procs::port_open(&cfg.base_url).await {
-        return;
-    }
     let Some(dir) = std::env::var_os("APPDATA").map(|p| std::path::PathBuf::from(p).join("qBittorrent")) else { return };
     let path = dir.join("qBittorrent.ini");
     let ini = match crate::wire::IniFile::read(&path) {
         Ok(ini) => ini,
         Err(e) => return log(app, Level::Red, format!("Couldn't check qBittorrent's Web UI: {e}")),
     };
+    let tray_on = crate::wire::quiet_tray(&ini.text) != ini.text;
+    if running && !tray_on && !cfg.base_url.is_empty() && procs::port_open(&cfg.base_url).await {
+        return;
+    }
     let port = cfg.base_url.rsplit(':').next().and_then(|p| p.parse().ok()).unwrap_or(8080);
     let ini_port = crate::discover::parse_qbit_port(&ini.text);
     let host = cfg.base_url.rsplit_once(':').map_or("http://localhost", |(h, _)| h).to_string();
     let url = |p: u16| format!("{host}:{p}");
-    if crate::wire::enable_webui(&ini.text, port) == ini.text {
+    if crate::wire::quiet_tray(&crate::wire::enable_webui(&ini.text, port)) == ini.text {
         // Already on. qBittorrent reads its port from this file, so Chillarr
         // follows the file rather than restarting it.
         if let Some(p) = ini_port.filter(|p| *p != port) {
@@ -525,14 +634,14 @@ async fn wire_qbit_ini(app: &AppHandle, rep: &mut FixReport) {
         close_qbit(&url(ini_port.unwrap_or(port))).await;
     }
     let written = crate::wire::IniFile::read(&path).and_then(|ini| {
-        let new = crate::wire::enable_webui(&ini.text, port);
+        let new = crate::wire::quiet_tray(&crate::wire::enable_webui(&ini.text, port));
         ini.write(&path, &new).map(|_| crate::discover::parse_qbit_port(&new).unwrap_or(port))
     });
     let mut now_on = ini_port.unwrap_or(port);
     match written {
         Ok(p) => {
             now_on = p;
-            let msg = format!("Turned on qBittorrent's Web UI (port {p}) so Sonarr, Radarr and Chillarr can reach it.");
+            let msg = format!("Set up qBittorrent (Web UI on port {p}, no icon of its own).");
             log(app, Level::Ok, &msg);
             rep.actions.push(msg);
         }
@@ -551,7 +660,7 @@ async fn wire_qbit_ini(app: &AppHandle, rep: &mut FixReport) {
 
 /// Closes qBittorrent so its settings file can be changed: through its Web UI
 /// when that answers, else like closing its window, forced only after 10 s.
-async fn close_qbit(url: &str) {
+pub(crate) async fn close_qbit(url: &str) {
     if procs::port_open(url).await {
         let asked = reqwest::Client::new().post(format!("{url}/api/v2/app/shutdown")).timeout(Duration::from_secs(5)).send().await;
         if asked.is_ok_and(|r| r.status().is_success()) {
@@ -880,7 +989,10 @@ async fn run_as_user_step(app: &AppHandle, rep: &mut FixReport) {
         let name = id.label();
         busy(app, id, "Switching to run as you...");
         let save = crate::discover::qbit_save_path();
-        let params = crate::imports::run_as_user_command(&svc);
+        let data = arr_data_dir(id).map(|d| d.to_string_lossy().to_string()).unwrap_or_default();
+        let account = format!("{}\\{}", std::env::var("USERDOMAIN").unwrap_or_default(), std::env::var("USERNAME").unwrap_or_default());
+        // Its files belong to the service until now, so the app run as you couldn't open them.
+        let params = format!("{}\n{}", crate::imports::grant_user_line(&data, &account), crate::imports::run_as_user_command(&svc));
         let done = tokio::task::spawn_blocking(move || procs::run_elevated(&params))
             .await
             .unwrap_or_else(|e| Err(e.to_string()));
@@ -909,7 +1021,7 @@ async fn run_as_user_step(app: &AppHandle, rep: &mut FixReport) {
         }
         if !up {
             // Put the service back so the app isn't left down after a reboot.
-            let params = crate::imports::revert_command(&svc);
+            let params = format!("{}\n{}", crate::imports::remove_grant_line(&data, &account), crate::imports::revert_command(&svc));
             let _ = tokio::task::spawn_blocking(move || procs::run_elevated(&params)).await;
             if let Some(c) = core.configs.write().unwrap().iter_mut().find(|c| c.id == id) {
                 c.service = Some(svc.clone());
@@ -978,11 +1090,9 @@ pub(crate) async fn import_finished_step(app: &AppHandle, rep: &mut FixReport) {
 
 async fn indexer_steps(app: &AppHandle, trigger: Trigger, rep: &mut FixReport) {
     let (passed, proxies_ok) = prowlarr_steps(app).await;
-    for id in [AppId::Sonarr, AppId::Radarr] {
-        arr_tests(app, id).await;
-    }
+    tokio::join!(arr_tests(app, AppId::Sonarr), arr_tests(app, AppId::Radarr));
     let all = [AppId::Prowlarr, AppId::Sonarr, AppId::Radarr];
-    check_health(app, &all).await;
+    tokio::join!(check_health(app, &all[..1]), check_health(app, &all[1..2]), check_health(app, &all[2..]));
     if trigger == Trigger::Button {
         for id in all {
             restart_if_stale(app, id, &passed, proxies_ok, rep).await;
@@ -1009,9 +1119,11 @@ pub async fn fix_all(app: &AppHandle, trigger: Trigger) -> FixReport {
         rediscover_into(app).await;
     }
     let _ = app.emit("fix-state", true);
+    let started = Instant::now();
     if trigger == Trigger::Button {
         log(app, Level::Ok, "Fix everything started.");
     }
+    fix_step(app, trigger, 1, "Starting what's down");
     let mut rep = FixReport::default();
     if trigger == Trigger::Button {
         wire_qbit_ini(app, &mut rep).await;
@@ -1023,15 +1135,40 @@ pub async fn fix_all(app: &AppHandle, trigger: Trigger) -> FixReport {
         wire_qbit_ini(app, &mut rep).await;
     }
     let configs = core.configs.read().unwrap().clone();
-    for cfg in configs.iter().filter(|c| c.managed) {
+    // Side by side, so the wait is the slowest app's and not all of them added
+    // up. A Windows service may ask for permission, so those go one at a time.
+    let (services, plain): (Vec<_>, Vec<_>) = configs.into_iter().filter(|c| c.managed).partition(|c| c.service.is_some());
+    for cfg in &services {
         start_if_down(app, cfg, trigger, &mut rep).await;
     }
-    // Every trigger: an *arr app that skips its login for the home network asks for it everywhere.
-    crate::login::require_login_everywhere(app).await;
-    crate::pick::keep_deleted_gone(app).await;
-    crate::pick::no_disc_copies(app).await;
-    crate::pick::no_dubs(app).await;
-    crate::media::flare_for_blocked(app).await;
+    let mut starts = tokio::task::JoinSet::new();
+    for cfg in plain {
+        let app = app.clone();
+        starts.spawn(async move {
+            let mut one = FixReport::default();
+            start_if_down(&app, &cfg, trigger, &mut one).await;
+            one
+        });
+    }
+    while let Some(done) = starts.join_next().await {
+        if let Ok(one) = done {
+            rep.actions.extend(one.actions);
+            rep.needs_button.extend(one.needs_button);
+        }
+    }
+    fix_step(app, trigger, 2, "Checking each app's settings");
+    // Every trigger: an *arr app that skips its login for the home network asks
+    // for it everywhere. The quality rules stay in order: both change the same profiles.
+    tokio::join!(
+        crate::login::require_login_everywhere(app),
+        crate::pick::keep_deleted_gone(app),
+        async {
+            crate::pick::no_disc_copies(app).await;
+            crate::pick::no_dubs(app).await;
+        },
+        crate::media::flare_for_blocked(app),
+    );
+    fix_step(app, trigger, 3, "Connecting your apps");
     if trigger == Trigger::Button {
         wire_links(app, &mut rep).await;
         // The one login, for apps that weren't running when it was picked.
@@ -1066,9 +1203,11 @@ pub async fn fix_all(app: &AppHandle, trigger: Trigger) -> FixReport {
     // Only test and re-sync when something is actually wrong: a press while
     // everything is green changes nothing.
     let now = Instant::now();
+    fix_step(app, trigger, 4, "Checking that everything answers");
     let before = refresh_cards(app).await;
     let broken = anything_to_fix(&before);
     if broken && core.fixer.indexer_tests_allowed(trigger, now) {
+        fix_step(app, trigger, 5, "Testing your sources");
         core.fixer.mark_indexer_test(now);
         indexer_steps(app, trigger, &mut rep).await;
     }
@@ -1083,6 +1222,9 @@ pub async fn fix_all(app: &AppHandle, trigger: Trigger) -> FixReport {
         } else {
             format!("Done. {bad} of {} still need attention.", rep.cards.len())
         });
+    }
+    if trigger == Trigger::Button {
+        let _ = app.emit("fix-done", serde_json::json!({ "secs": started.elapsed().as_secs(), "bad": bad, "actions": rep.actions, "needs": rep.needs_button, "broken": broken }));
     }
     let _ = app.emit("fix-state", false);
     *core.fixer.current.lock().unwrap() = None;
@@ -1114,7 +1256,7 @@ pub(crate) async fn first_starts(app: &AppHandle) -> bool {
     let mut started = false;
     for cfg in &waiting {
         let name = cfg.id.label();
-        if procs::process_running(&format!("{name}.exe")) {
+        if procs::process_running(&format!("{name}.exe")) || procs::process_running(&format!("{name}.Console.exe")) {
             continue;
         }
         busy(app, cfg.id, "Starting for the first time...");
@@ -1156,76 +1298,9 @@ pub(crate) async fn ensure_running(app: &AppHandle, id: AppId) -> bool {
     procs::port_open(&cfg.base_url).await
 }
 
-/// "Install all": every missing app downloads and installs at the same time,
-/// then each is started once and everything is connected (Fix everything).
+/// Install buttons: one prompt and one meter, however many apps (onboard.rs).
 pub async fn install_apps(app: &AppHandle, ids: Vec<AppId>) -> Vec<(AppId, String)> {
-    let mut failed = Vec::new();
-    {
-        let core = app.state::<Core>();
-        let _guard = core.fixer.running.lock().await;
-        let _ = app.emit("fix-state", true);
-        let mut set = tokio::task::JoinSet::new();
-        for id in ids {
-            busy(app, id, "Installing...");
-            log(app, Level::Ok, format!("Installing {}...", id.label()));
-            set.spawn(async move { (id, crate::install::install(id).await) });
-        }
-        while let Some(done) = set.join_next().await {
-            let Ok((id, result)) = done else { continue };
-            match result {
-                Ok(()) => log(app, Level::Ok, format!("Installed {}.", id.label())),
-                Err(e) => {
-                    log(app, Level::Red, format!("Couldn't install {}. {e}", id.label()));
-                    failed.push((id, e));
-                }
-            }
-            rediscover_into(app).await;
-            refresh_cards(app).await;
-        }
-        rediscover_into(app).await;
-        first_starts(app).await;
-        refresh_cards(app).await;
-        let _ = app.emit("fix-state", false);
-    }
-    // Now connect them: qBittorrent's Web UI, download clients, Prowlarr apps.
-    fix_all(app, Trigger::Button).await;
-    failed
-}
-
-/// Installs a missing app after the user said yes, then finds it again.
-pub async fn install_app(app: &AppHandle, id: AppId) -> Result<(), String> {
-    let core = app.state::<Core>();
-    let _guard = core.fixer.running.lock().await;
-    let _ = app.emit("fix-state", true);
-    let name = id.label();
-    busy(app, id, "Installing...");
-    log(app, Level::Ok, format!("Installing {name}..."));
-    let result = crate::install::install(id).await;
-    match &result {
-        Ok(()) => log(app, Level::Ok, format!("Installed {name}.")),
-        Err(e) => log(app, Level::Red, format!("Couldn't install {name}. {e}")),
-    }
-    // A fresh Servarr install writes its config.xml once it first starts.
-    for _ in 0..10 {
-        rediscover_into(app).await;
-        if core.config(id).map(|c| c.problem.is_none()).unwrap_or(true) {
-            break;
-        }
-        tokio::time::sleep(Duration::from_secs(2)).await;
-    }
-    // Still no key: it was never started. Start it once.
-    first_starts(app).await;
-    refresh_cards(app).await;
-    let _ = app.emit("fix-state", false);
-    drop(_guard);
-    if result.is_ok() {
-        // Connect it to the others right away.
-        let h = app.clone();
-        tauri::async_runtime::spawn(async move {
-            fix_all(&h, Trigger::Button).await;
-        });
-    }
-    result
+    crate::onboard::install_only(app, ids).await
 }
 
 /// The daily check: is a newer version of a winget-installed app out?
@@ -1296,6 +1371,22 @@ pub async fn test_indexers(app: &AppHandle) -> Vec<IndexerRow> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn says_what_an_app_logged_when_it_wouldnt_start() {
+        let log = "2026-11-03 10:00:00.0|Error|Old|before this start\n2026-11-03 10:05:01.0|Info|Bootstrap|Starting\n2026-11-03 10:05:02.0|Fatal|ConsoleApp|attempt to write a readonly database\n   at Stack.Trace()\n";
+        assert_eq!(arr_log_failure(log, "2026-11-03 10:05:00").as_deref(), Some("attempt to write a readonly database"));
+        assert_eq!(arr_log_failure(log, "2026-11-03 10:06:00"), None, "nothing since this start");
+        assert_eq!(arr_log_failure("", "2026"), None);
+    }
+
+    #[test]
+    fn a_missing_file_isnt_a_locked_one() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!is_locked(dir.path(), "Sonarr"), "a fresh install has no files yet");
+        std::fs::write(dir.path().join("config.xml"), "x").unwrap();
+        assert!(!is_locked(dir.path(), "Sonarr"), "one it can write");
+    }
     use std::time::{Duration, Instant};
 
     #[test]

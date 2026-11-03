@@ -230,6 +230,21 @@ impl History {
         }
     }
 
+    /// Marked watched by hand: into the show's record, made if it has none yet,
+    /// and no longer held back by an earlier Start over.
+    pub fn remember_episodes(&mut self, tvdb: i64, title: &str, which: &[(i64, i64)], at: i64) {
+        let key = self.series.iter().find(|(_, w)| w.tvdb == Some(tvdb)).map(|(k, _)| k.clone()).unwrap_or_else(|| format!("tvdb:{tvdb}"));
+        let w = self.series.entry(key).or_default();
+        w.tvdb = Some(tvdb);
+        if w.title.is_empty() {
+            w.title = title.to_string();
+        }
+        for (s, e) in which {
+            w.episodes.insert(ep_key(*s, *e), at);
+            w.forgotten.remove(&ep_key(*s, *e));
+        }
+    }
+
     /// What "Because you watched" may start from, the latest first: finished
     /// movies, series watched to the end, and anime with 5+ episodes watched.
     pub fn seeds(&self) -> Vec<Seed> {
@@ -536,6 +551,21 @@ pub fn forget(app: &AppHandle, tvdb: i64, which: &[(i64, i64)]) {
     }
 }
 
+/// Puts episodes in the watching profile's log by hand. Not on this PC is
+/// fine: someone who saw them elsewhere still wants them ticked.
+pub fn remember(app: &AppHandle, tvdb: i64, title: &str, which: &[(i64, i64)]) {
+    if let (Some(dir), Some(uid)) = (crate::media::data_dir(app), crate::media::active_user(app)) {
+        let _one = UPDATING.lock().unwrap_or_else(|e| e.into_inner());
+        let r = read(&dir, &uid, true).and_then(|mut h| {
+            h.remember_episodes(tvdb, title, which, chrono::Utc::now().timestamp());
+            save(&dir, &uid, &h)
+        });
+        if let Err(e) = r {
+            crate::log::log(app, crate::model::Level::Amber, e);
+        }
+    }
+}
+
 /// The log of whoever is watching now.
 pub fn active(app: &AppHandle) -> History {
     match (crate::media::data_dir(app), crate::media::active_user(app)) {
@@ -606,6 +636,26 @@ mod tests {
 
     fn movie(id: &str, name: &str, tmdb: i64, at: &str) -> Value {
         json!({ "Type": "Movie", "Id": id, "Name": name, "ProviderIds": { "Tmdb": tmdb.to_string() }, "UserData": { "Played": true, "LastPlayedDate": at } })
+    }
+
+    #[test]
+    fn episodes_marked_by_hand_are_logged_and_come_off_again() {
+        let mut h = History::default();
+        h.remember_episodes(77, "Show", &[(1, 1), (1, 2)], 100);
+        let w = h.series.values().find(|w| w.tvdb == Some(77)).unwrap();
+        assert_eq!(w.title, "Show");
+        assert_eq!(w.episodes.len(), 2);
+        h.forget_episodes(77, &[(1, 2)], 200);
+        let w = h.series.values().find(|w| w.tvdb == Some(77)).unwrap();
+        assert!(!w.episodes.contains_key(&ep_key(1, 2)));
+        assert!(w.forgotten.contains_key(&ep_key(1, 2)));
+        // Marked again: the Start over no longer holds it back, and it joins the same record.
+        h.remember_episodes(77, "Other name", &[(1, 2)], 300);
+        assert_eq!(h.series.len(), 1);
+        let w = h.series.values().next().unwrap();
+        assert_eq!(w.title, "Show");
+        assert_eq!(w.episodes[&ep_key(1, 2)], 300);
+        assert!(!w.forgotten.contains_key(&ep_key(1, 2)));
     }
 
     #[test]

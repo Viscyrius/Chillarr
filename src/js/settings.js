@@ -1,12 +1,14 @@
 // Settings: the six apps and Fix everything, indexers, library folders,
 // app paths, the Jellyfin account and streaming, general options, logs.
-import { $, ask, el, icon, ICON, invoke, LABEL, ORDER, store, toast, viewer, WEB } from "./api.js";
+import { $, ask, el, icon, ICON, invoke, LABEL, listen, ORDER, store, toast, viewer, WEB } from "./api.js";
 import { startProfiles } from "./profiles.js";
-import { openSetup } from "./setup.js";
+import { installWithMeter, openSetup } from "./setup.js";
+import { applyTheme, currentTheme, saveTheme, themePicker } from "./theme.js";
 import { setSubScale, subScale } from "./subrender.js";
 
 const SECTIONS = [
   ["system", "System"],
+  ["appearance", "Appearance"],
   ["indexers", "Indexers"],
   ["library", "Library & storage"],
   ["account", "Jellyfin & streaming"],
@@ -48,7 +50,7 @@ export function renderSettings(view, section = "system") {
     sections.map(([id, name]) => el("button", { class: id === section ? "on" : "", onclick: () => (location.hash = `settings/${id}`) }, name)));
   const panel = el("section", { class: "panel" });
   view.replaceChildren(el("div", { class: "settings" }, nav, panel));
-  (WEB ? { account: webAccount, general: webGeneral, remote: webRemote, library } : { system, indexers, library, account, apps, general, logs })[section](panel);
+  (WEB ? { account: webAccount, general: webGeneral, remote: webRemote, library } : { system, appearance, indexers, library, account, apps, general, logs })[section](panel);
 }
 
 /* ---------- System ---------- */
@@ -71,8 +73,38 @@ function chain() {
     el("div", { class: "fork" }, link("Sonarr"), link("Radarr")), el("span", { class: "wire" }), link("QBittorrent"), el("span", { class: "wire" }), link("Jellyfin"));
 }
 
+let fixStep = null;
+let fixDone = null;
+const fixWatchers = new Set();
+if (!WEB) {
+  listen("fix-step", (e) => { fixStep = e.payload; fixWatchers.forEach((f) => f()); });
+  listen("fix-done", (e) => { fixStep = null; fixDone = e.payload; fixWatchers.forEach((f) => f()); });
+}
+
+/** Where Fix everything is, then what it did. */
+function fixProgress() {
+  const box = el("div", { class: "fix-progress" });
+  const draw = () => {
+    if (fixStep) {
+      box.replaceChildren(el("div", { class: "fix-line" }, el("span", { class: "spinner small" }), el("span", { text: fixStep.line }), el("small", { text: `Step ${fixStep.n} of ${fixStep.of}` })),
+        el("div", { class: "meter-bar slim" }, el("span", { class: "meter-fill", style: `transform:scaleX(${fixStep.n / fixStep.of})` })));
+    } else if (fixDone) {
+      const { secs, bad, actions, needs } = fixDone;
+      const ok = !bad;
+      const head = ok ? (actions.length ? "Fixed." : "Everything already works.") : `${bad} still ${bad === 1 ? "needs" : "need"} attention. Their cards below say why.`;
+      box.replaceChildren(el("div", { class: `fix-result ${ok ? "ok" : "bad"}` }, el("div", { class: "fix-line" }, el("strong", { text: head }), el("small", { text: `Took ${secs < 60 ? `${secs} s` : `${Math.round(secs / 60)} min`}` })),
+        actions.length || needs.length ? el("ul", {}, [...actions, ...needs].map((a) => el("li", { text: a }))) : null));
+    } else box.replaceChildren();
+  };
+  fixWatchers.add(draw);
+  const off = new MutationObserver(() => { if (!box.isConnected) { fixWatchers.delete(draw); off.disconnect(); } });
+  queueMicrotask(() => { if (box.parentNode) off.observe(box.getRootNode(), { childList: true, subtree: true }); });
+  draw();
+  return box;
+}
+
 function system(panel) {
-  const fix = el("button", { class: "btn primary", onclick: () => invoke("fix_everything") }, "Fix everything");
+  const fix = el("button", { class: "btn primary", onclick: () => { fixDone = null; invoke("fix_everything"); } }, "Fix everything");
   const summary = el("p", { class: "sub" });
   const cardsBox = el("div", { class: "apps" });
   const chainBox = el("div");
@@ -86,7 +118,7 @@ function system(panel) {
     cardsBox.dataset.drawn = "1";
     chainBox.replaceChildren(chain());
   };
-  panel.append(el("div", { class: "panel-head" }, el("div", {}, el("h2", { text: "System" }), summary), fix), chainBox, cardsBox);
+  panel.append(el("div", { class: "panel-head" }, el("div", {}, el("h2", { text: "System" }), summary), fix), fixProgress(), chainBox, cardsBox);
   draw();
   unsub = store.on((w) => { if (w === "cards" || w === "fixing") draw(); });
 }
@@ -94,18 +126,10 @@ function system(panel) {
 async function offerInstall(ids) {
   const one = ids.length === 1;
   const ok = await ask(one ? `Install ${LABEL[ids[0]]}?` : `Install ${ids.length} missing apps?`,
-    one ? `Chillarr downloads ${WHERE[ids[0]]}. Windows may ask for permission.` : "Chillarr downloads each one from its official source. Windows may ask for permission.",
+    one ? `Chillarr downloads ${WHERE[ids[0]]}. Windows asks for your OK once.` : "Chillarr downloads each one from its official source. Windows asks for your OK once.",
     one ? [] : ids.map((id) => LABEL[id]), "Install");
   if (!ok) return false;
-  if (one) {
-    try { await invoke("install_app", { id: ids[0] }); } catch (e) { toast(String(e), true); }
-    return true;
-  }
-  // All at once, then each is started and everything is connected.
-  toast(`Installing ${ids.length} apps at once. Chillarr sets them up and connects them when they're done.`);
-  const failed = await invoke("install_apps", { ids }).catch((e) => [[null, String(e)]]);
-  for (const [id, e] of failed) toast(id ? `${LABEL[id]}: ${e}` : e, true);
-  if (!failed.length) toast("All installed and connected.");
+  await installWithMeter(ids);
   return true;
 }
 export { offerInstall };
@@ -115,52 +139,39 @@ async function offerUpdate(c) {
   if (ok) { try { await invoke("update_app", { id: c.id }); } catch (e) { toast(String(e), true); } }
 }
 
-/* ---------- Indexers ---------- */
-// Each one passed Prowlarr's test and returned results on 2026-10-18.
-// Anidex (down), Uindex and TorrentsCSV (rate-limited Sonarr and Radarr's sync) were left out.
-const RECOMMENDED = [
-  { def: "1337x", name: "1337x", why: "Huge catalogue of movies and series. Goes through FlareSolverr." },
-  { def: "Knaben", name: "Knaben", why: "Searches many big sites at once. Great for movies and series." },
-  { def: "thepiratebay", name: "The Pirate Bay", why: "The biggest general site." },
-  { def: "limetorrents", name: "LimeTorrents", why: "Movies and series, a good backup." },
-  { def: "yts", name: "YTS", why: "Small, good-quality movie files." },
-  { def: "eztv", name: "EZTV", why: "TV episodes, fast after they air." },
-  { def: "nyaasi", name: "Nyaa.si", why: "The go-to site for anime." },
-  { def: "animetosho-xyz", name: "Anime Tosho", why: "Anime, mirrors Nyaa and more." },
-  { def: "SubsPlease", name: "SubsPlease", why: "New anime episodes, out within hours." },
-  { def: "nekobt", name: "nekoBT", why: "Anime, well sorted releases." },
-  { def: "tokyotosho", name: "Tokyo Toshokan", why: "Older and rarer anime." },
-];
+/* ---------- Appearance ---------- */
+function appearance(panel) {
+  const s = () => currentTheme().surface;
+  const seg = el("div", { class: "segmented", role: "group", "aria-label": "Background" });
+  const drawSeg = () => seg.replaceChildren(...[["tinted", "Tinted"], ["black", "Pure black"]].map(([id, name]) =>
+    el("button", { class: s() === id ? "on" : "", onclick: async () => { await saveTheme({ ...currentTheme(), surface: id }); drawSeg(); } }, name)));
+  drawSeg();
+  panel.append(el("h2", { text: "Appearance" }), el("p", { class: "sub", text: "Your colour goes on the whole app, the tray and your desktop and taskbar icons." }),
+    el("div", { class: "box theme-box" },
+      el("div", { class: "opt column" }, el("span", {}, el("b", { text: "Colour" }), el("small", { text: "Pick one, or your own. It changes as you drag." })), themePicker(() => toast("Colour saved. Your icons are updated."))),
+      el("div", { class: "opt" }, el("span", {}, el("b", { text: "Background" }), el("small", { text: "Tinted leans toward your colour. Pure black is darkest on OLED screens." })), seg)));
+}
 
+/* ---------- Indexers ---------- */
+const inMinutes = (s) => (s >= 3600 ? `${Math.round(s / 3600)} h` : `${Math.max(1, Math.round(s / 60))} min`);
+
+/** The sites Chillarr adds by itself, and how each one stands. */
 export async function suggestions(onAdded) {
   const info = await invoke("setup_indexers");
-  const have = new Set(info.have.map((i) => i.definition));
-  const adds = [];
-  const cards = RECOMMENDED.map((r) => {
-    const btn = el("button", { class: have.has(r.def) ? "btn small ghost" : "btn small primary", disabled: have.has(r.def) }, have.has(r.def) ? "Added" : "Add");
-    // Quiet when Add all runs it: one toast at the end instead of eleven.
-    const add = async (quiet = false) => {
-      if (btn.disabled) return true;
+  const cards = (info.sites || []).map((r) => {
+    const here = r.state === "added";
+    const label = { added: "Added", waiting: "Try now", removed: "Add", soon: "Add" }[r.state];
+    const btn = el("button", { class: here ? "btn small ghost" : "btn small primary", disabled: here }, label);
+    btn.addEventListener("click", async () => {
       btn.disabled = true; btn.textContent = "Adding...";
-      try { const msg = await invoke("setup_add_indexer", { definition: r.def }); if (!quiet) toast(msg); btn.textContent = "Added"; btn.className = "btn small ghost"; onAdded?.(); return true; }
-      catch (e) { if (!quiet) toast(String(e), true); btn.disabled = false; btn.textContent = "Add"; return `${r.name}: ${e}`; }
-    };
-    adds.push(add);
-    btn.addEventListener("click", () => add());
-    return el("div", { class: "suggest-card" }, el("div", {}, el("strong", { text: r.name }), el("span", { text: r.why })), btn);
+      try { toast(await invoke("setup_add_indexer", { definition: r.def })); btn.textContent = "Added"; btn.className = "btn small ghost"; note.textContent = r.why; onAdded?.(); }
+      catch (e) { toast(String(e), true); btn.disabled = false; btn.textContent = label; }
+    });
+    const line = r.state === "waiting" ? `Down right now. Trying again in ${inMinutes(r.next_in || 0)}.` : r.state === "removed" ? "You took this one out, so it stays out." : r.why;
+    const note = el("span", { text: line, title: r.note || "" });
+    return el("div", { class: "suggest-card", dataset: { state: r.state } }, el("div", {}, el("strong", { text: r.name }), note), btn);
   });
-  const missing = RECOMMENDED.filter((r) => !have.has(r.def)).length;
-  const all = el("button", { class: "btn primary", disabled: !missing }, missing ? "Add all" : "All added");
-  all.addEventListener("click", async () => {
-    all.disabled = true; all.textContent = "Adding...";
-    // One at a time: Prowlarr tests each site as it's added.
-    const failed = [];
-    for (const add of adds) { const r = await add(true); if (r !== true) failed.push(r); }
-    all.textContent = failed.length ? "Add the rest" : "All added";
-    all.disabled = !failed.length;
-    toast(failed.length ? `Added the others. Couldn't add ${failed.join("; ")}` : "Added every recommended site.", failed.length > 0);
-  });
-  return el("div", {}, el("div", { class: "suggest-all" }, all), el("div", { class: "suggest" }, cards));
+  return el("div", {}, el("div", { class: "suggest" }, cards));
 }
 
 async function indexers(panel) {
@@ -180,7 +191,8 @@ async function indexers(panel) {
   panel.append(
     el("div", { class: "panel-head" }, el("div", {}, el("h2", { text: "Indexers" }), el("p", { class: "sub", text: "The sites Prowlarr searches, and whether Sonarr and Radarr can use them." })), test),
     el("table", { class: "grid" }, el("thead", {}, el("tr", {}, ["Indexer", "Prowlarr", "Sonarr", "Radarr"].map((h) => el("th", { text: h })))), table),
-    el("h2", { text: "Recommended", style: "margin-top:36px;font-size:1.2rem" }),
+    el("h2", { text: "Sites Chillarr adds for you", style: "margin-top:36px;font-size:1.2rem" }),
+    el("p", { class: "sub", text: "Each one is added by itself. A site that's down is tried again later until it works." }),
     await suggestions(async () => draw(await invoke("indexer_table")))
   );
   draw(await invoke("indexer_table"));
@@ -603,8 +615,13 @@ function general(panel) {
     el("button", { class: s.player !== "vlc" ? "on" : "", onclick: async () => { s.player = "chillarr"; drawSeg(); await invoke("set_settings", { s }); } }, "Chillarr"),
     el("button", { class: s.player === "vlc" ? "on" : "", disabled: !vlc, title: vlc ? "" : "VLC isn't installed", onclick: async () => { s.player = "vlc"; drawSeg(); await invoke("set_settings", { s }); } }, "VLC"));
   drawSeg();
+  const voices = el("div", { class: "segmented", role: "group", "aria-label": "Anime and movies" });
+  const drawVoices = () => voices.replaceChildren(...[["sub", "Subtitles"], ["dub", "Dubbed"]].map(([id, name]) =>
+    el("button", { class: (s.audio_pref || "sub") === id ? "on" : "", onclick: async () => { s.audio_pref = id; drawVoices(); await invoke("set_settings", { s }); } }, name)));
+  drawVoices();
   panel.append(el("h2", { text: "General" }), el("p", { class: "sub", text: "How Chillarr starts, plays and looks after things." }),
     el("div", { class: "box" },
+      el("div", { class: "opt" }, el("span", {}, el("b", { text: "Anime and movies" }), el("small", { text: "Subtitles: original voices, and dubbed-only copies are skipped. Dubbed: copies with English voices are picked first. Applies to new downloads. When a file has both, the player starts in this one, and you can switch any time under its audio button." })), voices),
       el("div", { class: "opt" }, el("span", {}, el("b", { text: "Play with" }), el("small", { text: vlc ? "VLC plays the original file at full quality with every audio track. Chillarr's player converts what it can't play directly." : "Install VLC to play original files at full quality." })), seg),
       sw("start_with_windows", "Start with Windows", "Opens in the tray when you sign in."),
       sw("auto_fix", "Fix automatically", "Checks every minute and fixes what breaks."),

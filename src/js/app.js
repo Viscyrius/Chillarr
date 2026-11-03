@@ -8,6 +8,7 @@ import { startProfiles, startProfilesWeb } from "./profiles.js";
 import * as place from "./place.js";
 import "./nav.js";
 import { recentSearches } from "./recent.js";
+import { applyTheme, syncIcons } from "./theme.js";
 
 const view = $("#view");
 const TABS = ["home", "movies", "series", "anime", "downloads", "mylist", "settings", "explore", "filter"];
@@ -130,7 +131,7 @@ document.addEventListener("contextmenu", (e) => {
 /** Start in Jellyfin's web pages: no profiles, setup or app health, just the signed-in user. */
 async function startWeb() {
   document.body.classList.add("web");
-  try { Object.assign(viewer, await invoke("web_viewer")); setPerson(viewer.user_id); }
+  try { Object.assign(viewer, await invoke("web_viewer")); setPerson(viewer.user_id); if (viewer.theme) applyTheme(viewer.theme); }
   catch (e) {
     view.replaceChildren(el("div", { class: "web-down" }, el("h1", { text: "Chillarr isn't answering" }), el("p", { text: String(e) }),
       el("button", { class: "btn primary", onclick: () => location.reload() }, "Try again")));
@@ -151,7 +152,7 @@ async function startWeb() {
       .observe($("#player"), { attributes: true, attributeFilter: ["hidden"] });
   }
   // Only the built-in player plays in a browser.
-  store.settings = { setup_done: true, player: "chillarr" };
+  store.settings = { setup_done: true, player: "chillarr", audio_pref: viewer.audio_pref || "sub" };
   invoke("media_status").then((m) => (store.media = { ...m, vlc: false }));
   drawViewer();
   route();
@@ -169,6 +170,8 @@ function drawViewer() {
 (async () => {
   if (WEB) return startWeb();
   store.settings = await invoke("get_settings");
+  if (store.settings.theme) applyTheme(store.settings.theme);
+  syncIcons();
   invoke("media_status").then((m) => (store.media = m));
   (await invoke("refresh")).forEach((c) => store.cards.set(c.id, c));
   updateHealth();

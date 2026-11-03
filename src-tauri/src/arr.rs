@@ -238,6 +238,11 @@ impl Arr {
         self.send(req, REQUEST_TIMEOUT, false).await.map(|_| true)
     }
 
+    /// Asks the app to close.
+    pub async fn shutdown(&self) -> Result<(), ArrError> {
+        self.send(self.http.post(self.url("system/shutdown")), REQUEST_TIMEOUT, false).await.map(|_| ())
+    }
+
     /// Asks the app to restart itself. Works for service installs too, no admin needed.
     pub async fn restart(&self) -> Result<(), ArrError> {
         self.send(self.http.post(self.url("system/restart")), REQUEST_TIMEOUT, false).await.map(|_| ())

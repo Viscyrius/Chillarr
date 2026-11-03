@@ -38,6 +38,18 @@ pub struct Settings {
     /// on top of the film's own. On unless turned off in Settings.
     #[serde(default = "yes")]
     pub skip_dubs: bool,
+    /// Anime and films: "sub" (original voices with subtitles) or "dub"
+    /// (English voices). Steers which copy is downloaded and which audio
+    /// track a title starts in. The player's menu can still switch.
+    #[serde(default = "default_audio")]
+    pub audio_pref: String,
+    /// Colours and the logo (theme.rs).
+    #[serde(default)]
+    pub theme: crate::theme::Theme,
+}
+
+fn default_audio() -> String {
+    "sub".into()
 }
 
 fn default_player() -> String {
@@ -46,7 +58,7 @@ fn default_player() -> String {
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { start_with_windows: true, auto_fix: true, apps: Vec::new(), defender_allowed: Vec::new(), defender_ask: true, setup_done: false, player: default_player(), skip_remux: true, skip_dubs: true }
+        Settings { start_with_windows: true, auto_fix: true, apps: Vec::new(), defender_allowed: Vec::new(), defender_ask: true, setup_done: false, player: default_player(), skip_remux: true, skip_dubs: true, audio_pref: default_audio(), theme: Default::default() }
     }
 }
 

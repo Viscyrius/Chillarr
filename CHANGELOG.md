@@ -1,6 +1,47 @@
 # Changelog
 
-## Unreleased
+## 0.11.0 (2026-11-03)
+- Setting up a new PC is one screen and one press. Pick a folder, a login, Subtitles or Dubbed, and a colour, press Set up Chillarr, and it does the rest: every download, every install, starting the apps and connecting them.
+- One big meter shows all of it: how much has downloaded out of the total, the speed, the time left, and a line for each app. Broken connections pick up where they stopped.
+- Windows asks for permission once instead of once per app. That one prompt covers the installs, the firewall rules (no more "Allow access?" windows) and Defender's protected folders.
+- Chillarr's own installer is no longer a wizard. Double-click it, a short progress window runs, and the app opens.
+- Sites are added by themselves. If one is down or blocked, Chillarr tries again later without being asked, up to every 6 hours. One you take out of Prowlarr stays out.
+- Choose Subtitles or Dubbed for anime and movies, in Settings > General. It decides which copy gets downloaded and which audio a title starts in, when the file has both. The player's audio button still switches any time.
+- Pick your colour in Settings > Appearance: seven themes or any colour you like, and a pure black background. The whole app follows, and so do the logo, the tray icon and your desktop and taskbar shortcuts.
+- New hover cards: the poster stays under your mouse and the details open beside it, with the trailer above them.
+- Series and anime show what you've watched clearly: a Watched label on each episode, a count for each season, and buttons to mark an episode or a whole season as watched or not watched. Marks stay after the files are deleted, even right after you finish an episode.
+- Only Space or the pause button pauses now. Clicking the picture just brings the controls back. TV remotes keep their OK and play buttons.
+- One icon in the tray: Chillarr's. Sonarr, Radarr and qBittorrent run without their own. The tray menu has "Stop everything and quit" for closing them all.
+- Fix everything is faster, since apps start and get checked side by side, and it shows each step as it goes, then what it changed and how long it took.
+- Apps that wouldn't start: if an app can't open its own files, Fix everything repairs that with one Windows prompt. One stuck without answering gets restarted, and if an app still won't start, Logs shows the app's own error instead of only "didn't answer".
+- Adding several sites no longer makes Prowlarr's sync clash with itself in Sonarr and Radarr.
+- Watch now: pressing Back while it's still looking for a copy really cancels, and a film asked for that way doesn't download later anyway. Removing a title mid-start keeps it removed.
+- Watch now: stopping partway no longer marks it watched, your place is no longer lost when you leave during a reload or right after Start over, a paused season pack starts again for the episode you're on, Next stays full screen, the spinner clears after a seek while paused, and a stalled stream gives up with a message instead of spinning forever.
+- The status dots on the app cards in Settings show the right colour. They were always grey.
+
+## 0.10.0 (2026-10-30)
+- Switching tabs is instant. Going back to Movies, Anime or any tab you've already opened shows it straight away, scrolled where you left it, and refreshes it quietly in the background. Only what actually changed gets redrawn.
+- Remove from Continue watching: a title you won't finish can be taken off the row from its page or its card.
+- Press ? in the player (or the new button in its bar) for a list of every shortcut.
+- Seeking with the arrow keys, a TV remote or a controller now shows the preview picture too, not only with the mouse.
+- The audio language you pick carries on to the next episode, the way subtitles already did.
+- Each profile keeps its own player settings: subtitles, volume, night mode, quality and sound delay.
+- "Skip full-disc copies" no longer moves a quality profile's target. A profile that allowed 4K but aimed for 1080p was switched to aim for 4K, so Radarr started upgrading films nobody asked to upgrade.
+- Stopping a Discover title partway no longer counts as watching it, even if its download finished while you watched. Before, the clean-up could delete it as finished.
+- A show stopped right after its download started stays stopped instead of being downloaded again.
+- Finished Watch now downloads give their disk space back.
+- Fix everything no longer force-closes a qBittorrent that is still starting or uses another port, and when it does need a restart it closes it properly first. A settings file it can't read is left alone instead of being replaced by an almost empty one, and download folders with a comma in their name work.
+- Blocked indexers (like 1337x or EZTV) now really try their other addresses before giving up.
+- Anime filters by tag show titles that are really about that tag, like the tag rows do. Chillarr also stays under AniList's limit, so anime rows stop failing to load in busy moments.
+- Trickplay turns on for libraries added later, not only the ones there on the first run.
+- The clean-up says so when a file couldn't be deleted, instead of reporting it as cleaned.
+- Settings, profiles, history and the Discover shelf are saved in a way a crash or power cut can't damage. If the profiles file is lost anyway, Chillarr opens locked and asks for the main profile's Jellyfin sign-in instead of dropping every PIN. PIN lockouts now survive a restart.
+- Safer inside Jellyfin: someone signed in on the web can only delete titles they can see, and the phone remote searches as whoever is signed in on that TV, never with the PC owner's account. Each Jellyfin account can have up to 5 phone-remote screens, and one device can no longer use up every connection and lock the others out.
+- On LG TVs: the big banner on Home opens its title, search backgrounds show, picking a Similar title keeps its buttons, subtitles look clean, and Chillarr no longer slowly uses more memory the longer it stays open.
+- Buttons in Settings no longer get stuck on "Testing..." or stay greyed out after something fails, and a page that can't load shows Try again instead of loading forever.
+- The player no longer doubles its progress reports when you switch tracks or episodes quickly, and the TV remote's Back closes an open menu over the player before the player itself.
+
+## 0.9.2 (2026-10-28)
 - My downloads no longer says "Nothing downloaded yet" when you do have things. If Jellyfin was still starting (it takes about half a minute) or too busy to answer, the page took that as an empty library. Now it says it's getting your library and keeps trying until Jellyfin answers.
 
 ## 0.9.1 (2026-10-22)

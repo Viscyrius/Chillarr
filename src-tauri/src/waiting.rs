@@ -635,6 +635,8 @@ fn from_item(item: &Value) -> Result<Tile, String> {
 /// do it when they have the title (so they don't fetch it back); otherwise
 /// Jellyfin does. Then Jellyfin forgets it.
 pub async fn delete_title(app: &AppHandle, tile: &Tile) -> Result<String, String> {
+    // What was just finished goes in the watch log first, so its ticks stay.
+    crate::history::sync(app).await;
     let seen = seen_tile(app, tile).await?;
     let tile = seen.as_ref().unwrap_or(tile);
     let j = jf_admin(app).filter(|j| j.user_id.is_some());
@@ -694,6 +696,8 @@ pub async fn delete_title(app: &AppHandle, tile: &Tile) -> Result<String, String
 /// wanting them so they aren't fetched back. A file holding several episodes
 /// goes when any of them is picked.
 pub async fn delete_episodes(app: &AppHandle, tile: &Tile, episodes: &[(i64, i64)]) -> Result<String, String> {
+    // What was just finished goes in the watch log first, so its ticks stay.
+    crate::history::sync(app).await;
     if episodes.is_empty() {
         return Err("Pick the episodes to delete first.".into());
     }

@@ -245,7 +245,7 @@ function saveSubPref(p) {
 const isEnglish = (lang) => !lang || /^en/i.test(lang);
 
 /** Which subtitle track to start with: the remembered language, or English when the audio isn't. */
-function startingSub(info, preferExternal) {
+function startingSub(info, preferExternal, audio = null) {
   const subs = info.subtitles;
   if (preferExternal) {
     const ext = subs.filter((s) => s.external && s.lang === preferExternal);
@@ -253,7 +253,8 @@ function startingSub(info, preferExternal) {
   }
   const pref = subPref();
   if (pref?.off) return null;
-  const lang = pref?.lang || (isEnglish(info.audio.find((a) => a.default)?.lang || info.audio[0]?.lang) ? null : "eng");
+  const playing = info.audio.find((a) => a.index === audio) || info.audio.find((a) => a.default) || info.audio[0];
+  const lang = pref?.lang || (isEnglish(playing?.lang) ? null : "eng");
   if (!lang) return null;
   const same = subs.filter((s) => s.lang === lang && s.url);
   return same.find((s) => !s.forced) || same[0] || null;
@@ -403,6 +404,20 @@ function carriedAudio(tile, info) {
   return info.audio.find((a) => a.lang === p.lang)?.index ?? null;
 }
 
+/** The track Settings' sub or dub choice asks for, when the file starts in the other one. */
+function preferredAudio(info) {
+  const def = info.audio.find((a) => a.default) || info.audio[0];
+  if (!def || info.audio.length < 2) return null;
+  if (store.settings?.audio_pref === "dub") {
+    if (isEnglish(def.lang)) return null;
+    return info.audio.find((a) => /^en/i.test(a.lang || ""))?.index ?? null;
+  }
+  // Original voices: only languages films are rarely dubbed into, so an English
+  // film with an extra Hindi or French track stays in English.
+  if (!isEnglish(def.lang)) return null;
+  return info.audio.find((a) => /^(ja|jp|ko|zh|ch[is])/i.test(a.lang || ""))?.index ?? null;
+}
+
 function pickAudio(a) {
   saveAudioPref(session.tile, a);
   report("stop");
@@ -479,7 +494,7 @@ async function load(tile, playlist, startAt, opts = {}) {
   if (seq !== loadSeq || box.hidden) return;
   // A new episode of a show you picked another language for: asked again in it.
   if (audio == null && session?.tile.jf_id !== tile.jf_id) {
-    const carried = carriedAudio(tile, info);
+    const carried = carriedAudio(tile, info) ?? preferredAudio(info);
     if (carried != null) return load(tile, playlist, startAt, { ...opts, audio: carried });
   }
   teardown();
@@ -507,7 +522,7 @@ async function load(tile, playlist, startAt, opts = {}) {
   nextButton();
   subs.clear();
   if (subtitle == null) {
-    const first = startingSub(info, preferExternal);
+    const first = startingSub(info, preferExternal, audio);
     showSub(first ? first.index : null);
   }
   padRefresh();
@@ -522,14 +537,15 @@ async function load(tile, playlist, startAt, opts = {}) {
       // the spinner up and ask again, never stop or close (review focus 1).
       if (session?.watchKey) {
         const media = d.type === window.Hls.ErrorTypes.MEDIA_ERROR;
-        waitForData(() => { if (hls !== mine) return; if (media) mine.recoverMediaError(); else mine.startLoad(); });
+        waitForData(() => { if (hls !== mine) return; if (media) mine.recoverMediaError(); else if (!mine.levels?.length) mine.loadSource(info.url); else mine.startLoad(); });
         return;
       }
       toast("The stream stopped. Jellyfin may still be preparing it; try again in a moment.", true);
     });
   } else {
     video.src = info.url;
-    if (startAt) video.addEventListener("loadedmetadata", () => (video.currentTime = startAt), { once: true });
+    // Only for this load: on a title closed before this fired, it would seek the next one.
+    if (startAt) video.addEventListener("loadedmetadata", () => { if (seq === loadSeq) video.currentTime = startAt; }, { once: true });
   }
   if (inGroup()) {
     // In a watch party the group starts it, at the same moment for everyone.
@@ -551,7 +567,8 @@ async function load(tile, playlist, startAt, opts = {}) {
 function keepWatch() {
   const w = wn;
   if (!w || w.waiting || !w.uid || session?.watchKey !== w.key || video.readyState < 1) return;
-  invoke("watchnow_progress", { key: w.key, position: now(), duration: total() || null, uid: w.uid }).catch(() => {});
+  w.at = now();
+  invoke("watchnow_progress", { key: w.key, position: w.at, duration: total() || null, uid: w.uid }).catch(() => {});
 }
 
 /** Plays in VLC or in Chillarr, as chosen in Settings (or forced with `where`). */
@@ -660,6 +677,7 @@ export const syncControl = {
   /** The party started something: open it paused, ready for the group's go. */
   open: (tile, at) => {
     leaveWatch();
+    endWait(true);
     box.hidden = false;
     document.body.style.overflow = "hidden";
     poke();
@@ -809,13 +827,15 @@ box.addEventListener("click", (e) => {
   if (pad.on || !session || !onPicture(e)) return;
   // A click away from an open menu only closes it.
   if (!$("#p-menu").hidden) return;
-  // detail 0: Enter or Space on a focused control, not a finger.
-  if (touched && e.detail !== 0) {
+  // Play and pause only from Space or the button. A click on the picture just
+  // brings the bars back. A TV has neither, so its remote's OK still works.
+  if (e.detail === 0 && document.documentElement.classList.contains("tv")) { togglePlay(); return; }
+  if (touched) {
     if (box.classList.contains("idle") || video.paused) poke();
     else { clearTimeout(idleTimer); box.classList.add("idle"); }
     return;
   }
-  togglePlay();
+  poke();
 });
 box.addEventListener("dblclick", (e) => { if (!pad.on && !touched && onPicture(e)) toggleFull(); });
 box.addEventListener("wheel", (e) => {
@@ -907,7 +927,9 @@ function wireVideo(v) {
   v.addEventListener("volumechange", () => { padRefresh(); volView(); });
   v.addEventListener("ratechange", padRefresh);
   v.addEventListener("waiting", () => { $("#p-spinner").hidden = false; if (inGroup()) buffering(); });
-  v.addEventListener("playing", () => { $("#p-spinner").hidden = true; if (wn) wn.retry = null; if (inGroup()) caughtUp(); });
+  v.addEventListener("playing", () => { $("#p-spinner").hidden = true; if (wn) { wn.retry = null; wn.played = true; } if (inGroup()) caughtUp(); });
+  // Paused, then a seek past what's downloaded: "playing" won't come until Play.
+  v.addEventListener("seeked", () => { if (video.paused) $("#p-spinner").hidden = true; });
   // Watch now played as-is: a read past the downloaded part can fail. Wait, then
   // pick up at the same spot, with the spinner up all the while.
   v.addEventListener("error", () => {
@@ -1112,7 +1134,7 @@ window.addEventListener("keydown", (e) => {
   else if (k === "stop") close();
   else if (k === "rewind") seekBy(-10);
   else if (k === "forward") seekBy(10);
-  else if (k === " " || k === "k") togglePlay();
+  else if (k === " ") togglePlay();
   else if (k === "ArrowLeft" || k === "j") seekBy(-10);
   else if (k === "ArrowRight" || k === "l") seekBy(10);
   else if (k === "ArrowUp") { setVolume(level + 0.05); volOsd(); }
@@ -1138,7 +1160,7 @@ window.addEventListener("keydown", (e) => {
 // What the keydown handler above does, as a list over the picture: "?" or the
 // bar's ? button opens it; Esc, Back, ? or a click closes it.
 const KEYS = [
-  [["Space", "K"], "Play or pause"],
+  [["Space"], "Play or pause"],
   [["\u2190", "J"], "Back 10 seconds"],
   [["\u2192", "L"], "Forward 10 seconds"],
   [["\u2191", "\u2193"], "Volume"],
@@ -1668,7 +1690,14 @@ function waitForData(again) {
   }
   const ms = RETRY_STEPS[r.n] ?? RETRY_EVERY;
   r.n++;
-  r.timer = setTimeout(() => { r.timer = null; if (wn === w && !box.hidden) again(); }, ms);
+  r.timer = setTimeout(() => {
+    r.timer = null;
+    if (wn !== w || box.hidden) return;
+    again();
+    // A try that fails with no error at all still counts: look again, so the
+    // give-up above is always reached and the spinner can't run forever.
+    setTimeout(() => { if (wn === w && w.retry === r && !r.timer && !box.hidden && video.readyState < 3) waitForData(again); }, 8000);
+  }, ms);
 }
 
 /** The downloaded part (the chosen file's own progress), drawn behind the played part of the seek bar. */
@@ -1696,8 +1725,9 @@ function leaveWatch() {
   if (w.retry?.timer) clearTimeout(w.retry.timer);
   drawHave();
   // Still waiting: watchNow() sends it once the backend is done.
-  if (w.waiting) return;
-  const position = session?.watchKey === w.key && video.readyState >= 1 ? now() : w.at;
+  if (w.waiting) { invoke("watchnow_cancel", { key: w.key }).catch(() => {}); return; }
+  // Never got as far as a picture (Start over, then Back): the old spot stands.
+  const position = session?.watchKey === w.key && video.readyState >= 1 ? now() : w.played ? w.at : w.resume ?? w.at;
   invoke("watchnow_leave", { key: w.key, position, duration: total() || null, uid: w.uid }).catch((e) => toast(String(e), true));
 }
 
@@ -1716,7 +1746,10 @@ export async function watchNow(tile, opts = {}) {
   // An early start of this very episode (Up next) is this press's now.
   dropEarly(keyOf(tile, season, episode));
   leaveWatch();
+  // Moving on to the next episode stays full screen.
+  const stayFull = !box.hidden && full;
   if (!box.hidden) close();
+  if (stayFull) setFull(true);
   const seq = ++loadSeq;
   box.hidden = false;
   document.body.style.overflow = "hidden";
@@ -1764,7 +1797,7 @@ export async function watchNow(tile, opts = {}) {
     }
     return;
   }
-  Object.assign(wn, { key: got.key, waiting: false, at, uid: got.profile || null });
+  Object.assign(wn, { key: got.key, waiting: false, at, uid: got.profile || null, resume: got.resume_seconds ?? null, played: false });
   drawHave();
   pollHave();
   wn.timer = setInterval(pollHave, 5000);

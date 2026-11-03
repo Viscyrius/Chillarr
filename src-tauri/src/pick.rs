@@ -275,11 +275,68 @@ pub(crate) fn score_format(p: &mut Value, format: i64, score: i64) -> bool {
     }
 }
 
-/// The "Skip dubbed copies" switch (on by default) in Radarr and Sonarr: the
-/// dub format exists and every quality profile scores it far below its
-/// minimum, so such a release is never taken. Off, its score is 0.
+const HAS_DUB_FORMAT: &str = "Chillarr: has a dub";
+const ONLY_DUB_FORMAT: &str = "Chillarr: dub only";
+/// A release that says it has dubbed voices, alone or beside the original.
+const HAS_DUB: &str = r"(?i)(dual|multi)[ ._-]?audio|(?<![a-z0-9])dub(bed|s)?(?![a-z0-9])";
+/// A release that says it's dubbed and not that it carries the original too.
+const ONLY_DUB: &str = r"(?i)^(?!.*(dual|multi)[ ._-]?audio)(?!.*(?<![a-z0-9])dual(?![a-z0-9])).*(?<![a-z0-9])(dubbed|eng(lish)?[ ._-]?dub)(?![a-z0-9])";
+/// Wins between two copies of the same quality; quality still comes first.
+const PREFER_SCORE: i64 = 1000;
+
+fn title_format(name: &str, pattern: &str) -> Value {
+    json!({ "name": name, "includeCustomFormatWhenRenaming": false, "specifications": [
+        { "name": name, "implementation": "ReleaseTitleSpecification", "negate": false, "required": true,
+          "fields": [{ "name": "value", "value": pattern }] }
+    ]})
+}
+
+/// `(has a dub, dub only)` scores. Subtitles: anything with the original voices
+/// is fine, a copy that's only dubbed is never taken. Dubbed: a copy with a dub
+/// wins, but a title with none still downloads, in its original voices.
+pub(crate) fn audio_scores(pref: &str) -> (i64, i64) {
+    if pref == "dub" {
+        (PREFER_SCORE, 0)
+    } else {
+        (0, DUB_SCORE)
+    }
+}
+
+/// A custom format, made or brought up to date. Its id.
+async fn ensure_format(app: &AppHandle, a: &crate::arr::Arr, id: AppId, want: &Value) -> Option<i64> {
+    let name = want["name"].as_str().unwrap_or("");
+    match a.list("customformat").await.unwrap_or_default().into_iter().find(|c| c["name"] == name) {
+        Some(mut c) => {
+            let fid = c["id"].as_i64();
+            if !same_specs(&c, want) {
+                c["specifications"] = want["specifications"].clone();
+                if let Some(f) = fid {
+                    let _ = a.update(&format!("customformat/{f}"), &c).await;
+                }
+            }
+            fid
+        }
+        None => match a.create("customformat", want).await {
+            Ok(v) => v["id"].as_i64(),
+            Err(e) => {
+                log(app, Level::Amber, format!("Couldn't set up {name} in {id:?}: {e:?}"));
+                None
+            }
+        },
+    }
+}
+
+/// The dub settings in Radarr and Sonarr. "Skip dubbed copies" (on by default):
+/// a copy with a foreign dub added scores far below every profile's minimum, so
+/// it's never taken. "Anime and movies" picks between subtitles and dubs the
+/// same way (`audio_scores`). Off or unchosen, a format's score is 0.
 pub async fn no_dubs(app: &AppHandle) {
-    let skip = app.state::<crate::SettingsState>().current.lock().unwrap().skip_dubs;
+    let (skip, pref) = {
+        let st = app.state::<crate::SettingsState>();
+        let s = st.current.lock().unwrap();
+        (s.skip_dubs, s.audio_pref.clone())
+    };
+    let (has_score, only_score) = audio_scores(&pref);
     for id in [AppId::Radarr, AppId::Sonarr] {
         let Some(a) = crate::media::arr(app, id) else { continue };
         let Ok(schema) = a.list("customformat/schema").await else { continue };
@@ -291,31 +348,16 @@ pub async fn no_dubs(app: &AppHandle) {
         if options.is_empty() {
             continue;
         }
-        let want = dub_format(&options);
-        let existing = a.list("customformat").await.unwrap_or_default().into_iter().find(|c| c["name"] == DUB_FORMAT);
-        let format = match existing {
-            Some(mut c) => {
-                let fid = c["id"].as_i64();
-                if !same_specs(&c, &want) {
-                    c["specifications"] = want["specifications"].clone();
-                    if let Some(f) = fid {
-                        let _ = a.update(&format!("customformat/{f}"), &c).await;
-                    }
-                }
-                fid
+        let mut scores: Vec<(i64, i64)> = Vec::new();
+        for (want, score) in [(dub_format(&options), if skip { DUB_SCORE } else { 0 }), (title_format(HAS_DUB_FORMAT, HAS_DUB), has_score), (title_format(ONLY_DUB_FORMAT, ONLY_DUB), only_score)] {
+            if let Some(format) = ensure_format(app, &a, id, &want).await {
+                scores.push((format, score));
             }
-            None => match a.create("customformat", &want).await {
-                Ok(v) => v["id"].as_i64(),
-                Err(e) => {
-                    log(app, Level::Amber, format!("Couldn't set up dub skipping in {id:?}: {e:?}"));
-                    None
-                }
-            },
-        };
-        let Some(format) = format else { continue };
-        let score = if skip { DUB_SCORE } else { 0 };
+        }
         for mut p in a.list("qualityprofile").await.unwrap_or_default() {
-            if !score_format(&mut p, format, score) {
+            // Each format has to be looked at: `any` would stop at the first change.
+            let changed = scores.iter().fold(false, |ch, (format, score)| score_format(&mut p, *format, *score) || ch);
+            if !changed {
                 continue;
             }
             let (Some(pid), name) = (p["id"].as_i64(), p["name"].as_str().unwrap_or("a quality").to_string()) else { continue };
@@ -994,6 +1036,45 @@ pub async fn show_episodes(app: &AppHandle, tile: &Tile) -> Result<ShowEpisodes,
     Ok(ShowEpisodes { seasons, spot, episodes: rows, tvdb, show })
 }
 
+/// Marks episodes watched or not, for the watching profile. Each is `(season,
+/// episode, Jellyfin id if it's on this PC)`. Watched goes to the real file and
+/// the watch log, never to a Discover placeholder (a stopped placeholder play
+/// reads as Played, so those marks are cleared every 30 s). Not watched comes off
+/// everywhere, placeholders included, or the row would go on showing a tick.
+pub async fn set_watched(app: &AppHandle, tvdb: Option<i64>, title: &str, episodes: Vec<(i64, i64, Option<String>)>, played: bool) -> Result<(), String> {
+    let j = jf(app).filter(|j| j.user_id.is_some()).ok_or("Sign in to Jellyfin first.")?;
+    let which: Vec<(i64, i64)> = episodes.iter().map(|(s, e, _)| (*s, *e)).collect();
+    let mut ids: Vec<String> = episodes.iter().filter_map(|(_, _, id)| id.clone()).collect();
+    if let (false, Some(t)) = (played, tvdb) {
+        let placeholders = j.watch_items_with_placeholders("includeItemTypes=Series").await.map_err(|e| format!("Jellyfin couldn't be asked: {e}"))?;
+        for id in placeholders.iter().filter(|v| crate::jellyfin::on_shelf(v) && tvdb_of(v) == Some(t)).filter_map(|v| v["Id"].as_str()) {
+            for ep in j.episodes(id).await.unwrap_or_default() {
+                let at = (ep["ParentIndexNumber"].as_i64().unwrap_or(-1), ep["IndexNumber"].as_i64().unwrap_or(-1));
+                if which.contains(&at) {
+                    ids.extend(ep["Id"].as_str().map(String::from));
+                }
+            }
+        }
+    }
+    let mut failed = 0;
+    for id in &ids {
+        if j.set_played(id, played).await.is_err() {
+            failed += 1;
+        }
+    }
+    if let Some(t) = tvdb {
+        if played {
+            crate::history::remember(app, t, title, &which);
+        } else {
+            crate::history::forget(app, t, &which);
+        }
+    }
+    if failed > 0 {
+        return Err(format!("Jellyfin wouldn't change {failed} of them. Try again in a moment."));
+    }
+    Ok(())
+}
+
 /// Start the show (None) or one season over, for the watching profile only:
 /// those episodes go back to unwatched in Jellyfin, leave the watch log, and
 /// where you're at goes to the start of it. The spot is set first: anything
@@ -1305,6 +1386,8 @@ mod tests {
         have["specifications"][0]["fields"][0]["value"] = json!("(?i)dub");
         assert!(!same_specs(&have, &f));
         let mut p = json!({ "formatItems": [] });
+        assert_eq!(audio_scores("sub"), (0, DUB_SCORE));
+        assert_eq!(audio_scores("dub"), (PREFER_SCORE, 0));
         assert!(score_format(&mut p, 7, -10000));
         assert!(!score_format(&mut p, 7, -10000));
         assert!(score_format(&mut p, 7, 0));

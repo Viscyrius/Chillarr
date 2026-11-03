@@ -59,7 +59,10 @@ Chillarr's look also runs inside Jellyfin's own web pages. That means your phone
 
 - **Fix everything.** One button starts whatever is down, tests every indexer and clears old failed marks, then tells you in plain words what still doesn't work.
 - **Keeps watch** from the tray and brings things back when they stop.
-- **Installs what's missing**, after asking, from each app's official source.
+- **One-press setup.** Installs what's missing from each app's official source, checked against Windows Package Manager's hashes, with one meter for all of it and one Windows prompt. Sites are added by themselves, and a site that's down is tried again later.
+- **Your colour.** Seven themes or any colour you pick, on the whole app, the tray and your shortcuts.
+- **Subtitles or dubbed**, your choice for anime and movies, for downloads and for what plays first.
+- **One tray icon.** Everything runs behind Chillarr's.
 - **Cleans up** (optional): removes watched episodes after a few days so your disk doesn't fill up.
 - **Skips huge disc copies and foreign dubs**, so downloads stay a sensible size and in the right language.
 
@@ -80,7 +83,7 @@ Chillarr only changes things when you press Fix everything or Install. It asks W
 | An app isn't running | Starts it. Apps installed as services may need a UAC prompt. |
 | Allowed Hosts is empty in Sonarr or Radarr | Sets it to this PC's names (localhost, its computer name, its LAN address). |
 | Radarr or Sonarr runs as a locked-down service | Sets the service to Manual and runs the app as you instead, so it can read your Downloads folder. Chillarr starts it when you sign in. |
-| You press Install | Downloads and installs that app. |
+| You press Set up or Install | Downloads and installs the apps, adds firewall rules for them (FlareSolverr is blocked from other devices, Sonarr, Radarr and Prowlarr are limited to your home network), and lets them past Defender's protected folders if that's on. One UAC prompt. |
 
 It reads each app's API key from that app's own `config.xml`, and never sends the keys anywhere.
 
