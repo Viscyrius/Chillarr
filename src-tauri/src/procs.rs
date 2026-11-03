@@ -468,6 +468,7 @@ mod tests {
         let (svc, path, account) = ("Jelly fin's", r"C:\ProgramData\Jelly'fin\Server", r"PC\O'Neil Smith");
         let scripts = [
             crate::imports::run_as_user_command(svc),
+            crate::onboard::sample_script(),
             crate::imports::revert_command(svc),
             crate::imports::jellyfin_as_user_command(svc, path, account),
             crate::imports::revert_jellyfin_command(svc, path, account),

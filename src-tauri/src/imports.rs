@@ -43,6 +43,7 @@ pub fn grabbed_folders(grabbed: &[String], names: &[String]) -> Vec<String> {
 /// The script (for `procs::run_elevated`) that stops a service from starting
 /// itself and stops it now, so Chillarr can run the app as the signed-in user
 /// instead. A failed step stops the rest and the exit code says so.
+#[cfg(test)]
 pub fn run_as_user_command(service: &str) -> String {
     ps_chain(&[ps_tool("sc.exe", &["config", service, "start=", "demand"]), ps_tool("net.exe", &["stop", service])])
 }

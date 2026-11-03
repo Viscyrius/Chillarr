@@ -765,6 +765,23 @@ function webGeneral(panel) {
 }
 
 /* ---------- Logs ---------- */
+/** Saves one file with everything needed to find a problem, and shows it. */
+export function saveLogsButton(cls = "btn primary") {
+  const b = el("button", { class: cls, type: "button" }, "Save logs");
+  b.addEventListener("click", async () => {
+    b.disabled = true;
+    b.textContent = "Saving...";
+    try {
+      const path = await invoke("logs_save");
+      toast(`Saved ${path}. Send that file. Passwords and keys are hidden.`);
+      invoke("open_folder", { path: path.replace(/[\\/][^\\/]*$/, "") }).catch(() => {});
+    } catch (e) { toast(String(e), true); }
+    b.disabled = false;
+    b.textContent = "Save logs";
+  });
+  return b;
+}
+
 async function logs(panel) {
   const list = el("ol", { class: "log" });
   const item = (l) => el("li", { dataset: { level: l.level } }, el("time", { text: l.at }), el("span", { text: l.text }));
@@ -773,7 +790,7 @@ async function logs(panel) {
   // Another section (or page) opened while they loaded.
   if (seq !== settingsSeq) return;
   list.replaceChildren(...all.map(item));
-  panel.append(el("h2", { text: "Logs" }), el("p", { class: "sub", text: "What Chillarr did, newest first. API keys are hidden." }), list);
+  panel.append(el("div", { class: "panel-head" }, el("div", {}, el("h2", { text: "Logs" }), el("p", { class: "sub", text: "What Chillarr did, newest first. API keys are hidden." })), saveLogsButton()), list);
   unsub = store.on((w) => {
     if (w !== "logs") return;
     list.prepend(item(store.logs[0]));

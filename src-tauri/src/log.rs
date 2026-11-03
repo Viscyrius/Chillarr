@@ -43,8 +43,9 @@ fn append_file(line: &LogLine) {
 /// their indexer test errors, and those errors are logged as-is. A quoted
 /// value (`Token="..."`, JSON `"apiKey": "..."`) is hidden up to its closing quote.
 pub fn redact(text: &str) -> String {
-    const KEYS: [&str; 9] =
-        ["apikey=", "api_key=", "x-api-key: ", "token=", "x-emby-token: ", "\"apikey\":", "\"api_key\":", "\"token\":", "\"accesstoken\":"];
+    const KEYS: [&str; 13] = [
+        "apikey=", "api_key=", "x-api-key: ", "token=", "x-emby-token: ", "\"apikey\":", "\"api_key\":", "\"token\":", "\"accesstoken\":", "password=", "\"password\":", "\"pw\":", "<apikey>",
+    ];
     let lower = text.to_ascii_lowercase();
     let bytes = text.as_bytes();
     let mut out = String::with_capacity(text.len());
@@ -83,6 +84,13 @@ pub fn redact(text: &str) -> String {
         }
     }
     out
+}
+
+/// A line for the file only (Save logs), not the Logs page: what a person doesn't
+/// need to read every day, and whoever fixes a problem does.
+pub fn detail(text: impl Into<String>) {
+    let at = chrono::Local::now().format("%H:%M:%S").to_string();
+    append_file(&LogLine { at, text: redact(&text.into()), level: Level::Unknown });
 }
 
 pub fn log(app: &AppHandle, level: Level, text: impl Into<String>) {
@@ -128,6 +136,8 @@ mod tests {
         assert_eq!(redact(j), r#"{"name":"Sonarr","apiKey":"***","baseUrl":"http://localhost:8989"}"#);
         assert_eq!(redact(r#"{"apiKey": "abc123", "x": 1}"#), r#"{"apiKey": "***", "x": 1}"#);
         assert_eq!(redact(r#"{"token":"t0k3n"}"#), r#"{"token":"***"}"#);
+        assert_eq!(redact(r#"{"Pw":"hunter22","x":1}"#), r#"{"Pw":"***","x":1}"#);
+        assert_eq!(redact("password=hunter22&next=1"), "password=***&next=1");
         assert_eq!(redact("Token='abc def'"), "Token='***'");
         // An unquoted value still stops at the usual places.
         assert_eq!(redact("token=abc,next"), "token=***,next");

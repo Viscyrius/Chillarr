@@ -1173,7 +1173,7 @@ const KEYS = [
   [["Esc"], "Close a menu, leave full screen, then the player"],
   [["?"], "This list"],
 ];
-const MOUSE = [["Click", "Play or pause"], ["Double click", "Full screen"], ["Wheel", "Volume"]];
+const MOUSE = [["Double click", "Full screen"], ["Wheel", "Volume"]];
 const keysBox = el("div", { class: "p-keys", id: "p-keys-list", role: "dialog", "aria-label": "Keyboard shortcuts", hidden: true });
 box.append(keysBox);
 keysBox.addEventListener("click", () => showKeys(false));
@@ -1629,7 +1629,11 @@ function waitTitle(t, season, episode) {
   $("#p-sub").textContent = t.subtitle || (season != null && !movieLike(t) ? `S${season} E${episode}` : t.year ? String(t.year) : "");
 }
 
+let waitSlow;
 function openWait(t, season, episode) {
+  clearTimeout(waitSlow);
+  // A copy with few people sharing it: say so instead of a bar that seems stuck.
+  waitSlow = setTimeout(() => { if (!$("#p-wait").hidden) toast("Not many people are sharing this copy right now, so it may take a while. Back cancels it."); }, 60000);
   waitTitle(t, season, episode);
   const pic = t.backdrop || t.poster;
   $("#p-wait-bg").style.backgroundImage = pic ? `url("${pic.replace(/"/g, "%22")}")` : "none";

@@ -117,6 +117,7 @@ impl Jf {
     }
 
     async fn call(&self, method: reqwest::Method, path: &str, body: Option<&Value>) -> Result<Value, JfError> {
+        let method_text = method.to_string();
         let mut req = self
             .http
             .request(method, format!("{}{}", self.base, path))
@@ -128,14 +129,22 @@ impl Jf {
         if let Some(b) = body {
             req = req.json(b);
         }
+        let (shown_method, shown_path) = (method_text, path.to_string());
         let resp = req.send().await.map_err(|e| if e.is_connect() || e.is_timeout() { JfError::Down } else { JfError::Other(e.to_string()) })?;
         match resp.status().as_u16() {
             200..=299 => {
                 let text = resp.text().await.unwrap_or_default();
                 Ok(serde_json::from_str(&text).unwrap_or(Value::Null))
             }
-            401 | 403 => Err(JfError::Rejected),
-            c => Err(JfError::Other(format!("Jellyfin answered with error {c}"))),
+            401 | 403 => {
+                crate::log::detail(format!("Jellyfin {shown_method} {shown_path} refused the sign-in ({})", resp.status().as_u16()));
+                Err(JfError::Rejected)
+            }
+            c => {
+                let body: String = resp.text().await.unwrap_or_default().chars().take(300).collect();
+                crate::log::detail(format!("Jellyfin {shown_method} {shown_path} answered {c}: {body}"));
+                Err(JfError::Other(format!("Jellyfin answered with error {c}")))
+            }
         }
     }
 

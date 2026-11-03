@@ -1810,3 +1810,4 @@ html.no-grid .pf-fields > * + *, html.no-grid .skel-copy > * + * { margin-top: 1
 .app-card[data-level="ok"] .dot { background: var(--ok); }
 .app-card[data-level="amber"] .dot { background: var(--amber); }
 .app-card[data-level="red"] .dot { background: var(--red); }
+.callout-acts { display: flex; gap: 10px; flex: none; }

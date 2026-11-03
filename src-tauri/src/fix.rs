@@ -608,7 +608,11 @@ pub(crate) async fn wire_qbit_ini(app: &AppHandle, rep: &mut FixReport) {
         Ok(ini) => ini,
         Err(e) => return log(app, Level::Red, format!("Couldn't check qBittorrent's Web UI: {e}")),
     };
-    let tray_on = crate::wire::quiet_tray(&ini.text) != ini.text;
+    // Only one Chillarr looks after, and only with settings in that file: a portable
+    // qBittorrent keeps its own elsewhere, and writing here would change nothing.
+    let quiet = cfg.managed && !ini.text.trim().is_empty();
+    let quieten = |t: String| if quiet { crate::wire::quiet_tray(&t) } else { t };
+    let tray_on = quiet && crate::wire::quiet_tray(&ini.text) != ini.text;
     if running && !tray_on && !cfg.base_url.is_empty() && procs::port_open(&cfg.base_url).await {
         return;
     }
@@ -616,7 +620,7 @@ pub(crate) async fn wire_qbit_ini(app: &AppHandle, rep: &mut FixReport) {
     let ini_port = crate::discover::parse_qbit_port(&ini.text);
     let host = cfg.base_url.rsplit_once(':').map_or("http://localhost", |(h, _)| h).to_string();
     let url = |p: u16| format!("{host}:{p}");
-    if crate::wire::quiet_tray(&crate::wire::enable_webui(&ini.text, port)) == ini.text {
+    if quieten(crate::wire::enable_webui(&ini.text, port)) == ini.text {
         // Already on. qBittorrent reads its port from this file, so Chillarr
         // follows the file rather than restarting it.
         if let Some(p) = ini_port.filter(|p| *p != port) {
@@ -634,7 +638,7 @@ pub(crate) async fn wire_qbit_ini(app: &AppHandle, rep: &mut FixReport) {
         close_qbit(&url(ini_port.unwrap_or(port))).await;
     }
     let written = crate::wire::IniFile::read(&path).and_then(|ini| {
-        let new = crate::wire::quiet_tray(&crate::wire::enable_webui(&ini.text, port));
+        let new = quieten(crate::wire::enable_webui(&ini.text, port));
         ini.write(&path, &new).map(|_| crate::discover::parse_qbit_port(&new).unwrap_or(port))
     });
     let mut now_on = ini_port.unwrap_or(port);
@@ -978,26 +982,46 @@ async fn jellyfin_as_user_step(app: &AppHandle, rep: &mut FixReport) {
 /// reach the library. Switch it to run as the signed-in user (one UAC
 /// prompt), like a normal Sonarr install, then import what was stuck.
 async fn run_as_user_step(app: &AppHandle, rep: &mut FixReport) {
-    for (id, scan) in [(AppId::Radarr, "DownloadedMoviesScan"), (AppId::Sonarr, "DownloadedEpisodesScan")] {
+    // Prowlarr too: a service that stops (an update, a crash) stays down until
+    // someone presses Fix everything and says yes to Windows, and every search
+    // fails meanwhile. Run as the user, Chillarr just starts it again.
+    let list = [(AppId::Radarr, Some("DownloadedMoviesScan")), (AppId::Sonarr, Some("DownloadedEpisodesScan")), (AppId::Prowlarr, None)];
+    let account = format!("{}\\{}", std::env::var("USERDOMAIN").unwrap_or_default(), std::env::var("USERNAME").unwrap_or_default());
+    let mut todo: Vec<AppId> = Vec::new();
+    let mut lines: Vec<String> = Vec::new();
+    for (id, _) in list {
+        let Some(svc) = app.state::<Core>().config(id).filter(|c| c.exe.is_some()).and_then(|c| c.service) else { continue };
+        if crate::imports::service_account(&svc).and_then(|a| crate::imports::service_sid(&a)).is_none() {
+            continue;
+        }
+        let data = arr_data_dir(id).map(|d| d.to_string_lossy().to_string()).unwrap_or_default();
+        // Its files belong to the service until now, so the app run as you couldn't open them.
+        lines.push(crate::imports::grant_user_line(&data, &account));
+        lines.push(procs::ps_tool("sc.exe", &["config", &svc, "start=", "demand"]));
+        lines.push(procs::ps_tool("net.exe", &["stop", &svc]));
+        busy(app, id, "Switching to run as you...");
+        todo.push(id);
+    }
+    if todo.is_empty() {
+        return;
+    }
+    // All of them on one Windows prompt.
+    let script = procs::ps_all(&lines);
+    let done = tokio::task::spawn_blocking(move || procs::run_elevated(&script)).await.unwrap_or_else(|e| Err(e.to_string()));
+    for (id, scan) in list {
+        if !todo.contains(&id) {
+            continue;
+        }
         let core = app.state::<Core>();
         let Some(cfg) = core.config(id) else { continue };
         let (Some(svc), Some(exe)) = (cfg.service.clone(), cfg.exe.clone()) else { continue };
-        let locked = crate::imports::service_account(&svc).and_then(|a| crate::imports::service_sid(&a)).is_some();
-        if !locked {
-            continue;
-        }
         let name = id.label();
-        busy(app, id, "Switching to run as you...");
         let save = crate::discover::qbit_save_path();
         let data = arr_data_dir(id).map(|d| d.to_string_lossy().to_string()).unwrap_or_default();
-        let account = format!("{}\\{}", std::env::var("USERDOMAIN").unwrap_or_default(), std::env::var("USERNAME").unwrap_or_default());
-        // Its files belong to the service until now, so the app run as you couldn't open them.
-        let params = format!("{}\n{}", crate::imports::grant_user_line(&data, &account), crate::imports::run_as_user_command(&svc));
-        let done = tokio::task::spawn_blocking(move || procs::run_elevated(&params))
-            .await
-            .unwrap_or_else(|e| Err(e.to_string()));
+        // What counts is the end state: `net stop` fails on a service already stopped.
         let stopped = procs::service_running(&svc) == Some(false) && crate::winsvc::start_type(&svc) == Some(3);
-        if let Err(e) = done.and_then(|_| if stopped { Ok(()) } else { Err("{what} didn't stop the service".into()) }) {
+        if !stopped {
+            let e = done.clone().err().unwrap_or_else(|| "{what} didn't stop the service".into());
             log(app, Level::Red, e.replace("{what}", &format!("Switching {name} to run as you")));
             continue;
         }
@@ -1035,6 +1059,7 @@ async fn run_as_user_step(app: &AppHandle, rep: &mut FixReport) {
         check_health(app, &[id]).await;
 
         // Import what finished while it was locked out.
+        let Some(scan) = scan else { continue };
         let Some(folder) = save.clone() else { continue };
         let grabbed = arr.grabbed_titles().await.unwrap_or_default();
         let candidates = crate::imports::download_candidates(std::path::Path::new(&folder));

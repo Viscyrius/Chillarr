@@ -135,12 +135,20 @@ impl Arr {
         match code {
             200..=299 => {}
             400 if ok_400 => {}
-            401 | 403 => return Err(ArrError::BadKey),
+            401 | 403 => {
+                crate::log::detail(format!("{} refused the API key ({code})", resp.url().path()));
+                return Err(ArrError::BadKey);
+            }
             400 | 409 | 422 => {
+                let at = resp.url().path().to_string();
                 let body = resp.text().await.unwrap_or_default();
+                crate::log::detail(format!("{at} answered {code}: {}", body.chars().take(400).collect::<String>()));
                 return Err(reason(&body).map(ArrError::Rejected).unwrap_or(ArrError::Http(code)));
             }
-            _ => return Err(ArrError::Http(code)),
+            _ => {
+                crate::log::detail(format!("{} answered {code}", resp.url().path()));
+                return Err(ArrError::Http(code));
+            }
         }
         resp.text().await.map_err(|e| ArrError::Other(e.to_string()))
     }

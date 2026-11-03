@@ -998,6 +998,38 @@ async fn hide_library(j: &crate::jellyfin::Jf, lib: &str) {
     }
 }
 
+/// The owner found the item, but whoever is watching has to be able to open it.
+/// Jellyfin answers 404 to a profile limited to certain libraries (measured on
+/// 12.4, 2026-11-03), and that was all anyone saw: "error 404". Such a profile
+/// gets this hidden library too, and only this one.
+async fn let_profile_open(j: &crate::jellyfin::Jf, uid: &str, lib: &str, id: &str, title: &str) -> Result<(), String> {
+    for attempt in 0..6 {
+        if j.get_json(&format!("/Users/{uid}/Items/{id}")).await.is_ok() {
+            return Ok(());
+        }
+        if attempt == 0 {
+            if let Ok(user) = j.get_json(&format!("/Users/{uid}")).await {
+                let mut policy = user["Policy"].clone();
+                let name = user["Name"].as_str().unwrap_or("?").to_string();
+                crate::log::detail(format!("Watch now: {name} can't open {id} yet. EnableAllFolders={} EnabledFolders={}", policy["EnableAllFolders"], policy["EnabledFolders"]));
+                if policy.is_object() && policy["EnableAllFolders"] != true {
+                    let mut folders = policy["EnabledFolders"].as_array().cloned().unwrap_or_default();
+                    if !folders.iter().any(|f| f.as_str() == Some(lib)) {
+                        folders.push(serde_json::json!(lib));
+                        policy["EnabledFolders"] = serde_json::json!(folders);
+                        if let Err(err) = j.post_json(&format!("/Users/{uid}/Policy"), &policy).await {
+                            crate::log::detail(format!("Watch now: couldn't let {name} into its library: {err}"));
+                        }
+                    }
+                }
+            }
+        }
+        // Or Jellyfin is still putting a brand new show together.
+        tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+    }
+    Err(format!("Jellyfin has {title}, but this profile isn't allowed to open it. Try the main profile, then send Settings > Logs > Save logs."))
+}
+
 /// Gives the Watch now library the shelf's placeholder options (nothing
 /// reads a download in the background). Only saves when something differs.
 async fn quiet_library(j: &crate::jellyfin::Jf, lib_dir: &Path) -> Result<(), String> {
@@ -1069,6 +1101,7 @@ pub async fn ensure_item(app: &tauri::AppHandle, uid: &str, e: &Entry) -> Result
             if let Some(id) = item_with_path(&items, &path) {
                 // A failed save is left in `take_error`; the item plays either way.
                 let _ = app.state::<WatchNow>().set_jf_id(uid, &e.key, &id);
+                let_profile_open(&j, uid, &lib, &id, &e.title).await?;
                 return Ok(id);
             }
         }
@@ -1145,6 +1178,7 @@ fn tile_of(e: &Entry) -> crate::tiles::Tile {
 }
 
 fn emit_state(app: &tauri::AppHandle, key: &str, stage: &str, pct: f64) {
+    crate::log::detail(format!("Watch now {key}: {stage} {pct:.1}%"));
     // A web viewer's start is only theirs to watch (bridge.rs).
     crate::bridge::emit_user(app, "watchnow-state", serde_json::json!({ "key": key, "stage": stage, "pct": pct }));
 }
@@ -1246,6 +1280,11 @@ pub async fn start(app: &tauri::AppHandle, tile: crate::tiles::Tile, season: Opt
     let guard = match FLIGHTS.claim(&format!("{uid}|{key}")) {
         Flight::Lead(g) => g,
         Flight::Join(mut rx) => {
+            // Pressed again after a Back: the start under way is wanted after all.
+            {
+                use tauri::Manager;
+                app.state::<WatchNow>().cancel_mark(&uid, &key, false);
+            }
             return match rx.wait_for(|o| o.is_some()).await {
                 Ok(o) => o.clone().unwrap_or_else(|| Err(TRY_AGAIN.into())),
                 Err(_) => Err(TRY_AGAIN.into()),
@@ -1253,6 +1292,11 @@ pub async fn start(app: &tauri::AppHandle, tile: crate::tiles::Tile, season: Opt
         }
     };
     let r = start_as(app, &uid, &key, tile, season, episode).await.map(|t| crate::tiles::Tile { profile: Some(uid.clone()), ..t });
+    if let Err(e) = &r {
+        if e != "Cancelled." {
+            crate::log::log(app, crate::model::Level::Amber, format!("Watch now couldn't start {}: {e}", key));
+        }
+    }
     guard.finish(&r);
     r
 }

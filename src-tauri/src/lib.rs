@@ -28,6 +28,7 @@ mod settings;
 mod skip;
 mod status;
 mod storage;
+mod support;
 pub mod model;
 mod tiles;
 mod vlc;
@@ -721,6 +722,12 @@ async fn pick_exe(app: AppHandle) -> Option<std::path::PathBuf> {
     rx.await.ok().flatten()
 }
 
+/// Settings > Logs > Save logs: one file with everything needed to find a problem.
+#[tauri::command]
+async fn logs_save(app: AppHandle) -> Result<String, String> {
+    support::save(&app).await
+}
+
 #[tauri::command]
 fn get_logs(logs: State<'_, Logs>) -> Vec<LogLine> {
     logs.0.lock().unwrap().iter().cloned().collect()
@@ -878,7 +885,8 @@ pub fn run() {
             get_settings,
             set_settings,
             pick_exe,
-            get_logs
+            get_logs,
+            logs_save
         ])
         .setup(move |app| {
             // WebView2 offered past searches in its own dropdown, which doesn't

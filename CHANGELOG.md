@@ -14,6 +14,9 @@
 - One icon in the tray: Chillarr's. Sonarr, Radarr and qBittorrent run without their own. The tray menu has "Stop everything and quit" for closing them all.
 - Fix everything is faster, since apps start and get checked side by side, and it shows each step as it goes, then what it changed and how long it took.
 - Apps that wouldn't start: if an app can't open its own files, Fix everything repairs that with one Windows prompt. One stuck without answering gets restarted, and if an app still won't start, Logs shows the app's own error instead of only "didn't answer".
+- Prowlarr no longer runs as a Windows service. If it stopped, say for an update, every search failed until someone pressed Fix everything and answered a Windows prompt. Now Chillarr just starts it again, and moving all the apps over takes one prompt.
+- Watch now on a profile limited to certain libraries no longer stops at "Jellyfin answered with error 404": it's let into Watch now's hidden library.
+- Settings > Logs has a Save logs button: one file with what Chillarr did, how each app is doing, and each app's own log, with keys and passwords hidden. Chillarr's log also records every error Jellyfin, Sonarr, Radarr and Prowlarr answer with, and each step of Watch now.
 - Adding several sites no longer makes Prowlarr's sync clash with itself in Sonarr and Radarr.
 - Watch now: pressing Back while it's still looking for a copy really cancels, and a film asked for that way doesn't download later anyway. Removing a title mid-start keeps it removed.
 - Watch now: stopping partway no longer marks it watched, your place is no longer lost when you leave during a reload or right after Start over, a paused season pack starts again for the episode you're on, Next stays full screen, the spinner clears after a seek while paused, and a stalled stream gives up with a message instead of spinning forever.

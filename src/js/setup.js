@@ -2,7 +2,7 @@
 // rest: every download, one Windows prompt, starting and connecting the apps,
 // the login, the folders and the sources (onboard.rs).
 import { $, el, invoke, listen, store, toast } from "./api.js";
-import { downloadsRow, folderPicker } from "./settings.js";
+import { downloadsRow, folderPicker, saveLogsButton } from "./settings.js";
 import { logoImg, themePicker } from "./theme.js";
 
 const root = $("#setup");
@@ -127,6 +127,7 @@ function showBar(onlyInstalling, onFinish) {
   root.replaceChildren(el("div", { class: "setup-inner meter" }, headline, el("div", { class: "meter-top" }, el("div", { class: "meter-big" }, pct, el("span", { class: "meter-pc", text: "%" })), detail), bar, callout, rows, sites));
 
   const rowEls = new Map();
+  let over = false;
   let shown = 0, target = 0, shownBytes = 0, targetBytes = 0, speed = 0, lastGot = 0, lastAt = 0, raf = 0;
 
   const tick = () => {
@@ -166,6 +167,7 @@ function showBar(onlyInstalling, onFinish) {
   };
 
   const draw = (m) => {
+    if (over) return;
     run.m = m;
     target = Math.max(target, m.percent || 0);
     targetBytes = m.got || 0;
@@ -184,7 +186,9 @@ function showBar(onlyInstalling, onFinish) {
       callout.hidden = false;
       callout.replaceChildren(el("div", {}, el("strong", { text: "Windows needs your OK to install the apps" }),
         el("p", { text: "Nothing was changed, and your downloads are kept. Press Try again and choose Yes." })),
-        el("button", { class: "btn primary", type: "button", onclick: () => { const again = run.again; run = null; startRun(again, onlyInstalling, onFinish); } }, "Try again"));
+        el("div", { class: "callout-acts" },
+          el("button", { class: "btn ghost", type: "button", onclick: () => { run?.stop?.(); run = null; if (onlyInstalling) onFinish({ ...m, problems: ["Nothing was installed."] }); else showForm().catch((e) => toast(String(e), true)); } }, "Not now"),
+          el("button", { class: "btn primary", type: "button", onclick: () => { const again = run.again; run.stop?.(); run = null; startRun(again, onlyInstalling, onFinish); } }, "Try again")));
     } else if (m.stage === "permission") {
       callout.hidden = false;
       callout.replaceChildren(el("div", {}, el("strong", { text: "Choose Yes on Windows' prompt" }),
@@ -192,7 +196,8 @@ function showBar(onlyInstalling, onFinish) {
     } else {
       callout.hidden = true;
     }
-    if (m.finished || (!m.running && !m.declined && m.problems?.length)) {
+    if (!over && (m.finished || (!m.running && !m.declined && m.problems?.length))) {
+      over = true;
       cancelAnimationFrame(raf);
       pct.textContent = m.finished ? "100" : pct.textContent;
       fill.style.transform = m.finished ? "scaleX(1)" : fill.style.transform;
@@ -205,12 +210,12 @@ function showBar(onlyInstalling, onFinish) {
 
 /** Runs `call` with the bar on screen. `call` may already be running in the back end. */
 function startRun(call, onlyInstalling = false, onFinish = showDone) {
-  run = { again: call, m: null };
-  const draw = showBar(onlyInstalling, (m) => { run = null; stopListening(); onFinish(m); });
-  let stopListening = () => {};
-  listen("setup-progress", (e) => { if (run) draw(e.payload); }).then((un) => { if (run) stopListening = un; else un(); });
-  Promise.resolve().then(call).then((m) => { if (run && m) draw(m); }).catch((e) => {
-    if (!run) return;
+  const mine = { again: call, m: null, stop: null };
+  run = mine;
+  const draw = showBar(onlyInstalling, (m) => { mine.stop?.(); if (run === mine) run = null; onFinish(m); });
+  listen("setup-progress", (e) => { if (run === mine) draw(e.payload); }).then((un) => { if (run === mine) mine.stop = un; else un(); });
+  Promise.resolve().then(call).then((m) => { if (run === mine && m) draw(m); }).catch((e) => {
+    if (run !== mine) return;
     draw({ running: false, problems: [String(e)], apps: [], stage: "done", percent: 0 });
   });
 }
@@ -218,14 +223,16 @@ function startRun(call, onlyInstalling = false, onFinish = showDone) {
 /* ---------- Done ---------- */
 async function showDone(m) {
   const ms = await invoke("media_status").catch(() => ({}));
-  store.settings.setup_done = true;
+  // A run that stopped short isn't setup done: the next start offers it again.
+  if (m.finished) store.settings.setup_done = true;
   const problems = m.problems || [];
   const waiting = m.sites_waiting || [];
   const bits = [];
   if (problems.length) {
     bits.push(el("div", { class: "done-note bad" }, el("strong", { text: "A few things need another try" }),
       el("ul", {}, problems.map((p) => el("li", { text: p }))),
-      el("p", { class: "note", text: "Settings > System shows what's left, and Fix everything tries again." })));
+      el("p", { class: "note", text: "Settings > System shows what's left, and Fix everything tries again. Need help? Save logs makes a file to send." }),
+      el("div", { style: "margin-top:10px" }, saveLogsButton("btn small ghost"))));
   }
   if (waiting.length) {
     bits.push(el("div", { class: "done-note" }, el("strong", { text: `${m.sites_added} of ${m.sites_total} sources are ready` }),
@@ -237,7 +244,9 @@ async function showDone(m) {
       el("span", { class: "addr selectable", text: ms.address || "http://this-pc:8096" }),
       el("p", { class: "note", text: "More subtitle sources are in Settings if you want them." })));
   }
-  const start = el("button", { class: "btn primary large", type: "button", onclick: close }, "Start watching");
+  const start = m.finished
+    ? el("button", { class: "btn primary large", type: "button", onclick: close }, "Start watching")
+    : el("button", { class: "btn primary large", type: "button", onclick: () => showForm().catch((e) => toast(String(e), true)) }, "Try again");
   root.replaceChildren(el("div", { class: "setup-inner done-screen" }, logoImg("welcome-logo"),
     el("h1", { id: "setup-title", text: problems.length ? "Nearly there" : "You're all set" }),
     el("p", { class: "lead", text: "Pick something and press Download or Watch now." }),
@@ -263,7 +272,8 @@ export function installWithMeter(ids) {
   root.hidden = false;
   document.body.style.overflow = "hidden";
   return new Promise((done) => {
-    startRun(() => invoke("install_apps", { ids }).then(() => null), true, (m) => {
+    // Hands back where things stand, in case the last event came before the listener.
+    startRun(() => invoke("install_apps", { ids }).then(() => invoke("setup_progress")), true, (m) => {
       close();
       const problems = m.problems || [];
       if (problems.length) problems.forEach((p) => toast(p, true));

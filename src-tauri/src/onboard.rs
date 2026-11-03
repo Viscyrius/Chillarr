@@ -343,7 +343,13 @@ async fn fetch_once(app: &AppHandle, id: AppId, http: &reqwest::Client, url: &st
     if have > 0 {
         req = req.header("Range", format!("bytes={have}-"));
     }
-    let mut resp = req.send().await.and_then(|r| r.error_for_status()).map_err(|e| e.to_string())?;
+    let resp = req.send().await.map_err(|e| e.to_string())?;
+    // A kept file as long as this version or longer (an older version's): start clean.
+    if resp.status().as_u16() == 416 {
+        let _ = tokio::fs::remove_file(path).await;
+        return Err("the saved part didn't fit this version".into());
+    }
+    let mut resp = resp.error_for_status().map_err(|e| e.to_string())?;
     let resumed = resp.status().as_u16() == 206;
     let start = if resumed { have } else { 0 };
     let size = resp.content_length().map(|l| l + start);
@@ -755,10 +761,11 @@ async fn elevated_pass(app: &AppHandle, plan: &Plan, installing: &[AppId], faile
     let mut done_count = 0usize;
     let mut asked = false;
     let result = loop {
-        tokio::select! {
-            r = &mut wait => break r.unwrap_or_else(|e| Err(e.to_string())),
-            _ = tokio::time::sleep(Duration::from_millis(350)) => {}
-        }
+        // Read after the script ends too: its last lines come just before it exits.
+        let ended = tokio::select! {
+            r = &mut wait => Some(r.unwrap_or_else(|e| Err(e.to_string()))),
+            _ = tokio::time::sleep(Duration::from_millis(350)) => None,
+        };
         for line in std::fs::read_to_string(&log_file).unwrap_or_default().lines().skip(seen) {
             seen += 1;
             if !asked {
@@ -792,11 +799,13 @@ async fn elevated_pass(app: &AppHandle, plan: &Plan, installing: &[AppId], faile
                 _ => {}
             }
         }
+        if let Some(r) = ended {
+            break r;
+        }
     };
     let _ = std::fs::remove_file(&log_file);
     if let Err(e) = result {
         if e.contains("declined") {
-            with(app, |m| m.declined = true);
             return Err("declined".into());
         }
         return Err(e.replace("{what}", "Installing"));
@@ -892,7 +901,7 @@ pub async fn run(app: &AppHandle, req: Request) -> Result<Meter, String> {
     let ids = missing_apps(app);
     {
         let rows = rows_for(app, &ids);
-        *st.meter.lock().unwrap() = Meter { running: true, apps: rows, has_downloads: !ids.is_empty(), ..Default::default() };
+        *st.meter.lock().unwrap() = Meter { running: true, stage: "resolve".into(), apps: rows, has_downloads: !ids.is_empty(), ..Default::default() };
     }
     *st.emit.lock().unwrap() = None;
     let tick = creeping(app);
@@ -908,7 +917,9 @@ pub async fn run(app: &AppHandle, req: Request) -> Result<Meter, String> {
         }),
         Err(e) => with(app, |m| {
             m.running = false;
-            if e != "declined" {
+            if e == "declined" {
+                m.declined = true;
+            } else {
                 m.problems.push(e);
             }
         }),
@@ -1016,6 +1027,8 @@ pub fn start_servers(app: &AppHandle) {
 /// for that; its torrents carry on). Runs once, when Chillarr starts.
 pub async fn one_tray_icon(app: &AppHandle) {
     let core = app.state::<Core>();
+    // Never in the middle of a Fix everything or an install.
+    let _busy = core.fixer.running.lock().await;
     for id in [AppId::Sonarr, AppId::Radarr, AppId::Prowlarr] {
         let Some(cfg) = core.config(id) else { continue };
         let (Some(exe), None, true) = (cfg.exe.clone(), cfg.service.as_ref(), cfg.managed) else { continue };
@@ -1043,9 +1056,11 @@ pub async fn one_tray_icon(app: &AppHandle) {
         }
     }
     let mut rep = fix::FixReport::default();
-    fix::wire_qbit_ini(app, &mut rep).await;
+    if core.config(AppId::QBittorrent).is_some_and(|c| c.managed) {
+        fix::wire_qbit_ini(app, &mut rep).await;
+    }
     // Started by something else, or before this: out of sight too.
-    if tokio::task::spawn_blocking(|| crate::procs::process_running("qbittorrent.exe")).await.unwrap_or(false) {
+    if core.config(AppId::QBittorrent).is_some_and(|c| c.managed) && tokio::task::spawn_blocking(|| crate::procs::process_running("qbittorrent.exe")).await.unwrap_or(false) {
         let _ = tokio::task::spawn_blocking(crate::procs::hide_qbit_windows).await;
     }
 }
@@ -1073,7 +1088,7 @@ pub async fn install_only(app: &AppHandle, ids: Vec<AppId>) -> Vec<(AppId, Strin
     let Ok(_one) = st.busy.try_lock() else { return vec![] };
     {
         let rows: Vec<AppRow> = rows_for(app, &ids).into_iter().filter(|r| ids.contains(&r.id)).collect();
-        *st.meter.lock().unwrap() = Meter { running: true, apps: rows, has_downloads: true, installing_only: true, ..Default::default() };
+        *st.meter.lock().unwrap() = Meter { running: true, stage: "resolve".into(), apps: rows, has_downloads: true, installing_only: true, ..Default::default() };
     }
     *st.emit.lock().unwrap() = None;
     let tick = creeping(app);
@@ -1082,7 +1097,12 @@ pub async fn install_only(app: &AppHandle, ids: Vec<AppId>) -> Vec<(AppId, Strin
     let failed = match result {
         Ok(f) => f,
         Err(e) if e == "declined" => {
-            with(app, |m| m.running = false);
+            with(app, |m| {
+                m.running = false;
+                m.declined = true;
+            });
+            let snap = snapshot(app);
+            let _ = app.emit("setup-progress", &snap);
             return ids.iter().map(|id| (*id, "Windows' prompt was turned down.".to_string())).collect();
         }
         Err(e) => ids.iter().map(|id| (*id, e.clone())).collect(),
@@ -1136,6 +1156,22 @@ fn suggested_path(letter: char, profile: Option<&str>, system: Option<&str>) -> 
         Some(home) => format!("{}\\Chillarr Media", home.trim_end_matches('\\')),
         None => format!("{letter}:\\Media"),
     }
+}
+
+/// A plan with every kind of line, for the check that the script is valid PowerShell.
+#[cfg(test)]
+pub fn sample_script() -> String {
+    script(
+        &Plan {
+            steps: vec![Step { id: AppId::Sonarr, path: PathBuf::from(r"C:\Users\O'Brien\Sonarr.exe"), sha256: "ab".repeat(32), kind: Kind::Inno }],
+            walls: vec![Wall { name: "Sonarr".into(), exe: PathBuf::from(r"C:\a b\Sonarr.exe"), allow: true, lan_only: true }],
+            allow_folders: vec![PathBuf::from(r"C:\a b\x.exe"), PathBuf::from(r"C:\c\y.exe")],
+            services: vec!["Radarr".into()],
+            grant_folders: vec![(r"C:\ProgramData\Sonarr".into(), r"PC\me".into())],
+            jellyfin_as_user: Some(("JellyfinServer".into(), r"C:\ProgramData\Jellyfin\Server".into(), r"PC\me".into())),
+        },
+        Path::new(r"C:\Users\O'Brien\log.txt"),
+    )
 }
 
 #[cfg(test)]
