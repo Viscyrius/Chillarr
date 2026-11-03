@@ -12,8 +12,11 @@ use tauri::{AppHandle, Manager};
 use tauri_plugin_notification::NotificationExt;
 
 const TICK: Duration = Duration::from_secs(60);
-/// Let services that start with Windows come up before the first check.
-const FIRST_CHECK: Duration = Duration::from_secs(30);
+/// Apps Chillarr starts itself don't wait: Jellyfin takes half a minute as it is.
+const FIRST_CHECK: Duration = Duration::from_secs(1);
+/// With a Windows service among them, it gets time to come up by itself at boot
+/// before it's called stopped.
+const FIRST_CHECK_SERVICES: Duration = Duration::from_secs(30);
 const UPDATE_EVERY: Duration = Duration::from_secs(24 * 60 * 60);
 
 /// "Fix automatically" from Settings.
@@ -54,7 +57,8 @@ fn notify(app: &AppHandle, body: &str) {
 pub fn spawn(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
         let mut notifier = Notifier::default();
-        tokio::time::sleep(FIRST_CHECK).await;
+        let services = app.state::<fix::Core>().configs.read().unwrap().iter().any(|c| c.service.is_some());
+        tokio::time::sleep(if services { FIRST_CHECK_SERVICES } else { FIRST_CHECK }).await;
         crate::onboard::one_tray_icon(&app).await;
         // Start what is down once at launch, even with "Fix automatically" off:
         // Radarr/Sonarr switched to run as the user rely on Chillarr for this.

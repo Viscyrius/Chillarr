@@ -1,6 +1,6 @@
 // Settings: the six apps and Fix everything, indexers, library folders,
 // app paths, the Jellyfin account and streaming, general options, logs.
-import { $, ask, el, icon, ICON, invoke, LABEL, listen, ORDER, store, toast, viewer, WEB } from "./api.js";
+import { $, ask, audioChoice, el, icon, ICON, invoke, LABEL, listen, ORDER, store, toast, viewer, WEB } from "./api.js";
 import { startProfiles } from "./profiles.js";
 import { installWithMeter, openSetup } from "./setup.js";
 import { applyTheme, currentTheme, saveTheme, themePicker } from "./theme.js";
@@ -615,13 +615,10 @@ function general(panel) {
     el("button", { class: s.player !== "vlc" ? "on" : "", onclick: async () => { s.player = "chillarr"; drawSeg(); await invoke("set_settings", { s }); } }, "Chillarr"),
     el("button", { class: s.player === "vlc" ? "on" : "", disabled: !vlc, title: vlc ? "" : "VLC isn't installed", onclick: async () => { s.player = "vlc"; drawSeg(); await invoke("set_settings", { s }); } }, "VLC"));
   drawSeg();
-  const voices = el("div", { class: "segmented", role: "group", "aria-label": "Anime and movies" });
-  const drawVoices = () => voices.replaceChildren(...[["sub", "Subtitles"], ["dub", "Dubbed"]].map(([id, name]) =>
-    el("button", { class: (s.audio_pref || "sub") === id ? "on" : "", onclick: async () => { s.audio_pref = id; drawVoices(); await invoke("set_settings", { s }); } }, name)));
-  drawVoices();
+  const voices = audioChoice(() => s, (change) => { Object.assign(s, change); invoke("set_settings", { s }).catch((e) => toast(String(e), true)); });
   panel.append(el("h2", { text: "General" }), el("p", { class: "sub", text: "How Chillarr starts, plays and looks after things." }),
     el("div", { class: "box" },
-      el("div", { class: "opt" }, el("span", {}, el("b", { text: "Anime and movies" }), el("small", { text: "Subtitles: original voices, and dubbed-only copies are skipped. Dubbed: copies with English voices are picked first. Applies to new downloads. When a file has both, the player starts in this one, and you can switch any time under its audio button." })), voices),
+      el("div", { class: "opt" }, el("span", {}, el("b", { text: "Anime and movies" }), el("small", { text: "Original voices: dubbed-only copies are skipped. Dubbed: copies with your language are picked first. A title with no such copy still downloads. Applies to new downloads. When a file has several languages, the player starts in this one, and its audio button switches any time." })), voices),
       el("div", { class: "opt" }, el("span", {}, el("b", { text: "Play with" }), el("small", { text: vlc ? "VLC plays the original file at full quality with every audio track. Chillarr's player converts what it can't play directly." : "Install VLC to play original files at full quality." })), seg),
       sw("start_with_windows", "Start with Windows", "Opens in the tray when you sign in."),
       sw("auto_fix", "Fix automatically", "Checks every minute and fixes what breaks."),

@@ -6,13 +6,14 @@
 - Windows asks for permission once instead of once per app. That one prompt covers the installs, the firewall rules (no more "Allow access?" windows) and Defender's protected folders.
 - Chillarr's own installer is no longer a wizard. Double-click it, a short progress window runs, and the app opens.
 - Sites are added by themselves. If one is down or blocked, Chillarr tries again later without being asked, up to every 6 hours. One you take out of Prowlarr stays out.
-- Choose Subtitles or Dubbed for anime and movies, in Settings > General. It decides which copy gets downloaded and which audio a title starts in, when the file has both. The player's audio button still switches any time.
+- Choose original voices with subtitles, or Dubbed in the language you pick (English, Spanish, French, German, Japanese and more), in Settings > General. It decides which copy gets downloaded and which audio a title starts in, when the file has both. Copies with both voices are picked first when the quality is the same, so the player's audio button can switch between them.
 - Pick your colour in Settings > Appearance: seven themes or any colour you like, and a pure black background. The whole app follows, and so do the logo, the tray icon and your desktop and taskbar shortcuts.
 - New hover cards: the poster stays under your mouse and the details open beside it, with the trailer above them.
 - Series and anime show what you've watched clearly: a Watched label on each episode, a count for each season, and buttons to mark an episode or a whole season as watched or not watched. Marks stay after the files are deleted, even right after you finish an episode.
 - Only Space or the pause button pauses now. Clicking the picture just brings the controls back. TV remotes keep their OK and play buttons.
 - One icon in the tray: Chillarr's. Sonarr, Radarr and qBittorrent run without their own. The tray menu has "Stop everything and quit" for closing them all.
 - Fix everything is faster, since apps start and get checked side by side, and it shows each step as it goes, then what it changed and how long it took.
+- Starting up is quicker. The window opens straight away instead of waiting for every app to answer, and your apps start the moment Chillarr does instead of 30 seconds later, side by side.
 - Apps that wouldn't start: if an app can't open its own files, Fix everything repairs that with one Windows prompt. One stuck without answering gets restarted, and if an app still won't start, Logs shows the app's own error instead of only "didn't answer".
 - Prowlarr no longer runs as a Windows service. If it stopped, say for an update, every search failed until someone pressed Fix everything and answered a Windows prompt. Now Chillarr just starts it again, and moving all the apps over takes one prompt.
 - Watch now on a profile limited to certain libraries no longer stops at "Jellyfin answered with error 404": it's let into Watch now's hidden library.

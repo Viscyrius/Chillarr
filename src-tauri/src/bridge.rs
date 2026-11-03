@@ -335,12 +335,12 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
     let app = &app;
     match cmd {
         "web_viewer" => {
-            let (theme, audio_pref) = {
+            let (theme, audio_pref, audio_lang) = {
                 let st = app.state::<crate::SettingsState>();
                 let s = st.current.lock().unwrap();
-                (s.theme.clone(), s.audio_pref.clone())
+                (s.theme.clone(), s.audio_pref.clone(), s.audio_lang.clone())
             };
-            ok(json!({ "user_id": me.session.user_id, "name": me.session.user, "admin": me.admin, "can_delete": me.can_delete, "theme": theme, "audio_pref": audio_pref }))
+            ok(json!({ "user_id": me.session.user_id, "name": me.session.user, "admin": me.admin, "can_delete": me.can_delete, "theme": theme, "audio_pref": audio_pref, "audio_lang": audio_lang }))
         }
         // The viewer's own name; the PC's addresses and the owner's account
         // are the window's business.

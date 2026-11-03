@@ -281,6 +281,35 @@ const ONLY_DUB_FORMAT: &str = "Chillarr: dub only";
 const HAS_DUB: &str = r"(?i)(dual|multi)[ ._-]?audio|(?<![a-z0-9])dub(bed|s)?(?![a-z0-9])";
 /// A release that says it's dubbed and not that it carries the original too.
 const ONLY_DUB: &str = r"(?i)^(?!.*(dual|multi)[ ._-]?audio)(?!.*(?<![a-z0-9])dual(?![a-z0-9])).*(?<![a-z0-9])(dubbed|eng(lish)?[ ._-]?dub)(?![a-z0-9])";
+/// Words release names use for a dub in each language Chillarr offers. None: not one of them.
+pub fn dub_words(lang: &str) -> Option<&'static str> {
+    Some(match lang {
+        "eng" => "english|eng",
+        "spa" => "spanish|latino|castellano|esp",
+        "fre" => "french|truefrench|vff|vfq",
+        "ger" => "german|ger|deutsch",
+        "ita" => "italian|ita",
+        "por" => "portuguese|dublado|ptbr|pt-br",
+        "rus" => "russian|rus",
+        "hin" => "hindi",
+        "ara" => "arabic",
+        "tur" => "turkish",
+        "jpn" => "japanese|jap",
+        "kor" => "korean",
+        "zho" => "chinese|mandarin|cantonese",
+        _ => return None,
+    })
+}
+
+/// What "has a dub" looks for. English keeps the general words, since English
+/// dubs are mostly named just that. Another language has to be named.
+fn has_dub_pattern(lang: &str) -> String {
+    match dub_words(lang) {
+        Some(words) if lang != "eng" => format!("(?i)(?<![a-z0-9])({words})(?![a-z0-9])"),
+        _ => HAS_DUB.to_string(),
+    }
+}
+
 /// Wins between two copies of the same quality; quality still comes first.
 const PREFER_SCORE: i64 = 1000;
 
@@ -291,14 +320,15 @@ fn title_format(name: &str, pattern: &str) -> Value {
     ]})
 }
 
-/// `(has a dub, dub only)` scores. Subtitles: anything with the original voices
-/// is fine, a copy that's only dubbed is never taken. Dubbed: a copy with a dub
-/// wins, but a title with none still downloads, in its original voices.
+/// `(has a dub, dub only)` scores. Subtitles: a copy that's only dubbed is never
+/// taken, and one with both languages wins, so the player's audio button has
+/// something to switch to. Dubbed: a copy with a dub wins by more, but a title
+/// with none still downloads, in its original voices.
 pub(crate) fn audio_scores(pref: &str) -> (i64, i64) {
     if pref == "dub" {
         (PREFER_SCORE, 0)
     } else {
-        (0, DUB_SCORE)
+        (PREFER_SCORE / 2, DUB_SCORE)
     }
 }
 
@@ -331,11 +361,13 @@ async fn ensure_format(app: &AppHandle, a: &crate::arr::Arr, id: AppId, want: &V
 /// it's never taken. "Anime and movies" picks between subtitles and dubs the
 /// same way (`audio_scores`). Off or unchosen, a format's score is 0.
 pub async fn no_dubs(app: &AppHandle) {
-    let (skip, pref) = {
+    let (skip, pref, lang) = {
         let st = app.state::<crate::SettingsState>();
         let s = st.current.lock().unwrap();
-        (s.skip_dubs, s.audio_pref.clone())
+        (s.skip_dubs, s.audio_pref.clone(), s.audio_lang.clone())
     };
+    // Asked for a Spanish dub: "Spanish" in a name is what's wanted, not what to skip.
+    let skip = skip && !(pref == "dub" && lang != "eng");
     let (has_score, only_score) = audio_scores(&pref);
     for id in [AppId::Radarr, AppId::Sonarr] {
         let Some(a) = crate::media::arr(app, id) else { continue };
@@ -349,7 +381,7 @@ pub async fn no_dubs(app: &AppHandle) {
             continue;
         }
         let mut scores: Vec<(i64, i64)> = Vec::new();
-        for (want, score) in [(dub_format(&options), if skip { DUB_SCORE } else { 0 }), (title_format(HAS_DUB_FORMAT, HAS_DUB), has_score), (title_format(ONLY_DUB_FORMAT, ONLY_DUB), only_score)] {
+        for (want, score) in [(dub_format(&options), if skip { DUB_SCORE } else { 0 }), (title_format(HAS_DUB_FORMAT, &has_dub_pattern(if pref == "dub" { &lang } else { "eng" })), has_score), (title_format(ONLY_DUB_FORMAT, ONLY_DUB), only_score)] {
             if let Some(format) = ensure_format(app, &a, id, &want).await {
                 scores.push((format, score));
             }
@@ -1386,7 +1418,11 @@ mod tests {
         have["specifications"][0]["fields"][0]["value"] = json!("(?i)dub");
         assert!(!same_specs(&have, &f));
         let mut p = json!({ "formatItems": [] });
-        assert_eq!(audio_scores("sub"), (0, DUB_SCORE));
+        assert_eq!(has_dub_pattern("eng"), HAS_DUB);
+        assert!(has_dub_pattern("spa").contains("latino"));
+        assert_eq!(has_dub_pattern("nope"), HAS_DUB);
+        assert!(dub_words("nope").is_none());
+        assert_eq!(audio_scores("sub"), (PREFER_SCORE / 2, DUB_SCORE));
         assert_eq!(audio_scores("dub"), (PREFER_SCORE, 0));
         assert!(score_format(&mut p, 7, -10000));
         assert!(!score_format(&mut p, 7, -10000));

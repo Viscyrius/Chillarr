@@ -1,12 +1,12 @@
 // First run: one screen of questions, one press, one bar. Chillarr does the
 // rest: every download, one Windows prompt, starting and connecting the apps,
 // the login, the folders and the sources (onboard.rs).
-import { $, el, invoke, listen, store, toast } from "./api.js";
+import { $, audioChoice, el, invoke, listen, store, toast } from "./api.js";
 import { downloadsRow, folderPicker, saveLogsButton } from "./settings.js";
 import { logoImg, themePicker } from "./theme.js";
 
 const root = $("#setup");
-const state = { movies: [], series: [], downloads: null, base: null, free: 0, custom: false, loaded: false, audio: "sub" };
+const state = { movies: [], series: [], downloads: null, base: null, free: 0, custom: false, loaded: false, audio: { audio_pref: "sub", audio_lang: "eng" } };
 
 /* ---------- The form ---------- */
 const join = (base, name) => `${base.replace(/[\\/]+$/, "")}\\${name}`;
@@ -18,7 +18,7 @@ async function loadForm() {
   state.movies = [...(f.movies || [])];
   state.series = [...(f.series || [])];
   state.custom = !!(state.movies.length || state.series.length);
-  state.audio = store.settings?.audio_pref || "sub";
+  state.audio = { audio_pref: store.settings?.audio_pref || "sub", audio_lang: store.settings?.audio_lang || "eng" };
   if (suggest) { state.base = suggest.path; state.free = suggest.free; }
   state.loaded = true;
 }
@@ -53,10 +53,7 @@ async function showForm() {
   };
   drawWhere();
 
-  const voices = el("div", { class: "segmented", role: "group", "aria-label": "Anime and movies" });
-  const drawVoices = () => voices.replaceChildren(...[["sub", "Original voices, subtitles"], ["dub", "Dubbed in English"]].map(([id, name]) =>
-    el("button", { type: "button", class: state.audio === id ? "on" : "", onclick: () => { state.audio = id; drawVoices(); } }, name)));
-  drawVoices();
+  const voices = audioChoice(() => state.audio, (change) => Object.assign(state.audio, change));
   const signedIn = !!ms.signed_in;
   const hasAccount = !signedIn && !!ms.setup_done;
   const go = el("button", { class: "btn primary large", type: "submit" }, "Set up Chillarr");
@@ -67,15 +64,15 @@ async function showForm() {
       el("div", { class: "login-row" },
         el("label", { class: "field" }, el("small", { text: "Name" }), user),
         el("label", { class: "field" }, el("small", { text: "Password, at least 5 characters" }), pass))),
-    el("section", {}, el("h2", { text: "Anime and movies" }), el("p", { class: "note", text: "You can switch for any title in the player, when its file has both." }), voices),
+    el("section", {}, el("h2", { text: "Anime and movies" }), el("p", { class: "note", text: "You can switch for any title in the player, when its file has more than one." }), voices),
     el("section", {}, el("h2", { text: "Pick a colour" }), el("p", { class: "note", text: "It colours the app and your desktop icon. You can change it any time in Settings." }), themePicker()),
     el("div", { class: "setup-go" }, go, el("p", { class: "note", text: "Windows asks for your OK once, then everything downloads and installs by itself." })),
     err);
   form.addEventListener("submit", (e) => {
     e.preventDefault();
     err.textContent = "";
-    const req = { audio_pref: state.audio };
-    store.settings.audio_pref = state.audio;
+    const req = { ...state.audio };
+    Object.assign(store.settings, state.audio);
     if (state.custom) {
       if (!state.movies.length || !state.series.length) { err.textContent = "Add at least one movie folder and one series folder."; return; }
       req.movies = state.movies; req.series = state.series; req.downloads = state.downloads;

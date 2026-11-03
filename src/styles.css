@@ -1811,3 +1811,5 @@ html.no-grid .pf-fields > * + *, html.no-grid .skel-copy > * + * { margin-top: 1
 .app-card[data-level="amber"] .dot { background: var(--amber); }
 .app-card[data-level="red"] .dot { background: var(--red); }
 .callout-acts { display: flex; gap: 10px; flex: none; }
+.audio-choice { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.audio-choice select { height: 38px; padding: 0 10px; border-radius: 8px; background: var(--surface); border: 1px solid var(--line-2); }

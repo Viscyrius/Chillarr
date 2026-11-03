@@ -891,6 +891,7 @@ pub struct Request {
     pub password: Option<String>,
     /// "sub" or "dub" (settings.audio_pref).
     pub audio_pref: Option<String>,
+    pub audio_lang: Option<String>,
 }
 
 /// Everything, start to finish. Safe to run again: what's done stays done.
@@ -936,6 +937,9 @@ async fn whole_run(app: &AppHandle, ids: &[AppId], req: Request) -> Result<(), S
         let saved = {
             let mut s = st.current.lock().unwrap();
             s.audio_pref = if pref == "dub" { "dub" } else { "sub" }.into();
+            if let Some(lang) = req.audio_lang.as_deref().filter(|l| crate::pick::dub_words(l).is_some()) {
+                s.audio_lang = lang.to_string();
+            }
             s.clone()
         };
         let _ = crate::settings::save(&st.path, &saved);

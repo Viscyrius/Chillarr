@@ -696,7 +696,7 @@ async fn set_settings(app: AppHandle, mut s: settings::Settings) -> Result<Vec<A
         s.theme = st.current.lock().unwrap().theme.clone();
         settings::save(&st.path, &s)?;
         let remux_changed = st.current.lock().unwrap().skip_remux != s.skip_remux;
-        let dubs_changed = st.current.lock().unwrap().skip_dubs != s.skip_dubs || st.current.lock().unwrap().audio_pref != s.audio_pref;
+        let dubs_changed = st.current.lock().unwrap().skip_dubs != s.skip_dubs || st.current.lock().unwrap().audio_pref != s.audio_pref || st.current.lock().unwrap().audio_lang != s.audio_lang;
         *st.current.lock().unwrap() = s.clone();
         if remux_changed {
             let a = app.clone();

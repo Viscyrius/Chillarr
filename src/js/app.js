@@ -152,7 +152,7 @@ async function startWeb() {
       .observe($("#player"), { attributes: true, attributeFilter: ["hidden"] });
   }
   // Only the built-in player plays in a browser.
-  store.settings = { setup_done: true, player: "chillarr", audio_pref: viewer.audio_pref || "sub" };
+  store.settings = { setup_done: true, player: "chillarr", audio_pref: viewer.audio_pref || "sub", audio_lang: viewer.audio_lang || "eng" };
   invoke("media_status").then((m) => (store.media = { ...m, vlc: false }));
   drawViewer();
   route();
@@ -173,9 +173,9 @@ function drawViewer() {
   if (store.settings.theme) applyTheme(store.settings.theme);
   syncIcons();
   invoke("media_status").then((m) => (store.media = m));
-  (await invoke("refresh")).forEach((c) => store.cards.set(c.id, c));
-  updateHealth();
+  // The page first; each app's state follows as it answers ("card" events).
   route();
+  invoke("refresh").then((cards) => { cards.forEach((c) => store.cards.set(c.id, c)); updateHealth(); store.emit("cards"); }).catch(() => {});
   if (!store.settings.setup_done) openSetup();
   else startProfiles();
 })();

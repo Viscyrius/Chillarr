@@ -1,6 +1,6 @@
 // The in-app player. Jellyfin decides how to send each file: as-is when the
 // app can play it, or converted on the fly into an HLS stream (played with hls.js).
-import { $, ask, el, fmtTime, getPref, icon, invoke, listen, screenMode, setPref, store, toast, windowFull } from "./api.js";
+import { $, ask, AUDIO_LANGS, el, fmtTime, getPref, icon, invoke, listen, screenMode, setPref, store, toast, windowFull } from "./api.js";
 import { SubRenderer, parseAss, parseVtt, setSubScale, subScale } from "./subrender.js";
 import { buffering, caughtUp, inGroup, loadedHere, openTogether, requestPause, requestPlay, requestSeek, startedHere } from "./syncplay.js";
 
@@ -254,7 +254,9 @@ function startingSub(info, preferExternal, audio = null) {
   const pref = subPref();
   if (pref?.off) return null;
   const playing = info.audio.find((a) => a.index === audio) || info.audio.find((a) => a.default) || info.audio[0];
-  const lang = pref?.lang || (isEnglish(playing?.lang) ? null : "eng");
+  // In the dub you asked for, nothing needs reading.
+  const inDub = store.settings?.audio_pref === "dub" && dubMatcher().test(playing?.lang || "");
+  const lang = pref?.lang || (isEnglish(playing?.lang) || inDub ? null : "eng");
   if (!lang) return null;
   const same = subs.filter((s) => s.lang === lang && s.url);
   return same.find((s) => !s.forced) || same[0] || null;
@@ -404,13 +406,16 @@ function carriedAudio(tile, info) {
   return info.audio.find((a) => a.lang === p.lang)?.index ?? null;
 }
 
+const dubMatcher = () => (AUDIO_LANGS.find(([code]) => code === (store.settings?.audio_lang || "eng")) || AUDIO_LANGS[0])[2];
+
 /** The track Settings' sub or dub choice asks for, when the file starts in the other one. */
 function preferredAudio(info) {
   const def = info.audio.find((a) => a.default) || info.audio[0];
   if (!def || info.audio.length < 2) return null;
   if (store.settings?.audio_pref === "dub") {
-    if (isEnglish(def.lang)) return null;
-    return info.audio.find((a) => /^en/i.test(a.lang || ""))?.index ?? null;
+    const says = dubMatcher();
+    if (says.test(def.lang || "")) return null;
+    return info.audio.find((a) => says.test(a.lang || ""))?.index ?? null;
   }
   // Original voices: only languages films are rarely dubbed into, so an English
   // film with an extra Hindi or French track stays in English.

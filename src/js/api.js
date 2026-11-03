@@ -79,6 +79,33 @@ export const LABEL = {
 };
 export const ORDER = ["Prowlarr", "Sonarr", "Radarr", "FlareSolverr", "QBittorrent", "Jellyfin"];
 
+/** Languages offered for dubs, with how a file's audio track names them. */
+export const AUDIO_LANGS = [
+  ["eng", "English", /^en/i], ["spa", "Spanish", /^(es|spa)/i], ["fre", "French", /^(fr)/i], ["ger", "German", /^(de|ger)/i],
+  ["ita", "Italian", /^it/i], ["por", "Portuguese", /^(pt|por)/i], ["rus", "Russian", /^ru/i], ["hin", "Hindi", /^hi/i],
+  ["ara", "Arabic", /^ar/i], ["tur", "Turkish", /^tr|^tur/i], ["jpn", "Japanese", /^(ja|jp)/i], ["kor", "Korean", /^ko/i], ["zho", "Chinese", /^(zh|ch[is])/i],
+];
+
+/** "Subtitles / Dubbed", and which language a dub should be in. `get` and `set` hold { audio_pref, audio_lang }. */
+export function audioChoice(get, set) {
+  const box = el("div", { class: "audio-choice" });
+  const draw = () => {
+    const now = get();
+    const seg = el("div", { class: "segmented", role: "group", "aria-label": "Anime and movies" },
+      [["sub", "Original voices, subtitles"], ["dub", "Dubbed"]].map(([id, name]) => el("button", { type: "button", class: (now.audio_pref || "sub") === id ? "on" : "", onclick: () => { set({ audio_pref: id }); draw(); } }, name)));
+    const parts = [seg];
+    if (now.audio_pref === "dub") {
+      const pick = el("select", { "aria-label": "Dub language" }, AUDIO_LANGS.map(([code, name]) => el("option", { value: code, text: name })));
+      pick.value = now.audio_lang || "eng";
+      pick.addEventListener("change", () => set({ audio_lang: pick.value }));
+      parts.push(pick);
+    }
+    box.replaceChildren(...parts);
+  };
+  draw();
+  return box;
+}
+
 let toastTimer;
 export function toast(msg, bad = false) {
   const t = $("#toast");
