@@ -2,7 +2,7 @@
 // Jellyfin favourites, so the list matches Jellyfin's own apps on TVs and
 // phones; anything else waits in Chillarr and becomes a favourite once it arrives.
 import { ask, el, ICON, invoke, toast } from "./api.js";
-import { canWatchNow, movieLike, watchNow } from "./player.js";
+import { canWatchNow, isWatchNow, movieLike, watchNow } from "./player.js";
 
 let marks = null;
 let marksAt = 0;
@@ -43,6 +43,22 @@ export async function setMyList(t, on) {
   if (now) set.add(id); else set.delete(id);
   window.dispatchEvent(new Event("chillarr:saved"));
   return now;
+}
+
+/* ---------- Continue watching ---------- */
+
+/** Started part way and in the library, so Remove from Continue watching can take it off (Watch now titles have their own Remove). */
+export const resumable = (t) => !!t?.jf_id && t.resume_seconds > 0 && !isWatchNow(t);
+
+/** Takes it off Continue watching: its resume point goes back to the start (browse.js takes the card out). */
+export async function removeContinue(t) {
+  const name = t.kind === "episode" && t.subtitle ? `${t.title} ${t.subtitle.split(" · ")[0]}` : t.title;
+  try {
+    await invoke("media_forget_resume", { id: t.jf_id });
+    window.dispatchEvent(new CustomEvent("chillarr:forgot", { detail: t.key }));
+    toast(`Took ${name} off Continue watching.`);
+    return true;
+  } catch (e) { toast(String(e), true); return false; }
 }
 
 /* ---------- Completed ---------- */

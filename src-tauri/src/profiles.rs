@@ -42,13 +42,28 @@ struct Profile {
 #[derive(Serialize, Deserialize, Default)]
 struct Store {
     list: Vec<Profile>,
+    /// profiles.json couldn't be read, so its PINs are gone: nobody watches
+    /// until the main profile is opened with the Chillarr login.
+    #[serde(default)]
+    needs_login: bool,
+    /// Wrong tries, so a restart doesn't reset a wait: (count, wait until in
+    /// unix seconds, 0 for none). Filled from `tries` on every save.
+    #[serde(default)]
+    waits: HashMap<String, (u32, i64)>,
 }
 
 pub struct Profiles {
     file: PathBuf,
     store: Mutex<Store>,
-    /// Wrong PIN and login tries, for this session.
+    /// Wrong PIN and login tries.
     tries: Mutex<Tries>,
+    /// Held while the file is written, so saves land in the order they were made.
+    io: Mutex<()>,
+    /// profiles.json was there but couldn't be read (put aside as .bad).
+    damaged: bool,
+    /// profiles.json couldn't be read this run (another program held it).
+    /// It is left as it is: nothing is saved over it, and changes are refused.
+    unread: bool,
 }
 
 /// Wrong tries allowed before a wait, the first wait, and how often it doubles at most.
@@ -78,6 +93,17 @@ impl Tries {
     fn passed(&mut self, key: &str) {
         self.0.remove(key);
     }
+
+    fn to_disk(&self, now_s: i64, now: Instant) -> HashMap<String, (u32, i64)> {
+        self.0.iter().map(|(k, (n, until))| (k.clone(), (*n, until.filter(|u| *u > now).map_or(0, |u| now_s + (u - now).as_secs() as i64 + 1)))).collect()
+    }
+
+    fn from_disk(waits: &HashMap<String, (u32, i64)>, now_s: i64, now: Instant) -> Tries {
+        // No wait is ever longer than the last doubling: a clock set back, or
+        // a file edited, doesn't lock anyone out for longer.
+        let longest = FIRST_WAIT * (1 << MOST_DOUBLINGS);
+        Tries(waits.iter().map(|(k, (n, until))| (k.clone(), (*n, (*until > now_s).then(|| now + Duration::from_secs((*until - now_s) as u64).min(longest))))).collect())
+    }
 }
 
 fn wait_message(secs: u64) -> String {
@@ -94,6 +120,8 @@ pub struct View {
     pub name: String,
     pub color: String,
     pub has_pin: bool,
+    /// The main profile after profiles.json was lost: it needs the Chillarr login.
+    pub needs_login: bool,
     pub owner: bool,
     pub active: bool,
 }
@@ -103,15 +131,66 @@ const OWNER_COLOR: &str = "#e50914";
 impl Profiles {
     pub fn load(dir: PathBuf) -> Profiles {
         let file = dir.join("profiles.json");
-        let store = crate::seal::read(&file).and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
-        Profiles { file, store: Mutex::new(store), tries: Mutex::new(Tries::default()) }
+        let (mut store, damaged, unread) = match crate::seal::read_raw(&file) {
+            Ok(None) => (Store::default(), false, false),
+            Ok(Some(t)) => match crate::seal::open(&t).and_then(|t| serde_json::from_str::<Store>(&t).ok()) {
+                Some(s) => (s, false, false),
+                None => (Store::default(), true, false),
+            },
+            Err(_) => (Store::default(), false, true),
+        };
+        // An empty list would open every profile with no PIN: start locked
+        // instead, and keep the old file for a look.
+        let moved = damaged && std::fs::rename(&file, file.with_extension("json.bad")).is_ok();
+        store.needs_login |= damaged || unread;
+        let tries = Tries::from_disk(&store.waits, now_secs(), Instant::now());
+        let p = Profiles { file, store: Mutex::new(store), tries: Mutex::new(tries), io: Mutex::new(()), damaged, unread };
+        if moved {
+            p.save();
+        }
+        p
     }
 
     fn save(&self) {
-        if let Ok(text) = serde_json::to_string(&*self.store.lock().unwrap()) {
+        if self.unread {
+            return;
+        }
+        let _io = self.io.lock().unwrap();
+        let waits = self.tries.lock().unwrap().to_disk(now_secs(), Instant::now());
+        let text = {
+            let mut s = self.store.lock().unwrap();
+            s.waits = waits;
+            serde_json::to_string(&*s)
+        };
+        if let Ok(text) = text {
             let _ = crate::seal::write(&self.file, &text);
         }
     }
+
+    /// Err while profiles.json couldn't be read this run: a change made now
+    /// would be lost, or saved over the profiles in it.
+    fn writable(&self) -> Result<(), String> {
+        if self.unread {
+            return Err("Chillarr couldn't read its profiles. Restart it, then try again.".into());
+        }
+        Ok(())
+    }
+
+    fn try_state(&self, key: &str) -> Option<(u32, Option<Instant>)> {
+        self.tries.lock().unwrap().0.get(key).copied()
+    }
+
+    /// Saves when a try changed the count for `key`, so the wait outlives a restart.
+    fn counted(&self, key: &str, before: Option<(u32, Option<Instant>)>) {
+        if self.try_state(key) != before {
+            self.save();
+        }
+    }
+}
+
+/// Runs PIN hashing and sealed file writes off the async threads.
+async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
+    tokio::task::spawn_blocking(f).await.map_err(|e| e.to_string())?
 }
 
 fn owner(app: &AppHandle) -> Option<Session> {
@@ -121,13 +200,17 @@ fn owner(app: &AppHandle) -> Option<Session> {
 /// Puts the owner's profile first in the list the first time it's needed.
 fn ensure_owner(app: &AppHandle, me: &Session) {
     let profiles = app.state::<Profiles>();
-    {
+    let added = {
         let mut s = profiles.store.lock().unwrap();
-        if !s.list.iter().any(|p| p.id == me.user_id) {
+        let missing = !s.list.iter().any(|p| p.id == me.user_id);
+        if missing {
             s.list.insert(0, Profile { id: me.user_id.clone(), name: me.user.clone(), color: OWNER_COLOR.into(), pin: None, session: None });
         }
+        missing
+    };
+    if added {
+        profiles.save();
     }
-    profiles.save();
 }
 
 /// The profile with this id. Only ids in the list get anywhere near Jellyfin
@@ -144,10 +227,45 @@ fn find(app: &AppHandle, me: &Session, id: &str) -> Result<Profile, String> {
 /// On start: when a profile that can be picked has a PIN, nobody is watching
 /// until one is picked (media.rs `lock`).
 pub fn lock_if_pinned(app: &AppHandle) {
-    let Some(me) = owner(app) else { return };
-    let pinned = app.state::<Profiles>().store.lock().unwrap().list.iter().any(|p| (p.id == me.user_id || p.session.is_some()) && p.pin.is_some());
-    if pinned {
+    let profiles = app.state::<Profiles>();
+    if profiles.damaged {
+        log(app, Level::Red, "Chillarr couldn't read its profiles, so it put them aside as profiles.json.bad. Open the main profile with your Chillarr password, then add PINs again.");
+    }
+    if profiles.unread {
+        log(app, Level::Red, "Chillarr couldn't open profiles.json (another program may be using it). Open the main profile with your Chillarr password, or restart Chillarr to get your profiles back.");
+    }
+    if profiles.store.lock().unwrap().needs_login {
         app.state::<Media>().lock();
+        return;
+    }
+    if pinned(app) {
+        app.state::<Media>().lock();
+    }
+}
+
+/// Whether a profile that can be picked has a PIN.
+fn pinned(app: &AppHandle) -> bool {
+    let Some(me) = owner(app) else { return false };
+    app.state::<Profiles>().store.lock().unwrap().list.iter().any(|p| (p.id == me.user_id || p.session.is_some()) && p.pin.is_some())
+}
+
+/// media::connect signed in with a Jellyfin admin when no owner sign-in was
+/// kept. That is the same proof the Chillarr login gives (`switch`), so it
+/// lifts the lock left by a lost profiles.json; a PIN still locks as on start.
+pub async fn owner_signed_in(app: &AppHandle) {
+    let profiles = app.state::<Profiles>();
+    if !std::mem::take(&mut profiles.store.lock().unwrap().needs_login) {
+        return;
+    }
+    log(app, Level::Ok, "Signed in to Jellyfin with an admin account, so the profiles are open again.");
+    let h = app.clone();
+    let _ = blocking(move || {
+        h.state::<Profiles>().save();
+        Ok(())
+    })
+    .await;
+    if !pinned(app) {
+        app.state::<Media>().unlock();
     }
 }
 
@@ -164,7 +282,7 @@ pub fn list(app: &AppHandle) -> Vec<View> {
         .list
         .iter()
         .filter(|p| p.id == me.user_id || p.session.is_some())
-        .map(|p| View { id: p.id.clone(), name: p.name.clone(), color: p.color.clone(), has_pin: p.pin.is_some(), owner: p.id == me.user_id, active: p.id == active })
+        .map(|p| View { id: p.id.clone(), name: p.name.clone(), color: p.color.clone(), has_pin: p.pin.is_some(), needs_login: s.needs_login && p.id == me.user_id, owner: p.id == me.user_id, active: p.id == active })
         .collect();
     out.sort_by_key(|v| !v.owner);
     out
@@ -240,15 +358,23 @@ fn pin_gate(tries: &Mutex<Tries>, id: &str, stored: Option<&str>, pin: Option<&s
 }
 
 fn check_pin(app: &AppHandle, p: &Profile, pin: Option<&str>) -> Result<(), String> {
-    pin_gate(&app.state::<Profiles>().tries, &p.id, p.pin.as_deref(), pin, Instant::now())
+    let profiles = app.state::<Profiles>();
+    let before = profiles.try_state(&p.id);
+    let r = pin_gate(&profiles.tries, &p.id, p.pin.as_deref(), pin, Instant::now());
+    profiles.counted(&p.id, before);
+    r
 }
 
 /// Checks a profile's PIN and does nothing else (the editor asks for it
 /// before it shows a locked profile's settings).
-pub fn verify_pin(app: &AppHandle, id: &str, pin: &str) -> Result<(), String> {
+pub async fn verify_pin(app: &AppHandle, id: &str, pin: String) -> Result<(), String> {
     let me = owner(app).ok_or("Sign in to Jellyfin first.")?;
-    let p = find(app, &me, id)?;
-    check_pin(app, &p, Some(pin))
+    let (h, id) = (app.clone(), id.to_string());
+    blocking(move || {
+        let p = find(&h, &me, &id)?;
+        check_pin(&h, &p, Some(&pin))
+    })
+    .await
 }
 
 /// Whether `password` is the Chillarr login: the one picked in setup, which
@@ -257,6 +383,7 @@ pub fn verify_pin(app: &AppHandle, id: &str, pin: &str) -> Result<(), String> {
 async fn check_login(app: &AppHandle, me: &Session, password: &str) -> Result<(), String> {
     let profiles = app.state::<Profiles>();
     profiles.tries.lock().unwrap().begin("login", Instant::now()).map_err(wait_message)?;
+    profiles.save();
     let base = app.state::<crate::fix::Core>().config(AppId::Jellyfin).ok_or("Jellyfin isn't installed")?.base_url;
     // A device of its own, so this sign-in can't replace the owner's.
     let device = format!("{}-check", app.state::<Media>().device_id);
@@ -271,6 +398,7 @@ async fn check_login(app: &AppHandle, me: &Session, password: &str) -> Result<()
         return Err(wrong());
     }
     profiles.tries.lock().unwrap().passed("login");
+    profiles.save();
     Ok(())
 }
 
@@ -287,12 +415,16 @@ fn device_for(app: &AppHandle, user_id: &str) -> String {
 
 /// Makes the Jellyfin account and the profile for it.
 pub async fn add(app: &AppHandle, name: &str, color: &str, pin: Option<String>) -> Result<View, String> {
+    app.state::<Profiles>().writable()?;
     let name = name.trim();
     if name.is_empty() || name.len() > 30 {
         return Err("Give the profile a name (up to 30 letters).".into());
     }
     if !valid_color(color) {
         return Err("Pick one of the colours.".into());
+    }
+    if app.state::<Profiles>().store.lock().unwrap().needs_login {
+        return Err("Open the main profile with your Chillarr password first.".into());
     }
     let pin = match pin.filter(|p| !p.is_empty()) {
         Some(p) => Some(new_pin(&p)?),
@@ -315,19 +447,38 @@ pub async fn add(app: &AppHandle, name: &str, color: &str, pin: Option<String>) 
     list(app).into_iter().find(|v| v.id == id).ok_or_else(|| "The profile didn't save.".into())
 }
 
-/// Starts watching as this profile. A profile with a PIN needs it.
-pub fn switch(app: &AppHandle, id: &str, pin: Option<String>) -> Result<(), String> {
+/// Starts watching as this profile. A profile with a PIN needs it. After
+/// profiles.json was lost, the main profile needs the Chillarr login (`login`).
+pub async fn switch(app: &AppHandle, id: &str, pin: Option<String>, login: Option<String>) -> Result<(), String> {
     let me = owner(app).ok_or("Sign in to Jellyfin first.")?;
-    let p = find(app, &me, id)?;
-    check_pin(app, &p, pin.as_deref())?;
-    let media = app.state::<Media>();
-    if p.id == me.user_id {
-        media.set_profile(None);
-    } else {
-        media.set_profile(Some(p.session.ok_or("That profile has no sign-in. Remove it and add it again.")?));
+    if app.state::<Profiles>().store.lock().unwrap().needs_login {
+        if id != me.user_id {
+            return Err("Open the main profile with your Chillarr password first.".into());
+        }
+        let password = login.filter(|l| !l.is_empty()).ok_or("Type your Chillarr password.")?;
+        check_login(app, &me, &password).await?;
+        app.state::<Profiles>().store.lock().unwrap().needs_login = false;
+        let h = app.clone();
+        blocking(move || {
+            h.state::<Profiles>().save();
+            Ok(())
+        })
+        .await?;
     }
-    media.unlock();
-    Ok(())
+    let (h, id) = (app.clone(), id.to_string());
+    blocking(move || {
+        let p = find(&h, &me, &id)?;
+        check_pin(&h, &p, pin.as_deref())?;
+        let media = h.state::<Media>();
+        if p.id == me.user_id {
+            media.set_profile(None);
+        } else {
+            media.set_profile(Some(p.session.ok_or("That profile has no sign-in. Remove it and add it again.")?));
+        }
+        media.unlock();
+        Ok(())
+    })
+    .await
 }
 
 // ---------- inside Jellyfin's web pages (bridge.rs) ----------
@@ -424,11 +575,15 @@ pub fn forget_web_devices(app: &AppHandle) -> Result<(), String> {
 }
 
 /// Whether `key` is one a device was given (the main profile's password once typed on it).
-pub fn trusted(app: &AppHandle, key: Option<&str>) -> bool {
+pub async fn trusted(app: &AppHandle, key: Option<&str>) -> bool {
     let Some(key) = key.filter(|k| k.len() == 64 && k.bytes().all(|b| b.is_ascii_hexdigit())) else { return false };
-    let want = trust_hash(key);
-    let now = now_secs();
-    trust_list(app).iter().any(|t| fresh(t, now) && crate::remote::ct_eq(t.hash.as_bytes(), want.as_bytes()))
+    let (want, h) = (trust_hash(key), app.clone());
+    blocking(move || {
+        let now = now_secs();
+        Ok(trust_list(&h).iter().any(|t| fresh(t, now) && crate::remote::ct_eq(t.hash.as_bytes(), want.as_bytes())))
+    })
+    .await
+    .unwrap_or(false)
 }
 
 /// A new key for a device that just typed the main profile's password.
@@ -478,6 +633,7 @@ async fn check_password_web(app: &AppHandle, id: &str, password: &str) -> Result
     let profiles = app.state::<Profiles>();
     let key = web_key(&format!("login:{id}"));
     profiles.tries.lock().unwrap().begin(&key, Instant::now()).map_err(wait_message)?;
+    profiles.save();
     let base = app.state::<crate::fix::Core>().config(AppId::Jellyfin).ok_or("Jellyfin isn't installed")?.base_url;
     let device = format!("{}-check", app.state::<Media>().device_id);
     let wrong = || format!("That isn't {name}'s Jellyfin password.");
@@ -491,6 +647,7 @@ async fn check_password_web(app: &AppHandle, id: &str, password: &str) -> Result
         return Err(wrong());
     }
     profiles.tries.lock().unwrap().passed(&key);
+    profiles.save();
     Ok(())
 }
 
@@ -523,7 +680,7 @@ async fn ensure_quick_connect(app: &AppHandle) {
 
 /// The web picker's list, with Quick Connect made ready for it first.
 pub async fn list_for_web(app: &AppHandle, viewer: &str, trust: Option<&str>) -> Vec<WebView> {
-    let out = list_for(app, viewer, trusted(app, trust));
+    let out = list_for(app, viewer, trusted(app, trust).await);
     if !out.is_empty() {
         ensure_quick_connect(app).await;
     }
@@ -551,15 +708,24 @@ pub async fn authorize_web(app: &AppHandle, viewer: &str, id: &str, pin: Option<
     }
     let p = find(app, &me, id)?;
     // The page sends any error naming the PIN back to the PIN pad.
-    pin_gate(&app.state::<Profiles>().tries, &web_key(&p.id), p.pin.as_deref(), pin.as_deref(), Instant::now())
-        .map_err(|e| if e.contains("PIN") { e } else { e.replace("wrong tries", "wrong PINs") })?;
+    let (h, key, stored) = (app.clone(), web_key(&p.id), p.pin.clone());
+    blocking(move || {
+        let profiles = h.state::<Profiles>();
+        let before = profiles.try_state(&key);
+        let r = pin_gate(&profiles.tries, &key, stored.as_deref(), pin.as_deref(), Instant::now());
+        profiles.counted(&key, before);
+        r
+    })
+    .await
+    .map_err(|e| if e.contains("PIN") { e } else { e.replace("wrong tries", "wrong PINs") })?;
     // The main profile is the server's admin: a device types its Jellyfin
     // password the first time, then it's remembered.
     let mut new_trust = None;
-    if p.id == me.user_id && p.id != viewer && !trusted(app, trust.as_deref()) {
+    if p.id == me.user_id && p.id != viewer && !trusted(app, trust.as_deref()).await {
         let password = password.filter(|p| !p.is_empty()).ok_or_else(|| format!("Type {}'s Jellyfin password.", p.name))?;
         check_password_web(app, &p.id, &password).await?;
-        new_trust = Some(trust_device(app)?);
+        let h = app.clone();
+        new_trust = Some(blocking(move || trust_device(&h)).await?);
     }
     let session = if p.id == me.user_id { me.clone() } else { p.session.clone().ok_or("That profile has no sign-in. Remove it and add it again in the Chillarr app.")? };
     let base = app.state::<crate::fix::Core>().config(AppId::Jellyfin).ok_or("Jellyfin isn't installed")?.base_url;
@@ -572,6 +738,7 @@ pub async fn authorize_web(app: &AppHandle, viewer: &str, id: &str, pin: Option<
 
 /// Adds a profile from a browser signed in as one of the profiles.
 pub async fn add_web(app: &AppHandle, viewer: &str, name: &str, color: &str, pin: Option<String>) -> Result<View, String> {
+    app.state::<Profiles>().writable()?;
     let all = list(app);
     if !all.iter().any(|v| v.id == viewer) {
         return Err("Only Chillarr's profiles can add one here.".into());
@@ -623,6 +790,7 @@ fn restrict_like(policy: &mut serde_json::Value, maker: &serde_json::Value) {
 /// Renames, recolours, or sets or clears the PIN (`Some("")` clears it). A
 /// profile with a PIN needs it (`current_pin`) for any of these.
 pub async fn update(app: &AppHandle, id: &str, name: Option<String>, color: Option<String>, pin: Option<String>, current_pin: Option<String>) -> Result<(), String> {
+    app.state::<Profiles>().writable()?;
     let me = owner(app).ok_or("Sign in to Jellyfin first.")?;
     let p = find(app, &me, id)?;
     check_pin(app, &p, current_pin.as_deref())?;
@@ -664,6 +832,7 @@ pub async fn update(app: &AppHandle, id: &str, name: Option<String>, color: Opti
 /// Chillarr signs it back in with the new one. True when Jellyfin's sign-in
 /// screens list the profile now. A profile with a PIN needs it.
 pub async fn set_password(app: &AppHandle, id: &str, password: &str, current_pin: Option<String>) -> Result<bool, String> {
+    app.state::<Profiles>().writable()?;
     let me = owner(app).ok_or("Sign in to Jellyfin first.")?;
     if id == me.user_id {
         return Err("The main profile uses your own Jellyfin password.".into());
@@ -704,6 +873,7 @@ pub async fn set_password(app: &AppHandle, id: &str, password: &str, current_pin
 /// owner. A profile with a PIN needs it, or the Chillarr login (`login`) for
 /// when the PIN is forgotten.
 pub async fn remove(app: &AppHandle, id: &str, pin: Option<String>, login: Option<String>) -> Result<(), String> {
+    app.state::<Profiles>().writable()?;
     let me = owner(app).ok_or("Sign in to Jellyfin first.")?;
     if id == me.user_id {
         return Err("The main profile stays.".into());
@@ -867,6 +1037,70 @@ mod tests {
         }
         assert_eq!(t.begin("x", now), Err(FIRST_WAIT.as_secs() << MOST_DOUBLINGS));
         assert_eq!(wait_message(960), "Too many wrong tries. Try again in 16 minutes.");
+    }
+
+    #[test]
+    fn a_wait_outlives_a_restart() {
+        let mut t = Tries::default();
+        let t0 = Instant::now();
+        for _ in 0..FREE_TRIES {
+            t.begin("a", t0).unwrap();
+        }
+        t.begin("b", t0).unwrap();
+        let disk = t.to_disk(1_000, t0);
+        assert_eq!(disk["b"], (1, 0), "a count with no wait yet");
+        assert!((1_030..=1_031).contains(&disk["a"].1), "{:?}", disk["a"]);
+        // Read back ten seconds later: about twenty seconds still to wait.
+        let later = Instant::now();
+        let mut back = Tries::from_disk(&disk, 1_010, later);
+        let left = back.begin("a", later).unwrap_err();
+        assert!((20..=21).contains(&left), "{left}");
+        assert!(Tries::from_disk(&disk, 2_000, later).begin("a", later).is_ok(), "a wait that ran out while closed is over");
+    }
+
+    #[test]
+    fn a_restored_wait_is_never_longer_than_the_longest() {
+        let disk = HashMap::from([("a".to_string(), (FREE_TRIES, 1_000 + 10_000_000))]);
+        let now = Instant::now();
+        let left = Tries::from_disk(&disk, 1_000, now).begin("a", now).unwrap_err();
+        assert_eq!(left, (FIRST_WAIT * (1 << MOST_DOUBLINGS)).as_secs());
+    }
+
+    #[test]
+    fn an_unreadable_profiles_file_starts_locked_and_is_kept() {
+        let dir = std::env::temp_dir().join(format!("chillarr-profiles-bad-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("profiles.json"), "chillarr-sealed:AAAA").unwrap();
+        let p = Profiles::load(dir.clone());
+        let locked = p.store.lock().unwrap().needs_login;
+        let kept = dir.join("profiles.json.bad").exists();
+        let again = Profiles::load(dir.clone()).store.lock().unwrap().needs_login;
+        let fresh = Profiles::load(dir.join("none")).store.lock().unwrap().needs_login;
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(p.damaged && locked && kept);
+        assert!(again, "still locked after a restart");
+        assert!(!fresh, "no file at all is a new install, not a lost one");
+    }
+
+    #[test]
+    fn a_profiles_file_held_by_another_program_is_left_alone() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let dir = std::env::temp_dir().join(format!("chillarr-profiles-held-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("profiles.json");
+        std::fs::write(&file, "the profiles").unwrap();
+        // Opened with no sharing, the way a scanner can hold it.
+        let held = std::fs::OpenOptions::new().read(true).share_mode(0).open(&file).unwrap();
+        let p = Profiles::load(dir.clone());
+        p.save();
+        drop(held);
+        let text = std::fs::read_to_string(&file).unwrap();
+        let bad = dir.join("profiles.json.bad").exists();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(p.unread && !p.damaged && p.store.lock().unwrap().needs_login, "locked for this run");
+        assert!(p.writable().is_err());
+        assert_eq!(text, "the profiles", "nothing saved over it");
+        assert!(!bad, "not put aside as damaged");
     }
 
     #[test]

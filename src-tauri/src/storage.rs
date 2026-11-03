@@ -255,14 +255,30 @@ async fn clean_up(app: &AppHandle, days: u32) {
                 log(app, Level::Amber, format!("Couldn't clean up {title}: Sonarr wouldn't stop looking for those episodes ({e})."));
                 continue;
             }
-            let mut gone = 0u64;
+            let (mut gone, mut done, mut failed) = (0u64, Vec::new(), Vec::new());
             for (file, size) in &plan.files {
                 if crate::subfetch::delete_episode_file(app, &s, *file).await {
                     gone += size;
-                    deleted = true;
+                    done.push(*file);
+                } else {
+                    failed.push(*file);
                 }
             }
-            log(app, Level::Ok, format!("Cleaned up {title}: {} ({}), watched more than {days} days ago.", plan.names.join(", "), gb(gone)));
+            if !failed.is_empty() {
+                // Still on disk: Sonarr goes on looking after the ones it did.
+                let (back, names) = in_files(&eps, &failed);
+                let monitored: Vec<i64> = back.into_iter().filter(|id| eps.iter().any(|e| e["id"].as_i64() == Some(*id) && e["monitored"] == true)).collect();
+                if !monitored.is_empty() {
+                    let _ = s.update("episode/monitor", &json!({ "episodeIds": monitored, "monitored": true })).await;
+                }
+                log(app, Level::Amber, format!("Couldn't clean up {title} {}: Sonarr wouldn't delete the files. They stay.", names.join(", ")));
+            }
+            if done.is_empty() {
+                continue;
+            }
+            deleted = true;
+            let (_, names) = in_files(&eps, &done);
+            log(app, Level::Ok, format!("Cleaned up {title}: {} ({}), watched more than {days} days ago.", names.join(", "), gb(gone)));
             drop_seeding_copies(app, &s, sid).await;
         }
     }
@@ -296,12 +312,21 @@ fn episode_plan(files: &[Value], eps: &[Value], want: &HashMap<String, i64>) -> 
             continue;
         }
         plan.files.push((id, f["size"].as_u64().unwrap_or(0)));
-        for e in eps.iter().filter(|e| e["episodeFileId"].as_i64() == Some(id)) {
-            plan.episodes.extend(e["id"].as_i64());
-            plan.names.push(format!("S{} E{}", e["seasonNumber"].as_i64().unwrap_or(0), e["episodeNumber"].as_i64().unwrap_or(0)));
-        }
+        let (ids, names) = in_files(eps, &[id]);
+        plan.episodes.extend(ids);
+        plan.names.extend(names);
     }
     plan
+}
+
+/// The Sonarr episodes in these files: their ids, and "S1 E2" for the log.
+fn in_files(eps: &[Value], files: &[i64]) -> (Vec<i64>, Vec<String>) {
+    let mut out = (Vec::new(), Vec::new());
+    for e in eps.iter().filter(|e| e["episodeFileId"].as_i64().is_some_and(|f| files.contains(&f))) {
+        out.0.extend(e["id"].as_i64());
+        out.1.push(format!("S{} E{}", e["seasonNumber"].as_i64().unwrap_or(0), e["episodeNumber"].as_i64().unwrap_or(0)));
+    }
+    out
 }
 
 /// The seeding copy in Downloads is a hardlink to the library file, so the
@@ -411,6 +436,8 @@ mod tests {
         assert_eq!(plan.files.iter().map(|f| f.0).collect::<Vec<_>>(), vec![10, 12], "the watched file, not Sonarr's S2E1; a double episode is one file; an unknown path is skipped");
         assert_eq!(plan.episodes, vec![1, 3, 4]);
         assert_eq!(plan.names, vec!["S1 E13", "S1 E14", "S1 E15"]);
+        // The double episode's file wouldn't delete: both its episodes go back.
+        assert_eq!(in_files(&eps, &[12]), (vec![3, 4], vec!["S1 E14".to_string(), "S1 E15".to_string()]));
 
         // Deleted, then downloaded again to the same path after the watch.
         let again = vec![json!({ "id": 20, "path": r"C:\Series\Show\Season 1\Show - 13.mkv", "size": 1, "dateAdded": "2026-10-18T10:00:00Z" }), json!({ "id": 21, "path": r"C:\Series\Show\Season 1\Show - 14-15.mkv", "size": 1 })];

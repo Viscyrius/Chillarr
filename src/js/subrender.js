@@ -7,6 +7,13 @@ const TIME = /(\d+):(\d{2}):(\d{2})[.,](\d{1,3})/;
 
 // Subtitle size from Settings: 1 is the file's own size (or VLC's default).
 let scale = 1;
+// The outline under the letters needs paint-order on HTML text. Old Chrome
+// (TVs) parses paint-order for SVG, so CSS.supports says yes, but paints the
+// stroke over the letters: only a recent Chrome gets it, the rest a ring of
+// text shadows instead.
+const chrome = +((/Chrom(?:e|ium)\/(\d+)/.exec(navigator.userAgent) || [])[1] || 0);
+const strokeUnder = !!(window.CSS && CSS.supports && CSS.supports("paint-order", "stroke fill")) && (!chrome || chrome >= 123);
+if (!strokeUnder) document.documentElement.classList.add("no-paint-order"); // styles.css: the size sample in Settings
 try { scale = Math.min(2, Math.max(0.6, Number(localStorage.getItem("chillarr-sub-scale")) || 1)); } catch (e) { /* storage blocked */ }
 const renderers = new Set();
 /** Changes the size at once on every player that is showing subtitles. */
@@ -279,9 +286,16 @@ export class SubRenderer {
     if (s.font) el.style.fontFamily = `"${s.font}", "Segoe UI", Arial, sans-serif`;
     el.style.color = s.colour || "#fff";
     // An outline drawn around the letters (like VLC), never a box behind them.
-    el.style.webkitTextStroke = `${outline * 2}px ${oc}`;
-    el.style.paintOrder = "stroke fill";
-    el.style.textShadow = shadow > 0 ? `${shadow}px ${shadow}px ${Math.max(1, shadow)}px rgba(0,0,0,0.55)` : "none";
+    const drop = shadow > 0 ? `${shadow}px ${shadow}px ${Math.max(1, shadow)}px rgba(0,0,0,0.55)` : null;
+    if (strokeUnder) {
+      el.style.webkitTextStroke = `${outline * 2}px ${oc}`;
+      el.style.paintOrder = "stroke fill";
+      el.style.textShadow = drop || "none";
+    } else {
+      const o = Math.round(outline * 10) / 10, d = Math.round(outline * 7) / 10;
+      const ring = [[o, 0], [-o, 0], [0, o], [0, -o], [d, d], [-d, d], [d, -d], [-d, -d]].map(([x, y]) => `${x}px ${y}px 0 ${oc}`);
+      el.style.textShadow = [...ring, drop].filter(Boolean).join(", ");
+    }
     for (const r of c.runs) {
       const span = document.createElement("span");
       span.textContent = r.text;

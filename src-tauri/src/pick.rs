@@ -99,11 +99,12 @@ fn disc_copy(quality: &str) -> bool {
 }
 
 /// Takes disc copies out of a quality profile. Returns true when it changed.
-/// The cutoff (the quality it stops upgrading at) must stay an allowed one,
-/// so it moves to the best quality still allowed.
+/// The cutoff (the quality it stops upgrading at) must stay an allowed one;
+/// only when it was a disc copy does it move, see `cutoff_after`.
 pub(crate) fn drop_disc_copies(p: &mut Value) -> bool {
     let mut changed = false;
-    let mut best = None;
+    // Every entry in profile order (worst first): its id and whether allowed.
+    let mut order: Vec<(i64, bool)> = Vec::new();
     let Some(items) = p["items"].as_array_mut() else { return false };
     for i in items.iter_mut() {
         let is_group = i["items"].as_array().is_some_and(|x| !x.is_empty());
@@ -119,25 +120,38 @@ pub(crate) fn drop_disc_copies(p: &mut Value) -> bool {
                 i["allowed"] = json!(false);
                 changed = true;
             }
-            if i["allowed"] == true {
-                best = i["id"].as_i64().or(best);
+            if let Some(id) = i["id"].as_i64() {
+                order.push((id, i["allowed"] == true));
             }
         } else {
             if i["allowed"] == true && i["quality"]["name"].as_str().is_some_and(disc_copy) {
                 i["allowed"] = json!(false);
                 changed = true;
             }
-            if i["allowed"] == true {
-                best = i["quality"]["id"].as_i64().or(best);
+            if let Some(id) = i["quality"]["id"].as_i64() {
+                order.push((id, i["allowed"] == true));
             }
         }
     }
     if changed {
-        if let Some(b) = best {
-            p["cutoff"] = json!(b);
+        if let Some(c) = cutoff_after(&order, p["cutoff"].as_i64()) {
+            p["cutoff"] = json!(c);
         }
     }
     changed
+}
+
+/// The cutoff once disc copies are out. One still allowed stays put (a 2160p
+/// profile with a 1080p cutoff must not start upgrading everything to 4K).
+/// Otherwise the best allowed quality below it, or failing that the nearest
+/// allowed above it. `order` is worst first.
+fn cutoff_after(order: &[(i64, bool)], cutoff: Option<i64>) -> Option<i64> {
+    let at = cutoff.and_then(|c| order.iter().position(|(id, _)| *id == c));
+    match at {
+        Some(at) if order[at].1 => None,
+        Some(at) => order[..at].iter().rev().chain(&order[at + 1..]).find(|(_, on)| *on).map(|(id, _)| *id),
+        None => order.iter().rev().find(|(_, on)| *on).map(|(id, _)| *id),
+    }
 }
 
 /// Puts remuxes back (Settings switch off): a resolution's remux is allowed
@@ -228,6 +242,20 @@ pub(crate) fn dub_format(_options: &[Value]) -> Value {
     ]})
 }
 
+/// The format's specifications already say what `want` says. Only what
+/// Chillarr sets is compared: the app adds keys of its own to every field
+/// (label, type, order...), so comparing whole fields always differed.
+fn same_specs(have: &Value, want: &Value) -> bool {
+    let (Some(h), Some(w)) = (have["specifications"].as_array(), want["specifications"].as_array()) else { return false };
+    h.len() == w.len()
+        && h.iter().zip(w).all(|(h, w)| {
+            ["name", "implementation", "negate", "required"].iter().all(|k| h[k] == w[k])
+                && w["fields"].as_array().into_iter().flatten().all(|wf| {
+                    h["fields"].as_array().into_iter().flatten().any(|hf| hf["name"] == wf["name"] && hf["value"] == wf["value"])
+                })
+        })
+}
+
 /// Gives a profile the dub format at `score`. True when it changed.
 pub(crate) fn score_format(p: &mut Value, format: i64, score: i64) -> bool {
     if !p["formatItems"].is_array() {
@@ -268,8 +296,7 @@ pub async fn no_dubs(app: &AppHandle) {
         let format = match existing {
             Some(mut c) => {
                 let fid = c["id"].as_i64();
-                let names = |v: &Value| v["specifications"].as_array().map(|s| s.iter().map(|x| (x["implementation"].clone(), x["fields"].clone())).collect::<Vec<_>>());
-                if names(&c) != names(&want) {
+                if !same_specs(&c, &want) {
                     c["specifications"] = want["specifications"].clone();
                     if let Some(f) = fid {
                         let _ = a.update(&format!("customformat/{f}"), &c).await;
@@ -584,7 +611,7 @@ async fn show_tmdb(tvdb: i64) -> Option<i64> {
 
 async fn anilist_trailer(id: i64) -> Option<String> {
     let q = json!({ "query": format!("{{ Media(id: {id}) {{ trailer {{ id site }} }} }}") });
-    let v: Value = http().post("https://graphql.anilist.co").json(&q).send().await.ok()?.json().await.ok()?;
+    let v = crate::media::anilist(&q).await.ok()?;
     (v["data"]["Media"]["trailer"]["site"] == "youtube").then(|| v["data"]["Media"]["trailer"]["id"].as_str().map(String::from)).flatten()
 }
 
@@ -1222,8 +1249,23 @@ mod tests {
         assert_eq!(p["items"][3]["allowed"], false);
         assert_eq!(p["items"][4]["allowed"], false);
         assert_eq!(p["items"][0]["allowed"], true);
-        assert_eq!(p["cutoff"], 19, "the cutoff moves to the best quality still allowed");
+        assert_eq!(p["cutoff"], 19, "a remux cutoff moves to the best allowed quality below it");
         assert!(!drop_disc_copies(&mut p), "nothing to change the second time");
+    }
+
+    #[test]
+    fn an_allowed_cutoff_stays_where_it_is() {
+        let mut p = json!({ "cutoff": 7, "items": [
+            { "quality": { "id": 7, "name": "Bluray-1080p" }, "items": [], "allowed": true },
+            { "quality": { "id": 19, "name": "Bluray-2160p" }, "items": [], "allowed": true },
+            { "quality": { "id": 31, "name": "Remux-2160p" }, "items": [], "allowed": true }
+        ]});
+        assert!(drop_disc_copies(&mut p));
+        assert_eq!(p["cutoff"], 7, "1080p cutoff in a 4K profile: no upgrading everything to 4K");
+        let order = [(1, false), (2, true), (3, false), (4, true)];
+        assert_eq!(cutoff_after(&order, Some(3)), Some(2), "best allowed below the old cutoff");
+        assert_eq!(cutoff_after(&[(1, false), (2, false), (3, true)], Some(1)), Some(3), "nothing below: nearest above");
+        assert_eq!(cutoff_after(&order, Some(99)), Some(4), "unknown cutoff: best allowed");
     }
 
     #[test]
@@ -1251,6 +1293,17 @@ mod tests {
         let re = specs[0]["fields"][0]["value"].as_str().unwrap();
         assert!(re.contains("hindi") && !re.contains("japanese") && !re.contains("english"));
         assert_eq!(specs[1]["fields"][0]["value"], -2);
+        let mut have = f.clone();
+        for spec in have["specifications"].as_array_mut().unwrap() {
+            spec["id"] = json!(3);
+            for field in spec["fields"].as_array_mut().unwrap() {
+                field["label"] = json!("Value");
+                field["order"] = json!(0);
+            }
+        }
+        assert!(same_specs(&have, &f), "keys the app adds aren't a difference");
+        have["specifications"][0]["fields"][0]["value"] = json!("(?i)dub");
+        assert!(!same_specs(&have, &f));
         let mut p = json!({ "formatItems": [] });
         assert!(score_format(&mut p, 7, -10000));
         assert!(!score_format(&mut p, 7, -10000));

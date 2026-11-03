@@ -40,8 +40,13 @@ const PORTS: [u16; 3] = [8694, 8695, 8696];
 const MAX_REQUEST: usize = 2 * 1024 * 1024;
 /// The whole request must arrive within this.
 const REQUEST_WAIT: Duration = Duration::from_secs(15);
-/// Connections at once, event streams included; more are dropped.
+/// And its head (with the sign-in) within this.
+const HEAD_WAIT: Duration = Duration::from_secs(5);
+/// Signed-in connections at once, event streams included; more are turned away.
 const MAX_CONNECTIONS: usize = 256;
+/// Connections not signed in yet (still sending, or being checked); more are
+/// dropped. Kept apart so strangers can't take the signed-in ones' room.
+const MAX_PENDING: usize = 32;
 /// How long Jellyfin's answer about a token is reused.
 const AUTH_TTL: Duration = Duration::from_secs(60);
 /// A token Jellyfin turned down is turned down without asking for this long.
@@ -58,6 +63,9 @@ const SHARED_EVENTS: [&str; 1] = ["get-progress"];
 /// Event streams one page may hold open. Browsers allow 6 connections to an
 /// address, so a page with many streams has none left for its calls.
 const MAX_STREAMS_PER_PAGE: usize = 2;
+/// Event streams one Jellyfin user may hold open, all their pages together,
+/// so one account can't take every connection. Households share accounts.
+const MAX_STREAMS_PER_USER: usize = 16;
 /// Jellyfin is asked about this many unknown tokens at once at most.
 const MAX_PROBES: usize = 8;
 /// Sign-ins remembered (good and bad); past this the bad ones go first.
@@ -182,6 +190,21 @@ fn streams() -> &'static Mutex<HashMap<String, usize>> {
     S.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+fn user_streams() -> &'static Mutex<HashMap<String, usize>> {
+    static S: OnceLock<Mutex<HashMap<String, usize>>> = OnceLock::new();
+    S.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Counts one more stream for this page and this user, unless either is full.
+fn open_stream(pages: &mut HashMap<String, usize>, users: &mut HashMap<String, usize>, page: &str, user: &str) -> bool {
+    if pages.get(page).is_some_and(|n| *n >= MAX_STREAMS_PER_PAGE) || users.get(user).is_some_and(|n| *n >= MAX_STREAMS_PER_USER) {
+        return false;
+    }
+    *pages.entry(page.to_string()).or_insert(0) += 1;
+    *users.entry(user.to_string()).or_insert(0) += 1;
+    true
+}
+
 fn auth_cache() -> &'static Mutex<HashMap<(String, String), (Instant, Known)>> {
     static C: OnceLock<Mutex<HashMap<(String, String), (Instant, Known)>>> = OnceLock::new();
     C.get_or_init(|| Mutex::new(HashMap::new()))
@@ -261,7 +284,7 @@ enum Need {
 /// that name to `item_ids`, or its item skips the visibility check.
 fn need(cmd: &str) -> Option<Need> {
     Some(match cmd {
-        "web_viewer" | "media_status" | "media_rows" | "media_episodes" | "media_search" | "media_search_live" | "media_play" | "media_report" | "media_get" | "media_get_picked" | "media_seasons" | "media_trailer"
+        "web_viewer" | "media_status" | "media_rows" | "media_episodes" | "media_search" | "media_search_live" | "media_play" | "media_report" | "media_forget_resume" | "media_get" | "media_get_picked" | "media_seasons" | "media_trailer"
         | "media_explore" | "media_filter" | "media_filter_genres" | "media_filter_studios" | "media_anime_tags" | "media_details" | "media_similar" | "media_my_list" | "media_my_list_marks" | "media_completed"
         | "media_watched_keys" | "completed_remove" | "media_show_episodes" | "marker_set" | "marker_restart" | "media_segments" | "subs_search" | "subs_download" | "subs_sync" | "subs_choice" | "subs_set"
         | "media_waiting" | "media_downloads" | "watchnow_start" | "watchnow_leave" | "watchnow_progress" | "watchnow_list" | "syncplay_info" | "syncplay_call" | "syncplay_tile"
@@ -329,6 +352,7 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
         "media_search_live" => ok(crate::search::live(app.clone(), arg(a, "term")?, arg(a, "seq")?).await),
         "media_play" => res(media::play(app, &arg::<String>(a, "id")?, arg(a, "start")?, arg(a, "audio")?, arg(a, "subtitle")?).await),
         "media_report" => res(media::report(app, &arg::<String>(a, "what")?, arg(a, "body")?).await),
+        "media_forget_resume" => res(media::forget_resume(app, &arg::<String>(a, "id")?).await),
         "media_get" => res(media::get_it(app, arg(a, "tile")?, arg::<Option<String>>(a, "quality")?.as_deref().unwrap_or("best")).await),
         "media_get_picked" => res(pick::get_picked(app, arg(a, "tile")?, arg::<Option<String>>(a, "quality")?.as_deref().unwrap_or("best"), arg(a, "pick")?).await),
         "media_seasons" => res(pick::seasons(app, &arg::<Tile>(a, "tile")?).await),
@@ -380,7 +404,7 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
         // The device is the one the request's sign-in came from, never one the page names.
         // Known by the key Chillarr gave the device (it keeps it); none or an
         // unknown one makes a new device, so a page can't take over another's.
-        "remote_device" => res(crate::remote::for_device(app, arg::<Option<String>>(a, "key")?.as_deref(), &arg::<Option<String>>(a, "name")?.unwrap_or_default(), arg::<Option<bool>>(a, "renew")?.unwrap_or(false))),
+        "remote_device" => res(crate::remote::for_device(app, arg::<Option<String>>(a, "key")?.as_deref(), &arg::<Option<String>>(a, "name")?.unwrap_or_default(), arg::<Option<bool>>(a, "renew")?.unwrap_or(false)).await),
         "profiles_add" => res(crate::profiles::add_web(app, &me.session.user_id, &arg::<String>(a, "name")?, &arg::<String>(a, "color")?, arg(a, "pin")?).await),
         "storage_overview" => ok(storage::overview(app).await),
         "storage_set_cleanup" => res(storage::set_cleanup(app, arg(a, "days")?)),
@@ -506,6 +530,7 @@ pub fn start(app: AppHandle) {
         PORT.store(port, Ordering::SeqCst);
         crate::jfweb::bridge_moved(&app);
         let slots = Arc::new(tokio::sync::Semaphore::new(MAX_CONNECTIONS));
+        let pending = Arc::new(tokio::sync::Semaphore::new(MAX_PENDING));
         loop {
             let Ok((sock, _)) = listener.accept().await else {
                 // Out of sockets: give some back before trying again.
@@ -513,11 +538,10 @@ pub fn start(app: AppHandle) {
                 continue;
             };
             // Full: the connection is dropped rather than queued.
-            let Ok(slot) = slots.clone().try_acquire_owned() else { continue };
-            let h = app.clone();
+            let Ok(waiting) = pending.clone().try_acquire_owned() else { continue };
+            let (h, slots) = (app.clone(), slots.clone());
             tauri::async_runtime::spawn(async move {
-                let _ = serve(h, sock).await;
-                drop(slot);
+                let _ = serve(h, sock, Gate { waiting, slots }).await;
             });
         }
     });
@@ -536,11 +560,35 @@ enum Read {
     Gone,
 }
 
+/// A connection's room: one of the few for strangers until Jellyfin knows it,
+/// then one of the many.
+struct Gate {
+    waiting: tokio::sync::OwnedSemaphorePermit,
+    slots: Arc<tokio::sync::Semaphore>,
+}
+
+impl Gate {
+    /// Signed in: trades the stranger's slot for a signed-in one. None when those are full.
+    fn signed_in(self) -> Option<tokio::sync::OwnedSemaphorePermit> {
+        let slot = self.slots.try_acquire_owned().ok();
+        drop(self.waiting);
+        slot
+    }
+}
+
+/// Whether a head of `head_end` bytes and a body of `len` pass the cap. A
+/// Content-Length near usize::MAX must not wrap around to a small sum.
+fn too_big(head_end: usize, len: usize) -> bool {
+    head_end.checked_add(len).is_none_or(|n| n > MAX_REQUEST)
+}
+
 async fn read_request(sock: &mut TcpStream) -> std::io::Result<Read> {
     let mut buf = Vec::with_capacity(2048);
     let mut chunk = [0u8; 8192];
+    let head_by = tokio::time::Instant::now() + HEAD_WAIT;
     let (head_end, len) = loop {
-        let n = sock.read(&mut chunk).await?;
+        let Ok(n) = tokio::time::timeout_at(head_by, sock.read(&mut chunk)).await else { return Ok(Read::Gone) };
+        let n = n?;
         if n == 0 {
             return Ok(Read::Gone);
         }
@@ -548,7 +596,7 @@ async fn read_request(sock: &mut TcpStream) -> std::io::Result<Read> {
         if let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
             let head = String::from_utf8_lossy(&buf[..i]).to_string();
             let len = header(&head, "content-length").and_then(|v| v.parse::<usize>().ok()).unwrap_or(0);
-            if i + 4 + len > MAX_REQUEST {
+            if too_big(i + 4, len) {
                 return Ok(Read::TooBig);
             }
             break (i + 4, len);
@@ -621,7 +669,7 @@ fn query(path: &str) -> HashMap<String, String> {
         .unwrap_or_default()
 }
 
-async fn serve(app: AppHandle, mut sock: TcpStream) -> std::io::Result<()> {
+async fn serve(app: AppHandle, mut sock: TcpStream, gate: Gate) -> std::io::Result<()> {
     let Ok(read) = tokio::time::timeout(REQUEST_WAIT, read_request(&mut sock)).await else { return Ok(()) };
     let (head, body) = match read? {
         Read::Request(h, b) => (h, b),
@@ -639,7 +687,7 @@ async fn serve(app: AppHandle, mut sock: TcpStream) -> std::io::Result<()> {
         let q = query(path);
         let get = |k: &str| q.get(k).cloned().unwrap_or_default();
         let claim = Claim { token: get("token"), device: get("device"), page: get("page"), origin: String::new() };
-        return events(app, sock, origin, claim, get("remote")).await;
+        return events(app, sock, origin, claim, get("remote"), gate).await;
     }
     let Some(cmd) = path.strip_prefix("/invoke/").filter(|c| !c.is_empty() && c.len() <= 64 && c.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')) else {
         return error(&mut sock, origin, "404 Not Found", "Not here").await;
@@ -657,6 +705,9 @@ async fn serve(app: AppHandle, mut sock: TcpStream) -> std::io::Result<()> {
         Ok(v) => v,
         Err(AuthError::Signin) => return error(&mut sock, origin, "401 Unauthorized", "Sign in to Jellyfin again.").await,
         Err(AuthError::Down) => return error(&mut sock, origin, "503 Service Unavailable", "Jellyfin isn't answering.").await,
+    };
+    let Some(_slot) = gate.signed_in() else {
+        return error(&mut sock, origin, "503 Service Unavailable", "Chillarr is busy. Try again in a moment.").await;
     };
     let Some(n) = need(cmd) else {
         return error(&mut sock, origin, "403 Forbidden", "That's only in the Chillarr app on the PC.").await;
@@ -697,13 +748,16 @@ async fn serve(app: AppHandle, mut sock: TcpStream) -> std::io::Result<()> {
 /// The event stream for one page: its own searches and the shared events,
 /// until it closes or its token stops working. With the phone remote's key
 /// for this device (`remote`), the remote's presses for it too.
-async fn events(app: AppHandle, mut sock: TcpStream, origin: Option<&str>, claim: Claim, remote: String) -> std::io::Result<()> {
+async fn events(app: AppHandle, mut sock: TcpStream, origin: Option<&str>, claim: Claim, remote: String, gate: Gate) -> std::io::Result<()> {
     let v = match who(&app, &claim, false).await {
         Ok(v) => v,
         Err(AuthError::Signin) => return error(&mut sock, origin, "401 Unauthorized", "Sign in to Jellyfin again.").await,
         Err(AuthError::Down) => return error(&mut sock, origin, "503 Service Unavailable", "Jellyfin isn't answering.").await,
     };
-    // Counted until this stream ends, however it ends: per page, and per device.
+    let Some(_slot) = gate.signed_in() else {
+        return error(&mut sock, origin, "503 Service Unavailable", "Chillarr is busy. Try again in a moment.").await;
+    };
+    // Counted until this stream ends, however it ends: per page, per user, and per device.
     struct Open(&'static Mutex<HashMap<String, usize>>, String);
     impl Drop for Open {
         fn drop(&mut self) {
@@ -717,22 +771,15 @@ async fn events(app: AppHandle, mut sock: TcpStream, origin: Option<&str>, claim
         }
     }
     let key = format!("{}/{}", v.session.user_id, v.page);
-    let full = {
-        let mut m = streams().lock().unwrap();
-        let n = m.entry(key.clone()).or_insert(0);
-        let full = *n >= MAX_STREAMS_PER_PAGE;
-        if !full {
-            *n += 1;
-        }
-        full
-    };
-    if full {
-        return error(&mut sock, origin, "429 Too Many Requests", "This page already has its event stream.").await;
+    let opened = open_stream(&mut streams().lock().unwrap(), &mut user_streams().lock().unwrap(), &key, &v.session.user_id);
+    if !opened {
+        return error(&mut sock, origin, "429 Too Many Requests", "Too many Chillarr pages are open for this account.").await;
     }
     let _open = Open(streams(), key);
+    let _user_open = Open(user_streams(), v.session.user_id.clone());
     // The phone remote's device, by the key Chillarr gave it: never the
     // Jellyfin device id, which any signed-in caller can claim.
-    let remote_id = (!remote.is_empty()).then(|| crate::remote::stream_device(&app, &remote)).flatten();
+    let remote_id = if remote.is_empty() { None } else { crate::remote::stream_device(&app, &remote, &v).await };
     let _device_open = remote_id.clone().map(|id| {
         *device_streams().lock().unwrap().entry(id.clone()).or_insert(0) += 1;
         Open(device_streams(), id)
@@ -864,6 +911,28 @@ mod tests {
         assert!(tv.for_stream("u1", "p1", "tv") && tv.for_stream("u2", "p9", "tv"));
         assert!(!tv.for_stream("u1", "p1", "phone"));
         assert!(!Ev { device: Some(String::new()), ..tv.clone() }.for_stream("u1", "p1", ""), "a stream without the remote's key hears none of it");
+    }
+
+    #[test]
+    fn one_account_cant_hold_every_stream() {
+        let (mut pages, mut users) = (HashMap::new(), HashMap::new());
+        assert!(open_stream(&mut pages, &mut users, "u1/p1", "u1"));
+        assert!(open_stream(&mut pages, &mut users, "u1/p1", "u1"));
+        assert!(!open_stream(&mut pages, &mut users, "u1/p1", "u1"), "a page's own cap");
+        let mut opened = 2;
+        for i in 0..100 {
+            opened += open_stream(&mut pages, &mut users, &format!("u1/new-page-{i}"), "u1") as usize;
+        }
+        assert_eq!(opened, MAX_STREAMS_PER_USER, "new page ids don't get past the account's cap");
+        assert!(open_stream(&mut pages, &mut users, "u2/p1", "u2"), "another account still gets in");
+    }
+
+    #[test]
+    fn a_huge_content_length_is_too_big_not_a_crash() {
+        assert!(!too_big(100, 1000));
+        assert!(too_big(100, MAX_REQUEST));
+        assert!(too_big(100, usize::MAX));
+        assert!(too_big(usize::MAX, 1));
     }
 
     #[test]

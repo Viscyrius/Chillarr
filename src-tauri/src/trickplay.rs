@@ -14,7 +14,11 @@ use serde_json::{json, Value};
 use std::path::Path;
 use tauri::{AppHandle, Manager};
 
-const DONE_FILE: &str = "trickplay-on";
+/// The libraries already turned on, one Jellyfin library id a line.
+const DONE_FILE: &str = "trickplay-libraries";
+/// The old once-per-PC marker. Where it exists, the libraries there now
+/// count as done, so one switched off by hand stays off.
+const OLD_DONE_FILE: &str = "trickplay-on";
 
 /// A library of real files: movies or shows, nowhere in Chillarr's own folder.
 pub fn is_real_library(lib: &Value, app_dir: &Path) -> bool {
@@ -24,28 +28,40 @@ pub fn is_real_library(lib: &Value, app_dir: &Path) -> bool {
         && lib["Locations"].as_array().is_some_and(|l| !l.is_empty() && l.iter().all(|p| !p.as_str().unwrap_or_default().to_lowercase().starts_with(&own)))
 }
 
-/// Once per PC: switched off by hand afterwards stays off.
+/// Once per library: one switched off by hand afterwards stays off, and a
+/// library added later still gets turned on.
 pub async fn ensure(app: &AppHandle) {
     let Some(data) = crate::media::data_dir(app) else { return };
-    if data.join(DONE_FILE).exists() {
-        return;
-    }
     let Some(j) = jf_admin(app).filter(|j| j.user_id.is_some()) else { return };
     let Ok(app_dir) = app.path().app_data_dir() else { return };
     let Ok(libs) = j.libraries().await else { return };
+    let real: Vec<&Value> = libs.iter().filter(|l| is_real_library(l, &app_dir)).collect();
+    let mut done: Vec<String> = std::fs::read_to_string(data.join(DONE_FILE)).unwrap_or_default().lines().map(String::from).collect();
+    let old = data.join(OLD_DONE_FILE);
+    if old.exists() {
+        done.extend(real.iter().filter_map(|l| l["ItemId"].as_str().map(String::from)));
+    }
+    let before = done.len();
     let mut turned_on = Vec::new();
-    for l in libs.iter().filter(|l| is_real_library(l, &app_dir)) {
-        let mut opts = l["LibraryOptions"].clone();
-        if opts["EnableTrickplayImageExtraction"] == true && opts["ExtractTrickplayImagesDuringLibraryScan"] == true {
+    for l in real {
+        let Some(id) = l["ItemId"].as_str() else { continue };
+        if done.iter().any(|d| d == id) {
             continue;
         }
-        opts["EnableTrickplayImageExtraction"] = json!(true);
-        opts["ExtractTrickplayImagesDuringLibraryScan"] = json!(true);
-        if j.post_json("/Library/VirtualFolders/LibraryOptions", &json!({ "Id": l["ItemId"], "LibraryOptions": opts })).await.is_err() {
-            // Tried again on the next check.
-            return;
+        let mut opts = l["LibraryOptions"].clone();
+        if opts["EnableTrickplayImageExtraction"] != true || opts["ExtractTrickplayImagesDuringLibraryScan"] != true {
+            opts["EnableTrickplayImageExtraction"] = json!(true);
+            opts["ExtractTrickplayImagesDuringLibraryScan"] = json!(true);
+            if j.post_json("/Library/VirtualFolders/LibraryOptions", &json!({ "Id": id, "LibraryOptions": opts })).await.is_err() {
+                // Tried again on the next check.
+                continue;
+            }
+            turned_on.push(l["Name"].as_str().unwrap_or("a library").to_string());
         }
-        turned_on.push(l["Name"].as_str().unwrap_or("a library").to_string());
+        done.push(id.to_string());
+    }
+    if done.len() == before && !old.exists() {
+        return;
     }
     if let Ok(mut cfg) = j.get_json("/System/Configuration").await {
         if cfg["TrickplayOptions"].is_object() && cfg["TrickplayOptions"]["EnableKeyFrameOnlyExtraction"] != true {
@@ -61,7 +77,9 @@ pub async fn ensure(app: &AppHandle) {
         }
         log(app, Level::Ok, format!("Jellyfin now makes preview pictures for the progress bar ({}). It works through your films in the background.", turned_on.join(", ")));
     }
-    let _ = std::fs::write(data.join(DONE_FILE), b"");
+    if crate::catalog::save_atomic(&data.join(DONE_FILE), &(done.join("\n") + "\n")).is_ok() {
+        let _ = std::fs::remove_file(old);
+    }
 }
 
 /// The player's view of an item's preview pictures: one sheet holds

@@ -64,14 +64,21 @@ function linkOf(f) {
   return `#filter/${f.kind}/${encodeURIComponent(JSON.stringify(out))}`;
 }
 
+// The page's pending reload; one page at a time.
+let reloadTimer = null;
+
 export async function renderFilter(view, kind, start, mode = null, want = 0) {
   stopBrowse();
+  clearTimeout(reloadTimer);
+  const drawSeq = currentSeq();
   const f = { ...BLANK, ...start };
   // Links from before genres could be combined carry one "genre".
   if (f.genre) { f.genres = [...new Set([...(f.genres || []), f.genre])]; delete f.genre; }
   f.kind = KINDS.some(([k]) => k === kind) ? kind : "movie";
 
   let [genres, studios] = await Promise.all([invoke("media_filter_genres", { kind: f.kind }).catch(() => []), studiosOf(f.kind)]);
+  // Another page was opened while these loaded.
+  if (drawSeq !== currentSeq()) return;
   const page = el("div", { class: "fl enter" });
   const bar = el("div", { class: "fl-bar" });
   const results = el("div", { class: "fl-results" });
@@ -80,7 +87,6 @@ export async function renderFilter(view, kind, start, mode = null, want = 0) {
   // Coming back (browse.js swapIn), the old page stays up until this one has as many results as when you left.
   if (!mode) view.replaceChildren(page);
 
-  let reloadTimer = null;
   /** Shows the change on the controls now and reloads the results a moment later (several clicks, one load). */
   async function change(mut, { now = false } = {}) {
     const kindBefore = f.kind;
@@ -91,12 +97,14 @@ export async function renderFilter(view, kind, start, mode = null, want = 0) {
       Object.assign(f, { genres: [], not_genres: [], status: null, ...ANIME_ONLY, ...CATALOG_ONLY });
       if (f.kind === "anime" || kindBefore === "anime") Object.assign(f, { languages: [], not_languages: [] });
       [genres, studios] = await Promise.all([invoke("media_filter_genres", { kind: f.kind }).catch(() => []), studiosOf(f.kind)]);
+      if (!page.isConnected) return; // left meanwhile
     }
     // The entry's own state stays: it is how Back finds where you were (place.js).
     history.replaceState(history.state, "", linkOf(f));
     drawBar();
     clearTimeout(reloadTimer);
-    reloadTimer = setTimeout(loadResults, now ? 0 : 250);
+    // Not once you've left: its stopBrowse() would stop the new page's loading.
+    reloadTimer = setTimeout(() => { if (page.isConnected) loadResults(); }, now ? 0 : 250);
   }
 
   function loadResults(upTo = 0) {

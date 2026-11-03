@@ -155,13 +155,19 @@ pub async fn require_login_everywhere(app: &AppHandle) {
 }
 
 /// qBittorrent reads its login at start and rewrites its settings file on
-/// exit, so an open one is closed, changed and started again.
+/// exit, so an open one is closed, changed and started again. Process calls
+/// and file work, so off the async threads.
 async fn qbit(cfg: &crate::model::AppConfig, user: &str, password: &str) -> Result<(), String> {
+    let (cfg, user, password) = (cfg.clone(), user.to_string(), password.to_string());
+    tokio::task::spawn_blocking(move || qbit_now(&cfg, &user, &password)).await.map_err(|e| e.to_string())?
+}
+
+fn qbit_now(cfg: &crate::model::AppConfig, user: &str, password: &str) -> Result<(), String> {
     let dir = std::env::var_os("APPDATA").map(|p| std::path::PathBuf::from(p).join("qBittorrent")).ok_or("No AppData folder")?;
     let path = dir.join("qBittorrent.ini");
     let running = procs::process_running("qbittorrent.exe");
     if running {
-        tokio::task::spawn_blocking(|| procs::force_close("qbittorrent.exe")).await.ok();
+        procs::force_close("qbittorrent.exe");
     }
     let ini = match std::fs::read(&path) {
         Ok(bytes) => String::from_utf8(bytes).map_err(|_| "its settings file isn't plain text, so Chillarr left it alone".to_string())?,

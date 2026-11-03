@@ -313,20 +313,30 @@ async fn track_for(video: &Path) -> Result<Arc<Vec<i32>>, String> {
 fn memo_path(app: &AppHandle) -> Option<PathBuf> {
     crate::media::data_dir(app).map(|d| d.join("subsync.json"))
 }
+/// The answers, oldest first. A file from before that order was kept (a map
+/// by key) still reads, in key order.
+fn memo_read(p: &Path) -> Vec<(String, Fit)> {
+    let Ok(text) = std::fs::read_to_string(p) else { return vec![] };
+    serde_json::from_str::<Vec<(String, Fit)>>(&text)
+        .or_else(|_| serde_json::from_str::<BTreeMap<String, Fit>>(&text).map(|m| m.into_iter().collect()))
+        .unwrap_or_default()
+}
 fn memo_get(app: &AppHandle, key: &str) -> Option<Fit> {
-    let m: BTreeMap<String, Fit> = serde_json::from_str(&std::fs::read_to_string(memo_path(app)?).ok()?).ok()?;
-    m.get(key).copied()
+    memo_read(&memo_path(app)?).into_iter().find(|(k, _)| k == key).map(|(_, f)| f)
+}
+/// Adds or renews an answer as the newest; past `cap` the oldest go.
+fn memo_insert(m: &mut Vec<(String, Fit)>, key: String, fit: Fit, cap: usize) {
+    m.retain(|(k, _)| *k != key);
+    m.push((key, fit));
+    let extra = m.len().saturating_sub(cap);
+    m.drain(..extra);
 }
 fn memo_put(app: &AppHandle, key: String, fit: Fit) {
     let Some(p) = memo_path(app) else { return };
-    let mut m: BTreeMap<String, Fit> = std::fs::read_to_string(&p).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
-    m.insert(key, fit);
+    let mut m = memo_read(&p);
     // Old answers are only ever a re-check away; keep the file small.
-    while m.len() > 400 {
-        let first = m.keys().next().cloned().unwrap();
-        m.remove(&first);
-    }
-    let _ = std::fs::write(&p, serde_json::to_string(&m).unwrap_or_default());
+    memo_insert(&mut m, key, fit, 400);
+    let _ = crate::catalog::save_atomic(&p, &serde_json::to_string(&m).unwrap_or_default());
 }
 
 /// A subtitle file beside `video`, fixed in place when it's clearly off.
@@ -385,6 +395,21 @@ pub async fn sync(app: &AppHandle, j: &Jf, id: &str, index: i64, cues: Vec<(f64,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_memo_forgets_its_oldest_answer_not_the_newest() {
+        let mut m = Vec::new();
+        for k in ["m", "b", "z"] {
+            memo_insert(&mut m, k.into(), Fit::AS_IS, 2);
+        }
+        let keys: Vec<&str> = m.iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(keys, ["b", "z"], "the oldest goes, whatever its name");
+        memo_insert(&mut m, "a".into(), Fit::AS_IS, 2);
+        assert_eq!(m.last().unwrap().0, "a", "a new answer that sorts first stays");
+        memo_insert(&mut m, "z".into(), Fit::AS_IS, 2);
+        let keys: Vec<&str> = m.iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(keys, ["a", "z"], "renewed, not doubled");
+    }
 
     /// A film where people talk exactly during `lines`, with music between.
     fn film(lines: &[(f64, f64)], len: f64) -> Vec<i32> {

@@ -1,8 +1,8 @@
 // Routing between tabs, the top bar, search, and the first-run tutorial.
-import { $, el, invoke, screenMode, store, viewer, WEB, windowFull } from "./api.js";
+import { $, el, invoke, screenMode, setPerson, store, viewer, WEB, windowFull } from "./api.js";
 import { renderTab, renderSearch, renderExplore, stopBrowse } from "./browse.js";
 import { renderFilter } from "./filter.js";
-import { renderSettings } from "./settings.js";
+import { renderSettings, stopSettings } from "./settings.js";
 import { openSetup } from "./setup.js";
 import { startProfiles, startProfilesWeb } from "./profiles.js";
 import * as place from "./place.js";
@@ -35,6 +35,7 @@ function route(redraw = false) {
   const mode = redraw ? "redraw" : !fresh && place.has(id) ? "back" : null;
   if (!mode) window.scrollTo({ top: 0, behavior: "instant" });
   const want = mode ? place.cards(id) : 0;
+  if (tab !== "settings") stopSettings();
   let drawn;
   if (tab === "settings") { stopBrowse(); renderSettings(view, hash.split("/")[1]); }
   else if (tab === "filter") {
@@ -60,6 +61,7 @@ function runSearch(term) {
     // Leaving the page for search: where you were is waiting when you come back.
     if (current !== "search") place.remember();
     current = "search";
+    stopSettings();
     document.querySelectorAll("[data-tab]").forEach((a) => a.classList.remove("on"));
     renderSearch(view, term);
     searched(term);
@@ -128,7 +130,7 @@ document.addEventListener("contextmenu", (e) => {
 /** Start in Jellyfin's web pages: no profiles, setup or app health, just the signed-in user. */
 async function startWeb() {
   document.body.classList.add("web");
-  try { Object.assign(viewer, await invoke("web_viewer")); }
+  try { Object.assign(viewer, await invoke("web_viewer")); setPerson(viewer.user_id); }
   catch (e) {
     view.replaceChildren(el("div", { class: "web-down" }, el("h1", { text: "Chillarr isn't answering" }), el("p", { text: String(e) }),
       el("button", { class: "btn primary", onclick: () => location.reload() }, "Try again")));

@@ -20,10 +20,12 @@ use tauri::{AppHandle, Manager};
 const ANIME_TTL: u64 = 6 * 60 * 60;
 /// Trending moves by the hour, so its rows are refreshed sooner.
 const ANIME_TRENDING_TTL: u64 = 2 * 60 * 60;
-/// AniList allows 30 requests a minute (measured 2026-10-17). A burst of
-/// ANILIST_BURST goes out at once, then one every ANILIST_GAP.
-const ANILIST_GAP: Duration = Duration::from_millis(2100);
-const ANILIST_BURST: f64 = 8.0;
+/// Filter results and Explore pages kept in memory (not saved).
+const ANIME_PAGES_KEPT: usize = 40;
+/// AniList allows 30 requests a minute (measured 2026-10-17): at most that
+/// many go out in any rolling ANILIST_WINDOW.
+const ANILIST_PER_WINDOW: usize = 30;
+const ANILIST_WINDOW: Duration = Duration::from_secs(60);
 /// How long Explore reuses the Jellyfin library it marks owned titles with.
 const LIBRARY_TTL: Duration = Duration::from_secs(60);
 /// Seed lists from Radarr's metadata server (keyless).
@@ -44,12 +46,12 @@ pub struct Media {
     locked: std::sync::atomic::AtomicBool,
     pub catalog: Mutex<crate::catalog::Catalog>,
     pub shows: Mutex<crate::catalog::Shows>,
-    /// AniList rows by "category#page": (fetched at, unix seconds; tiles). Saved
-    /// to anime.json so the Anime tab opens at once after a restart.
+    /// AniList rows by "category#page": (fetched at, unix seconds; tiles). The
+    /// tab's own rows and recommendations (see `kept_on_disk`) are saved to
+    /// anime.json so the Anime tab opens at once after a restart.
     anime: Mutex<HashMap<String, (u64, Vec<Tile>)>>,
-    /// AniList request budget: (requests left, when it was counted). Held while
-    /// waiting, so requests queue instead of tripping the rate limit.
-    anilist_budget: tokio::sync::Mutex<(f64, Instant)>,
+    /// Filter results and later pages: a few, in memory only, most recent last.
+    anime_pages: Mutex<std::collections::VecDeque<(String, (u64, Vec<Tile>))>>,
     /// Rows being refreshed in the background, so one isn't fetched twice.
     anime_refreshing: Mutex<HashSet<String>>,
     /// Titles a Download is following; the waiting list leaves their notice to it.
@@ -110,8 +112,13 @@ impl Media {
         Media {
             catalog: Mutex::new(crate::catalog::Catalog::load(&dir.join("catalog.json"))),
             shows: Mutex::new(crate::catalog::Shows::load(&dir.join("shows.json"))),
-            anime: Mutex::new(std::fs::read_to_string(dir.join("anime.json")).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()),
-            anilist_budget: tokio::sync::Mutex::new((ANILIST_BURST, Instant::now())),
+            anime: Mutex::new({
+                let mut rows: HashMap<String, (u64, Vec<Tile>)> =
+                    std::fs::read_to_string(dir.join("anime.json")).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+                rows.retain(|k, _| kept_on_disk(k));
+                rows
+            }),
+            anime_pages: Mutex::new(std::collections::VecDeque::new()),
             anime_refreshing: Mutex::new(HashSet::new()),
             following: Mutex::new(HashSet::new()),
             trailers: Mutex::new(HashMap::new()),
@@ -248,7 +255,37 @@ impl Media {
 
     fn save_anime(&self) {
         let text = serde_json::to_string(&*self.anime.lock().unwrap()).unwrap_or_default();
-        let _ = std::fs::write(self.dir.join("anime.json"), text);
+        let _ = crate::catalog::save_atomic(&self.dir.join("anime.json"), &text);
+    }
+
+    /// A saved AniList row, from anime.json's rows or the in-memory pages.
+    fn anime_get(&self, key: &str) -> Option<(u64, Vec<Tile>)> {
+        if kept_on_disk(key) {
+            return self.anime.lock().unwrap().get(key).cloned();
+        }
+        let mut pages = self.anime_pages.lock().unwrap();
+        let at = pages.iter().position(|(k, _)| k == key)?;
+        let hit = pages.remove(at)?;
+        pages.push_back(hit.clone());
+        Some(hit.1)
+    }
+
+    /// Keeps an AniList row; one of the tab's own is written to anime.json.
+    fn anime_put(&self, key: String, row: (u64, Vec<Tile>)) {
+        if kept_on_disk(&key) {
+            let save = !row.1.is_empty();
+            self.anime.lock().unwrap().insert(key, row);
+            if save {
+                self.save_anime();
+            }
+            return;
+        }
+        let mut pages = self.anime_pages.lock().unwrap();
+        pages.retain(|(k, _)| *k != key);
+        pages.push_back((key, row));
+        while pages.len() > ANIME_PAGES_KEPT {
+            pages.pop_front();
+        }
     }
 
     fn save(&self, s: &Session) {
@@ -380,8 +417,17 @@ pub async fn connect(app: &AppHandle, user: &str, password: &str) -> Result<(), 
         crate::jellyfin::JfError::Rejected => "That name or password is wrong".to_string(),
         e => e.to_string(),
     })?;
+    let fresh = app.state::<Media>().session.lock().unwrap().is_none();
     app.state::<Media>().save(&s);
     log(app, Level::Ok, format!("Signed in to Jellyfin as {user}."));
+    // No owner sign-in was kept (jellyfin.json is sealed like profiles.json,
+    // so they are lost together): this sign-in is the proof the lock waits for.
+    if fresh {
+        let admin = Jf::new(&j.base, &s.device_id, Some(&s)).get_json("/Users/Me").await.is_ok_and(|me| me["Policy"]["IsAdministrator"] == true);
+        if admin {
+            crate::profiles::owner_signed_in(app).await;
+        }
+    }
     if let Err(e) = ensure_libraries(app).await {
         log(app, Level::Amber, format!("Signed in, but couldn't add your folders to Jellyfin: {e}"));
     }
@@ -616,11 +662,18 @@ async fn add_fanart(app: &AppHandle, tiles: &mut [Tile]) {
     }
 }
 
+/// The Anime tab's own rows (page 1 of a named row) and recommendations are
+/// saved; filter results and further pages are not, or anime.json would grow
+/// with every filter anyone tried.
+fn kept_on_disk(key: &str) -> bool {
+    key.starts_with("recs:") || (!key.starts_with("q:") && key.ends_with("#1"))
+}
+
 /// One AniList row. A saved copy is returned at once; a stale one is
 /// refreshed in the background, so only a row never seen before waits.
 async fn anime_row(app: &AppHandle, category: &str, page: u32) -> Vec<Tile> {
     let key = format!("{category}#{page}");
-    let cached = app.state::<Media>().anime.lock().unwrap().get(&key).cloned();
+    let cached = app.state::<Media>().anime_get(&key);
     match cached {
         Some((at, tiles)) if !tiles.is_empty() => {
             let ttl = if category == "trending" { ANIME_TRENDING_TTL } else { ANIME_TTL };
@@ -648,57 +701,84 @@ async fn fetch_anime(app: &AppHandle, category: &str, page: u32) -> Vec<Tile> {
     let media = app.state::<Media>();
     // Another caller may have fetched this row a moment ago (checked again
     // once our turn with AniList comes, so queued callers share one answer).
-    let fresh = || media.anime.lock().unwrap().get(&key).filter(|(at, t)| !t.is_empty() && now_secs().saturating_sub(*at) < 60).map(|(_, t)| t.clone());
+    let fresh = || media.anime_get(&key).filter(|(at, t)| !t.is_empty() && now_secs().saturating_sub(*at) < 60).map(|(_, t)| t);
     if let Some(tiles) = fresh() {
         return tiles;
     }
-    let answer = anilist_post(app, &query, || fresh().is_some()).await;
+    let answer = anilist_post(&query, || fresh().is_some()).await;
     if let (None, Some(tiles)) = (&answer, fresh()) {
         return tiles;
     }
     let tiles: Vec<Tile> = answer.and_then(|v| v["data"]["Page"]["media"].as_array().cloned()).unwrap_or_default().iter().map(tiles::from_anilist).collect();
-    {
-        let mut cache = media.anime.lock().unwrap();
-        // Keep a good copy over an empty answer (AniList busy).
-        if tiles.is_empty() {
-            if let Some((_, good)) = cache.get(&key).filter(|(_, t)| !t.is_empty()) {
-                return good.clone();
-            }
+    // Keep a good copy over an empty answer (AniList busy).
+    if tiles.is_empty() {
+        if let Some((_, good)) = media.anime_get(&key).filter(|(_, t)| !t.is_empty()) {
+            return good;
         }
-        cache.insert(key, (now_secs(), tiles.clone()));
     }
-    if !tiles.is_empty() {
-        media.save_anime();
-    }
+    media.anime_put(key, (now_secs(), tiles.clone()));
     tiles
 }
 
-/// One AniList request, paced to its limit (30 a minute, shared by every
-/// caller). `answered` is asked once it's this caller's turn: true means
-/// someone queued ahead already got the answer, so nothing is sent (None).
-async fn anilist_post(app: &AppHandle, query: &Value, answered: impl Fn() -> bool) -> Option<Value> {
-    let media = app.state::<Media>();
-    let mut budget = media.anilist_budget.lock().await;
-    if answered() {
-        return None;
-    }
-    let refill = budget.1.elapsed().as_secs_f64() / ANILIST_GAP.as_secs_f64();
-    *budget = ((budget.0 + refill).min(ANILIST_BURST), Instant::now());
-    if budget.0 < 1.0 {
-        tokio::time::sleep(ANILIST_GAP.mul_f64(1.0 - budget.0)).await;
-        *budget = (1.0, Instant::now());
-    }
-    budget.0 -= 1.0;
-    match http().post("https://graphql.anilist.co").json(query).send().await {
-        Ok(r) if r.status().as_u16() == 429 => {
-            // Rate limited anyway: hold everyone back for as long as AniList asks.
-            let secs = r.headers().get("retry-after").and_then(|v| v.to_str().ok()?.parse::<f64>().ok()).unwrap_or(60.0).min(90.0);
-            budget.0 = -secs / ANILIST_GAP.as_secs_f64();
-            None
+/// When AniList requests went out (the last minute's), and how long a 429
+/// said to stop. One for the whole app: every AniList request goes through it.
+#[derive(Default)]
+struct AniListWindow {
+    sent: std::collections::VecDeque<Instant>,
+    hold_until: Option<Instant>,
+}
+
+impl AniListWindow {
+    /// How long from `now` until another request may go out (zero: at once).
+    fn wait(&mut self, now: Instant) -> Duration {
+        while self.sent.front().is_some_and(|t| now.saturating_duration_since(*t) >= ANILIST_WINDOW) {
+            self.sent.pop_front();
         }
-        Ok(r) => r.json::<Value>().await.ok(),
-        Err(_) => None,
+        let full = match self.sent.front() {
+            Some(oldest) if self.sent.len() >= ANILIST_PER_WINDOW => (*oldest + ANILIST_WINDOW).saturating_duration_since(now),
+            _ => Duration::ZERO,
+        };
+        let held = self.hold_until.map_or(Duration::ZERO, |h| h.saturating_duration_since(now));
+        full.max(held)
     }
+}
+
+static ANILIST: std::sync::OnceLock<tokio::sync::Mutex<AniListWindow>> = std::sync::OnceLock::new();
+
+/// One AniList request, paced to its limit (shared by every caller). Held
+/// while waiting and sending, so requests queue instead of tripping the
+/// limit. `answered` is asked once it's this caller's turn: true means
+/// someone queued ahead already got the answer, so nothing is sent (Ok(None)).
+async fn anilist_send(query: &Value, answered: impl Fn() -> bool) -> Result<Option<Value>, String> {
+    let mut window = ANILIST.get_or_init(Default::default).lock().await;
+    if answered() {
+        return Ok(None);
+    }
+    loop {
+        let wait = window.wait(Instant::now());
+        if wait.is_zero() {
+            break;
+        }
+        tokio::time::sleep(wait).await;
+    }
+    window.sent.push_back(Instant::now());
+    let r = http().post("https://graphql.anilist.co").json(query).send().await.map_err(|e| format!("AniList didn't answer: {e}"))?;
+    if r.status().as_u16() == 429 {
+        // Rate limited anyway: hold everyone back for as long as AniList asks.
+        let secs = r.headers().get("retry-after").and_then(|v| v.to_str().ok()?.parse::<f64>().ok()).unwrap_or(60.0).clamp(0.0, 90.0);
+        window.hold_until = Some(Instant::now() + Duration::from_secs_f64(secs));
+        return Err("AniList is busy. Try again in a minute.".into());
+    }
+    r.json::<Value>().await.map(Some).map_err(|e| format!("AniList sent something odd: {e}"))
+}
+
+/// One AniList request within the shared limit, for callers that just want the answer.
+pub(crate) async fn anilist(query: &Value) -> Result<Value, String> {
+    anilist_send(query, || false).await?.ok_or_else(|| "AniList didn't answer".into())
+}
+
+async fn anilist_post(query: &Value, answered: impl Fn() -> bool) -> Option<Value> {
+    anilist_send(query, answered).await.ok().flatten()
 }
 
 /// What a "Because you watched" row shows for one seed: a movie's TMDb
@@ -759,7 +839,7 @@ pub(crate) async fn anime_recs_now(app: &AppHandle, anilist: Option<i64>, title:
 /// render); a failed request is tried again in 5 minutes.
 async fn fetch_anime_recs(app: &AppHandle, anilist: Option<i64>, title: &str, key: &str) -> Vec<Tile> {
     let query = json!({ "query": crate::history::anilist_recs_query(anilist, title) });
-    let answer = anilist_post(app, &query, || false).await;
+    let answer = anilist_post(&query, || false).await;
     let tiles: Vec<Tile> = answer
         .as_ref()
         .and_then(|v| v["data"]["Media"]["recommendations"]["nodes"].as_array())
@@ -1171,13 +1251,7 @@ pub async fn anime_tags() -> Result<Vec<(String, String)>, String> {
     if !have.is_empty() {
         return Ok(have);
     }
-    let r = http()
-        .post("https://graphql.anilist.co")
-        .json(&json!({ "query": "{ MediaTagCollection { name category isAdult } }" }))
-        .send()
-        .await
-        .map_err(|e| format!("AniList didn't answer: {e}"))?;
-    let v: Value = r.json().await.map_err(|e| format!("AniList sent something odd: {e}"))?;
+    let v = anilist(&json!({ "query": "{ MediaTagCollection { name category isAdult } }" })).await?;
     let tags: Vec<(String, String)> = v["data"]["MediaTagCollection"]
         .as_array()
         .ok_or("AniList sent no tags")?
@@ -1429,6 +1503,13 @@ pub async fn scan(app: &AppHandle) -> Result<(), String> {
     j.scan().await.map_err(|e| e.to_string())?;
     log(app, Level::Ok, "Asked Jellyfin to scan the library for new files.");
     Ok(())
+}
+
+/// Takes a title off Continue watching for whoever is watching, the way
+/// Jellyfin's own apps do: its resume point goes back to the start.
+pub async fn forget_resume(app: &AppHandle, id: &str) -> Result<(), String> {
+    let j = jf(app).filter(|j| j.user_id.is_some()).ok_or("Sign in to Jellyfin first")?;
+    j.set_user_data(id, &serde_json::json!({ "PlaybackPositionTicks": 0 })).await.map_err(|e| e.to_string())
 }
 
 pub async fn report(app: &AppHandle, what: &str, body: Value) -> Result<(), String> {
@@ -1806,16 +1887,18 @@ pub async fn set_download_folder(app: &AppHandle, path: &str) -> Result<(), Stri
     if was_running {
         tokio::task::spawn_blocking(|| crate::procs::force_close("qbittorrent.exe")).await.ok();
     }
-    let ini = std::fs::read_to_string(&file).unwrap_or_default();
-    let forward = path.replace('\\', "/");
-    let ini = crate::wire::set_ini_value(&ini, "BitTorrent", "Session\\DefaultSavePath", &forward);
-    let ini = crate::wire::set_ini_value(&ini, "BitTorrent", "Session\\TempPathEnabled", "false");
-    std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(&file, ini)).map_err(|e| format!("Couldn't change qBittorrent's settings: {e}"))?;
+    let forward = crate::wire::qsettings_string(&path.replace('\\', "/"));
+    let written = crate::wire::IniFile::read(&file).and_then(|ini| {
+        let text = crate::wire::set_ini_value(&ini.text, "BitTorrent", "Session\\DefaultSavePath", &forward);
+        let text = crate::wire::set_ini_value(&text, "BitTorrent", "Session\\TempPathEnabled", "false");
+        ini.write(&file, &text)
+    });
     if was_running {
         if let Some(exe) = app.state::<Core>().config(AppId::QBittorrent).and_then(|c| c.exe) {
             let _ = crate::procs::start_qbit(&exe);
         }
     }
+    written.map_err(|e| format!("Couldn't change qBittorrent's settings: {e}"))?;
     log(app, Level::Ok, format!("Downloads now go to {path}."));
     Ok(())
 }
@@ -1856,7 +1939,7 @@ pub async fn add_indexer(app: &AppHandle, definition: &str) -> Result<String, St
     // so each of Prowlarr's other mirrors is tried before giving up.
     let mirrors: Vec<String> =
         item["indexerUrls"].as_array().map(|a| a.iter().filter_map(|u| u.as_str().map(String::from)).collect()).unwrap_or_default();
-    let mut result = p.create("indexer", &item).await.map(|_| ());
+    let mut result = p.create_tested("indexer", &item).await.map(|_| ());
     for mirror in mirrors.iter().skip(1) {
         let Err(e) = &result else { break };
         if !blocked_error(&e.to_string()) {
@@ -1864,7 +1947,7 @@ pub async fn add_indexer(app: &AppHandle, definition: &str) -> Result<String, St
         }
         log(app, Level::Amber, format!("{name} didn't get through. Trying its mirror {mirror}..."));
         item = crate::wire::fill_fields(item, &[("baseUrl", json!(mirror))]);
-        result = p.create("indexer", &item).await.map(|_| ());
+        result = p.create_tested("indexer", &item).await.map(|_| ());
     }
     result.map_err(|e| {
         let e = e.to_string();
@@ -1944,6 +2027,30 @@ fn blocked_error(e: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_the_tabs_own_anime_rows_are_saved() {
+        assert!(kept_on_disk("trending#1"));
+        assert!(kept_on_disk("genre:Action#1"));
+        assert!(kept_on_disk("recs:21"));
+        assert!(!kept_on_disk("trending#2"), "Explore's later pages");
+        assert!(!kept_on_disk("q:sort: SCORE_DESC, genre_in: [\"Drama\"]#1"), "filter results");
+    }
+
+    #[test]
+    fn anilist_never_gets_more_than_30_in_a_rolling_minute() {
+        let t0 = Instant::now();
+        let mut w = AniListWindow::default();
+        for i in 0..30 {
+            assert_eq!(w.wait(t0 + Duration::from_secs(i)), Duration::ZERO, "the first 30 go at once");
+            w.sent.push_back(t0 + Duration::from_secs(i));
+        }
+        assert_eq!(w.wait(t0 + Duration::from_secs(30)), Duration::from_secs(30), "the 31st waits for the first to leave the window");
+        assert_eq!(w.wait(t0 + Duration::from_secs(60)), Duration::ZERO);
+        assert_eq!(w.sent.len(), 29, "requests older than a minute are forgotten");
+        w.hold_until = Some(t0 + Duration::from_secs(100));
+        assert_eq!(w.wait(t0 + Duration::from_secs(60)), Duration::from_secs(40), "a 429 holds everyone back");
+    }
 
     #[test]
     fn download_folder_cant_add_ini_lines() {

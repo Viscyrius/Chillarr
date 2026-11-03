@@ -339,6 +339,8 @@ pub fn anilist_filter(f: &Filter) -> String {
     }
     if !f.tags.is_empty() {
         parts.push(format!("tag_in: {}", gql_list(f.tags.iter().map(String::as_str))));
+        // Same rank as the tag rows: a tag a show barely touches doesn't count.
+        parts.push("minimumTagRank: 70".into());
     }
     if !f.not_tags.is_empty() {
         parts.push(format!("tag_not_in: {}", gql_list(f.not_tags.iter().map(String::as_str))));
@@ -797,12 +799,14 @@ impl Catalog {
 }
 
 /// Writes to a temp file and moves it into place, so a crash mid-write never
-/// leaves a broken catalog behind.
-fn save_atomic(path: &Path, text: &str) -> Result<(), String> {
+/// leaves a broken file behind.
+pub(crate) fn save_atomic(path: &Path, text: &str) -> Result<(), String> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
-    let tmp = path.with_extension("json.tmp");
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".tmp");
+    let tmp = std::path::PathBuf::from(tmp);
     std::fs::write(&tmp, text).map_err(|e| e.to_string())?;
     std::fs::rename(&tmp, path).map_err(|e| e.to_string())
 }
@@ -1121,7 +1125,7 @@ mod tests {
             sort: "popular".into(),
             ..Default::default()
         });
-        for want in ["genre_in: [\"Action\", \"Ecchi\"]", "genre_not_in: [\"Horror\"]", "tag_in: [\"Isekai\", \"Boys' Love\"]", "format_in: [TV]", "status: RELEASING", "season: FALL", "episodes_greater: 12", "episodes_lesser: 27"] {
+        for want in ["genre_in: [\"Action\", \"Ecchi\"]", "genre_not_in: [\"Horror\"]", "tag_in: [\"Isekai\", \"Boys' Love\"]", "format_in: [TV]", "status: RELEASING", "season: FALL", "episodes_greater: 12", "episodes_lesser: 27", "minimumTagRank: 70"] {
             assert!(q.contains(want), "{want} missing from {q}");
         }
         assert!(!q.contains("bogus"));

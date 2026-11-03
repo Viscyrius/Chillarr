@@ -186,9 +186,12 @@ impl Arr {
         let mut out = Vec::new();
         for i in list.into_iter().filter(|i| !skip(i["name"].as_str().unwrap_or_default())) {
             let Some(id) = i["id"].as_i64() else { continue };
-            let body = self.send(self.http.post(self.url("indexer/test")).json(&i), TEST_TIMEOUT, true).await?;
-            // Passing: an empty answer. Failing: a 400 with the reasons.
-            let failures: Vec<Failure> = serde_json::from_str(&body).unwrap_or_default();
+            // Passing: an empty answer. Failing: a 400 with the reasons. A
+            // request that errors fails this site only, not the whole run.
+            let failures: Vec<Failure> = match self.send(self.http.post(self.url("indexer/test")).json(&i), TEST_TIMEOUT, true).await {
+                Ok(body) => serde_json::from_str(&body).unwrap_or_default(),
+                Err(e) => vec![Failure { error_message: e.to_string() }],
+            };
             out.push(TestResult { id, is_valid: failures.is_empty(), validation_failures: failures });
         }
         Ok(out)
@@ -261,6 +264,14 @@ impl Arr {
     pub async fn create(&self, path: &str, body: &serde_json::Value) -> Result<serde_json::Value, ArrError> {
         let req = self.http.post(self.url(&format!("{path}?forceSave=true"))).json(body);
         let text = self.send(req, REQUEST_TIMEOUT, false).await?;
+        Ok(serde_json::from_str(&text).unwrap_or(serde_json::Value::Null))
+    }
+
+    /// Adds an item only if the app's own test passes (no forceSave), so a
+    /// blocked site comes back as an error instead of being saved anyway.
+    pub async fn create_tested(&self, path: &str, body: &serde_json::Value) -> Result<serde_json::Value, ArrError> {
+        let req = self.http.post(self.url(path)).json(body);
+        let text = self.send(req, TEST_TIMEOUT, false).await?;
         Ok(serde_json::from_str(&text).unwrap_or(serde_json::Value::Null))
     }
 

@@ -224,7 +224,8 @@ fn sha256_file(path: &Path) -> Option<String> {
 
 /// Downloads Meilisearch and checks it before anything runs it.
 async fn download(app: &AppHandle, d: &Path) -> Result<(), String> {
-    if exe(d).is_file() && hash_ok(sha256_file(&exe(d)).as_deref()) {
+    let have = exe(d);
+    if have.is_file() && hash_ok(tokio::task::spawn_blocking(move || sha256_file(&have)).await.ok().flatten().as_deref()) {
         return Ok(());
     }
     std::fs::create_dir_all(d).map_err(|e| format!("Couldn't make its folder: {e}"))?;
@@ -232,10 +233,11 @@ async fn download(app: &AppHandle, d: &Path) -> Result<(), String> {
     let http = reqwest::Client::builder().timeout(Duration::from_secs(30 * 60)).build().map_err(|e| e.to_string())?;
     let mut resp = http.get(EXE_URL).send().await.and_then(|r| r.error_for_status()).map_err(|e| format!("Couldn't download it: {e}"))?;
     let part = d.join("meilisearch.exe.part");
-    let mut file = std::fs::File::create(&part).map_err(|e| format!("Couldn't save it: {e}"))?;
+    let mut file = tokio::fs::File::create(&part).await.map_err(|e| format!("Couldn't save it: {e}"))?;
     while let Some(chunk) = resp.chunk().await.map_err(|e| format!("The download broke off: {e}"))? {
-        std::io::Write::write_all(&mut file, &chunk).map_err(|e| format!("Couldn't save it: {e}"))?;
+        tokio::io::AsyncWriteExt::write_all(&mut file, &chunk).await.map_err(|e| format!("Couldn't save it: {e}"))?;
     }
+    tokio::io::AsyncWriteExt::flush(&mut file).await.map_err(|e| format!("Couldn't save it: {e}"))?;
     drop(file);
     let part2 = part.clone();
     let sum = tokio::task::spawn_blocking(move || sha256_file(&part2)).await.ok().flatten();

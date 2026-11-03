@@ -83,6 +83,8 @@ pub fn parse_qbit_save_path(ini: &str) -> Option<String> {
         }
         if section == "BitTorrent" {
             if let Some(v) = line.strip_prefix("Session\\DefaultSavePath=") {
+                // QSettings quotes a value with a comma in it.
+                let v = v.strip_prefix('"').and_then(|v| v.strip_suffix('"')).unwrap_or(v);
                 let p = v.replace("\\\\", "\\").replace('/', "\\");
                 let p = p.trim_end_matches('\\').to_string();
                 return (!p.is_empty()).then_some(p);
@@ -308,6 +310,7 @@ mod tests {
         let ini2 = "[BitTorrent]\nSession\\DefaultSavePath=D:/Torrents/\n";
         assert_eq!(parse_qbit_save_path(ini2).as_deref(), Some(r"D:\Torrents"));
         assert_eq!(parse_qbit_save_path("[WebUI]\nPort=1\n"), None);
+        assert_eq!(parse_qbit_save_path("[BitTorrent]\nSession\\DefaultSavePath=\"D:/Films, TV\"\n").as_deref(), Some(r"D:\Films, TV"));
     }
 
     #[test]

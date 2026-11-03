@@ -1,6 +1,7 @@
 // Settings: the six apps and Fix everything, indexers, library folders,
 // app paths, the Jellyfin account and streaming, general options, logs.
 import { $, ask, el, icon, ICON, invoke, LABEL, ORDER, store, toast, viewer, WEB } from "./api.js";
+import { startProfiles } from "./profiles.js";
 import { openSetup } from "./setup.js";
 import { setSubScale, subScale } from "./subrender.js";
 
@@ -28,14 +29,21 @@ const WHERE = {
 };
 
 let unsub = null;
+let settingsSeq = 0;
+
+/** Leaving Settings: its live lists stop listening. */
+export function stopSettings() {
+  settingsSeq++;
+  if (unsub) unsub();
+  unsub = null;
+}
 
 export function renderSettings(view, section = "system") {
   // Library and Storage were two pages; old links open the merged one.
   if (section === "storage") section = "library";
   const sections = WEB ? WEB_SECTIONS() : SECTIONS;
   if (!sections.some(([id]) => id === section)) section = sections[0][0];
-  if (unsub) unsub();
-  unsub = null;
+  stopSettings();
   const nav = el("nav", { class: "settings-nav", "aria-label": "Settings" }, el("h1", { text: "Settings" }),
     sections.map(([id, name]) => el("button", { class: id === section ? "on" : "", onclick: () => (location.hash = `settings/${id}`) }, name)));
   const panel = el("section", { class: "panel" });
@@ -157,7 +165,11 @@ export async function suggestions(onAdded) {
 
 async function indexers(panel) {
   const table = el("tbody");
-  const test = el("button", { class: "btn ghost", onclick: async () => { test.disabled = true; test.textContent = "Testing..."; draw(await invoke("test_indexers")); test.disabled = false; test.textContent = "Test all"; } }, "Test all");
+  const test = el("button", { class: "btn ghost", onclick: async () => {
+    test.disabled = true;
+    test.textContent = "Testing...";
+    try { draw(await invoke("test_indexers")); } catch (e) { toast(String(e), true); } finally { test.disabled = false; test.textContent = "Test all"; }
+  } }, "Test all");
   const cell = (c) => {
     if (!c) return el("td", { class: "none", text: "Not used" });
     const td = el("td", { title: c.reason });
@@ -405,7 +417,7 @@ async function account(panel) {
   if (ms.signed_in) {
     panel.append(el("div", { class: "box" },
       el("div", { class: "opt" }, el("span", {}, el("b", { text: `Signed in as ${ms.user}` }), el("small", { text: "Chillarr uses this account to play and track what you watch." })),
-        el("button", { class: "btn small ghost", onclick: async () => { await invoke("media_sign_out"); renderSettings($("#view"), "account"); } }, "Sign out"))));
+        el("button", { class: "btn small ghost", onclick: async () => { await invoke("media_sign_out"); renderSettings($("#view"), "account"); window.dispatchEvent(new Event("chillarr:refresh")); } }, "Sign out"))));
   } else {
     const user = el("input", { type: "text", autocomplete: "username", value: "" });
     const pass = el("input", { type: "password", autocomplete: ms.setup_done ? "current-password" : "new-password" });
@@ -419,6 +431,8 @@ async function account(panel) {
         toast(loginSummary(await invoke("apps_set_login", { user: user.value.trim(), password: pass.value }).catch(() => []), "Jellyfin is ready."));
         renderSettings($("#view"), "account");
         window.dispatchEvent(new Event("chillarr:refresh"));
+        // Still locked (a PIN, or the main profile's password): ask who's watching.
+        startProfiles().catch(() => {});
       }
       catch (e) { err.textContent = String(e); go.disabled = false; }
     });
@@ -483,14 +497,19 @@ function searchBlock() {
 function shelfBlock() {
   const box = el("div", { class: "shelf-block" }, el("h2", { text: "TV and Jellyfin apps", style: "margin-top:36px;font-size:1.2rem" }));
   const draw = (st) => {
+    // A change that fails puts everything back as it was, and says why.
+    const change = async (input, call) => {
+      if (input) input.disabled = true;
+      try { draw(await call); } catch (e) { toast(String(e), true); draw(st); }
+    };
     const on = el("input", { type: "checkbox", class: "switch" });
     on.checked = st.on;
-    on.addEventListener("input", async () => { on.disabled = true; draw(await invoke("shelf_set", { on: on.checked, seriesMode: null })); });
+    on.addEventListener("input", () => change(on, invoke("shelf_set", { on: on.checked, seriesMode: null })));
     const brand = el("input", { type: "checkbox", class: "switch" });
     brand.checked = st.brand;
-    brand.addEventListener("input", async () => { brand.disabled = true; draw(await invoke("shelf_brand", { on: brand.checked })); });
+    brand.addEventListener("input", () => change(brand, invoke("shelf_brand", { on: brand.checked })));
     const seg = el("div", { class: "segmented", role: "group", "aria-label": "When a show is favourited" },
-      [["season1", "Season 1"], ["all", "Whole show"]].map(([v, t]) => el("button", { class: st.series_mode === v ? "on" : "", onclick: async () => draw(await invoke("shelf_set", { on: st.on, seriesMode: v })) }, t)));
+      [["season1", "Season 1"], ["all", "Whole show"]].map(([v, t]) => el("button", { class: st.series_mode === v ? "on" : "", onclick: () => change(null, invoke("shelf_set", { on: st.on, seriesMode: v })) }, t)));
     const count = st.on
       ? `${st.movies} movies and ${st.series} series on the shelf${st.requested.length ? `. On their way: ${st.requested.slice(0, 4).join(", ")}${st.requested.length > 4 ? ` and ${st.requested.length - 4} more` : ""}.` : "."}`
       : "Off.";
@@ -732,8 +751,15 @@ function webGeneral(panel) {
 async function logs(panel) {
   const list = el("ol", { class: "log" });
   const item = (l) => el("li", { dataset: { level: l.level } }, el("time", { text: l.at }), el("span", { text: l.text }));
-  const all = await invoke("get_logs");
+  const seq = settingsSeq;
+  const all = await invoke("get_logs").catch(() => []);
+  // Another section (or page) opened while they loaded.
+  if (seq !== settingsSeq) return;
   list.replaceChildren(...all.map(item));
   panel.append(el("h2", { text: "Logs" }), el("p", { class: "sub", text: "What Chillarr did, newest first. API keys are hidden." }), list);
-  unsub = store.on((w) => { if (w === "logs") list.prepend(item(store.logs[0])); });
+  unsub = store.on((w) => {
+    if (w !== "logs") return;
+    list.prepend(item(store.logs[0]));
+    if (list.children.length > 500) list.lastChild.remove();
+  });
 }

@@ -246,6 +246,8 @@ pub struct Shelf {
     /// Held while the entries and their folders change (the hourly refresh,
     /// a search), so two changes never undo each other.
     busy: tokio::sync::Mutex<()>,
+    /// discover.json wouldn't read at start and was moved to discover.json.bad.
+    set_aside: bool,
 }
 
 #[derive(Serialize)]
@@ -313,7 +315,15 @@ fn swap_secret_in_placeholders(root: &std::path::Path, old: &str, new: &str) -> 
 pub fn safe_name(s: &str) -> String {
     let cleaned: String = s.chars().map(|c| if r#"<>:"/\|?*"#.contains(c) || c.is_control() { ' ' } else { c }).collect();
     let squashed = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
-    squashed.trim_end_matches(['.', ' ']).chars().take(90).collect()
+    // Cut first, then trimmed: Windows drops a trailing dot or space, so a
+    // name cut to end in one would never match its own folder.
+    let cut: String = squashed.chars().take(90).collect();
+    cut.trim_end_matches(['.', ' ']).to_string()
+}
+
+/// A folder name as Windows keeps it (no trailing dots or spaces).
+fn on_disk(name: &str) -> &str {
+    name.trim_end_matches(['.', ' '])
 }
 
 /// "Inception (2010) [tmdbid-27205]"; shows match by TMDB id when known, else by name and year.
@@ -329,13 +339,53 @@ pub fn folder_for(kind: &str, title: &str, year: Option<i64>, tmdb: Option<i64>)
     s
 }
 
+/// The secret in a play address ("/d/<secret>/" or "/w/<secret>/").
+fn secret_in(text: &str) -> Option<String> {
+    let at = text.find("/d/").or_else(|| text.find("/w/"))? + 3;
+    let s = text.get(at..at + 32)?;
+    s.bytes().all(|b| b.is_ascii_hexdigit()).then(|| s.to_string())
+}
+
+/// The secret the placeholders under `root` were written with, from the first one found.
+fn secret_of_placeholders(root: &std::path::Path) -> Option<String> {
+    let mut dirs = vec![root.to_path_buf()];
+    while let Some(d) = dirs.pop() {
+        let Ok(rd) = std::fs::read_dir(&d) else { continue };
+        for f in rd.flatten() {
+            let p = f.path();
+            if p.is_dir() {
+                dirs.push(p);
+            } else if p.extension().is_some_and(|x| x.eq_ignore_ascii_case("strm")) {
+                if let Some(s) = std::fs::read_to_string(&p).ok().as_deref().and_then(secret_in) {
+                    return Some(s);
+                }
+            }
+        }
+    }
+    None
+}
+
 impl Shelf {
     pub fn load(dir: PathBuf) -> Shelf {
         let file = dir.join("discover.json");
-        let mut saved: Saved = std::fs::read_to_string(&file).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_else(|| Saved { on: true, brand: true, series_mode: season1(), ..Default::default() });
+        let had_file = file.exists();
+        let fresh = || Saved { on: true, brand: true, series_mode: season1(), ..Default::default() };
+        let mut set_aside = false;
+        let mut saved: Saved = match std::fs::read_to_string(&file) {
+            Ok(text) => serde_json::from_str(&text).unwrap_or_else(|_| {
+                // Kept for a look, and never saved over. The placeholders still
+                // hold the old secret: found, it's swapped for a new one below
+                // like any old secret, so they keep working.
+                set_aside = std::fs::rename(&file, file.with_extension("json.bad")).is_ok();
+                let old = serde_json::from_str::<Value>(&text).ok().and_then(|v| v["secret"].as_str().map(String::from));
+                let old = old.or_else(|| secret_of_placeholders(&dir.join(FOLDER))).or_else(|| secret_of_placeholders(&dir.join(crate::watchnow::LIBRARY)));
+                Saved { secret: old.unwrap_or_default(), ..fresh() }
+            }),
+            Err(_) => fresh(),
+        };
         let old = renew_secret(&mut saved);
-        let (new, had_file) = (saved.secret.clone(), file.exists());
-        let shelf = Shelf { dir: dir.join(FOLDER), file, saved: Mutex::new(saved), port: Mutex::new(None), busy: tokio::sync::Mutex::new(()) };
+        let new = saved.secret.clone();
+        let shelf = Shelf { dir: dir.join(FOLDER), file, saved: Mutex::new(saved), port: Mutex::new(None), busy: tokio::sync::Mutex::new(()), set_aside };
         if let Some(old) = old.filter(|_| had_file) {
             // Saved first: placeholders still holding the old secret are put
             // right by the next refresh even if the swap below is cut short.
@@ -346,9 +396,13 @@ impl Shelf {
         shelf
     }
 
+    /// Written whole under the lock: two saves at once (the play server and
+    /// the 30 s loop) can't interleave, and a crash leaves the last good file.
     fn store(&self) {
-        let text = serde_json::to_string(&*self.saved.lock().unwrap()).unwrap_or_default();
-        let _ = std::fs::write(&self.file, text);
+        let s = self.saved.lock().unwrap();
+        if let Ok(text) = serde_json::to_string(&*s) {
+            let _ = crate::catalog::save_atomic(&self.file, &text);
+        }
     }
 
     fn kind_dir(&self, kind: &str) -> PathBuf {
@@ -406,6 +460,23 @@ impl Shelf {
 
     fn remove(&self, e: &Entry) {
         let _ = std::fs::remove_dir_all(self.kind_dir(&e.kind).join(&e.folder));
+    }
+
+    /// Takes away the folders under Movies and Series no entry has (left by a
+    /// list that couldn't be read). Returns how many went.
+    fn remove_unknown(&self, entries: &[Entry]) -> usize {
+        let mut n = 0;
+        for kind in ["movie", "series"] {
+            let Ok(rd) = std::fs::read_dir(self.kind_dir(kind)) else { continue };
+            for f in rd.flatten() {
+                let name = f.file_name().to_string_lossy().into_owned();
+                let known = entries.iter().any(|e| e.kind == kind && on_disk(&e.folder).eq_ignore_ascii_case(on_disk(&name)));
+                if !known && f.path().is_dir() && std::fs::remove_dir_all(f.path()).is_ok() {
+                    n += 1;
+                }
+            }
+        }
+        n
     }
 
     /// The play server's port, once it's listening.
@@ -751,6 +822,45 @@ fn kept_searched(entries: &[Entry], now: u64, have: (&HashSet<i64>, &HashSet<i64
     v
 }
 
+/// A refresh's list (`keep`, worked out from `old`) put together with the list
+/// as it is now (`now`): a refresh only decides which titles are on the
+/// shelf and their episode layout; everything else (asked for, stopped,
+/// arrived) is taken from `now`. Also returns the titles that left meanwhile
+/// (their folders go again) and the ones asked for meanwhile that the
+/// refresh had taken off (their placeholders are written again).
+fn merge_refresh(old: &[Entry], keep: Vec<Entry>, now: &[Entry]) -> (Vec<Entry>, Vec<Entry>, Vec<Entry>) {
+    let find = |list: &[Entry], e: &Entry| list.iter().find(|x| x.kind == e.kind && x.id == e.id).cloned();
+    let (mut out, mut lost, mut back) = (Vec::new(), Vec::new(), Vec::new());
+    for k in keep {
+        match (find(now, &k), find(old, &k)) {
+            (Some(mut cur), Some(was)) => {
+                if k.episodes != was.episodes {
+                    cur.episodes = k.episodes.into_iter().filter(|x| !cur.arrived.contains(x)).collect();
+                }
+                cur.episodes_at = k.episodes_at.max(cur.episodes_at);
+                out.push(cur);
+            }
+            (Some(cur), None) => out.push(cur),
+            (None, Some(_)) => lost.push(k),
+            (None, None) => out.push(k),
+        }
+    }
+    for cur in now {
+        if out.iter().any(|x| x.kind == cur.kind && x.id == cur.id) {
+            continue;
+        }
+        match find(old, cur) {
+            None => out.push(cur.clone()),
+            Some(was) if cur.kept() && !was.kept() => {
+                out.push(cur.clone());
+                back.push(cur.clone());
+            }
+            Some(_) => {}
+        }
+    }
+    (out, lost, back)
+}
+
 fn movie_entry(t: &Tile, id: i64) -> Entry {
     Entry { kind: "movie".into(), id, folder: folder_for("movie", &t.title, t.year, Some(id)), title: t.title.clone(), year: t.year, requested: false, tmdb: Some(id), ..Default::default() }
 }
@@ -885,22 +995,43 @@ pub async fn refresh(app: &AppHandle) {
         }
         let _ = shelf.write(e, &base, &secret, !rewrite_all);
     }
-    {
+    // Merged into the list as it is now: a request or a stop made while the
+    // files were written stays.
+    let (lost, back, arrived) = {
         let mut s = shelf.saved.lock().unwrap();
-        s.entries = keep;
-        s.base = base;
+        let (entries, lost, back) = merge_refresh(&old, keep, &s.entries);
+        let arrived: Vec<Entry> = entries.iter().filter(|e| !e.arrived.is_empty()).cloned().collect();
+        s.entries = entries;
+        s.base = base.clone();
+        (lost, back, arrived)
+    };
+    // An episode that arrived meanwhile may have had its placeholder written again above.
+    for e in &arrived {
+        shelf.remove_episodes(e, &e.arrived);
     }
+    for e in &lost {
+        shelf.remove(e);
+    }
+    for e in &back {
+        let _ = shelf.write(e, &base, &secret, false);
+    }
+    gone.retain(|g| !back.iter().any(|b| b.kind == g.kind && b.id == g.id));
     shelf.store();
+    let entries = shelf.saved.lock().unwrap().entries.clone();
+    let swept = shelf.remove_unknown(&entries);
     drop(busy);
     if !unread.is_empty() {
         log(app, Level::Amber, format!("Couldn't read the episode lists of {} shows from Sonarr's metadata server; they're put on the Discover shelf (or brought up to date) on a later refresh.", unread.len()));
     }
-    if !added.is_empty() || !gone.is_empty() || rewrite_all || relaid > 0 {
+    if swept > 0 {
+        log(app, Level::Ok, format!("Took {swept} placeholders off the Discover shelf that its list didn't know about."));
+    }
+    if !added.is_empty() || !gone.is_empty() || rewrite_all || relaid > 0 || swept > 0 {
         let mates_added = added.iter().filter(|a| a.kind == "movie" && mates.iter().any(|m| m.tmdb == Some(a.id))).count();
         let note = if mates_added > 0 { format!(" ({mates_added} of them the rest of a film series)") } else { String::new() };
         let relaid_note = if relaid > 0 { format!(", episodes of {relaid} shows updated") } else { String::new() };
         log(app, Level::Ok, format!("Discover shelf in Jellyfin: {} new{note}, {} gone{relaid_note}.", added.len(), gone.len()));
-        let changed = |kind: &str| rewrite_all || (kind == "series" && relaid > 0) || added.iter().chain(gone.iter()).any(|e| e.kind == kind);
+        let changed = |kind: &str| rewrite_all || swept > 0 || (kind == "series" && relaid > 0) || added.iter().chain(gone.iter()).any(|e| e.kind == kind);
         let libs: Vec<String> = [("movie", &movies_lib), ("series", &series_lib)].into_iter().filter(|(k, _)| changed(k)).map(|(_, l)| l.clone()).collect();
         let folder = |e: &&Entry| win_path(&shelf.kind_dir(&e.kind).join(&e.folder));
         let (added, gone) = (added.iter().map(folder).collect(), gone.iter().map(folder).collect());
@@ -1283,7 +1414,9 @@ async fn clear_asked(j: &crate::jellyfin::Jf, users: &[String], item: &str) {
 ///
 /// So every 30 s a played placeholder is unmarked, for every Jellyfin user,
 /// while its real file isn't here yet (nobody has finished a film that isn't
-/// on the PC). Once Radarr or Sonarr has the file the mark is left alone.
+/// on the PC), or when the mark came from a play of the placeholder itself
+/// (`Streamed`), file or no file. Otherwise, once Radarr or Sonarr has the
+/// file, the mark is left alone: it came from a play of the real file.
 /// On purpose, the one real watch this undoes (a film streamed to the end from
 /// the shelf before Radarr imported it) is the safe way round: it shows as not
 /// watched, where the wrong way round the clean-up would delete it.
@@ -1293,7 +1426,7 @@ async fn unmark_placeholder_plays(app: &AppHandle) {
     let shelf = app.state::<Shelf>();
     for uid in all_users(&j).await {
         for lib in [&movies_lib, &series_lib] {
-            let q = format!("/Users/{uid}/Items?parentId={lib}&recursive=true&filters=IsPlayed&includeItemTypes=Movie,Episode&fields=Path&enableImages=false");
+            let q = format!("/Users/{uid}/Items?parentId={lib}&recursive=true&filters=IsPlayed&includeItemTypes=Movie,Episode&fields=Path&enableImages=false&enableUserData=true");
             let Ok(v) = j.get_json(&q).await else { continue };
             for it in v["Items"].as_array().into_iter().flatten() {
                 let (Some(id), Some(path)) = (it["Id"].as_str(), it["Path"].as_str()) else { continue };
@@ -1305,12 +1438,16 @@ async fn unmark_placeholder_plays(app: &AppHandle) {
                 if it["Type"] == "Episode" && ep.is_none() {
                     continue;
                 }
-                // Unknown counts as here: a real watched mark is never taken away.
-                if real_file_here(app, &e, ep).await != Some(false) {
+                // Played from the placeholder, before or after the file came: never a watch.
+                let at = chrono::DateTime::parse_from_rfc3339(it["UserData"]["LastPlayedDate"].as_str().unwrap_or_default()).map(|d| d.timestamp());
+                let from_shelf = at.is_ok_and(|at| placeholder_mark(&e.kind, e.id, ep, at));
+                // Otherwise unknown counts as here: a real watched mark is never taken away.
+                if !from_shelf && real_file_here(app, &e, ep).await != Some(false) {
                     continue;
                 }
                 if j.delete_path(&format!("/UserPlayedItems/{id}?userId={uid}")).await.is_ok() {
-                    log(app, Level::Ok, format!("{} was started and stopped before it had downloaded, and Jellyfin marked it watched. Chillarr took that back.", label(&e, ep)));
+                    let why = if from_shelf { "was played from the Discover shelf" } else { "was started and stopped before it had downloaded" };
+                    log(app, Level::Ok, format!("{} {why}, and Jellyfin marked it watched. Chillarr took that back.", label(&e, ep)));
                 }
             }
         }
@@ -1477,7 +1614,66 @@ impl Drop for Playing {
 }
 
 fn is_playing(e: &Entry) -> bool {
-    PLAYING.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|(k, id)| *k == e.kind && *id == e.id)
+    PLAYING.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|(k, id)| *k == e.kind && *id == e.id) || just_streamed(&e.kind, e.id, now_unix())
+}
+
+/// A placeholder the play server streamed a video for: which one, and from
+/// when to when (unix seconds). Jellyfin marks any stop of a placeholder as
+/// Played, and the mark is shared with the real file, so a film stopped at
+/// minute 10 from the shelf after it had arrived counted as watched (and the
+/// clean-up deleted it). A mark set during or after one of these is the
+/// placeholder's and is taken back; only a play of the real file counts.
+#[derive(Clone, Debug, PartialEq)]
+struct Streamed {
+    kind: String,
+    id: i64,
+    ep: Option<(i64, i64)>,
+    from: i64,
+    to: i64,
+}
+
+static STREAMED: Mutex<Vec<Streamed>> = Mutex::new(Vec::new());
+/// A Played mark this long after a placeholder play ended is still taken for its.
+const STREAMED_KEEP: i64 = 10 * 60;
+/// The title stays on the shelf this long after a play, so its mark is found
+/// on the placeholder (the 30 s loop) before the placeholder goes.
+const AFTER_PLAY: i64 = 2 * 60;
+/// Jellyfin's clock and the play server's are the same PC's, give or take this.
+const MARK_SLACK: i64 = 60;
+
+fn now_unix() -> i64 {
+    chrono::Utc::now().timestamp()
+}
+
+/// Adds one streamed read; a player's many reads of one play become one span.
+fn note_streamed(list: &mut Vec<Streamed>, s: Streamed) {
+    list.retain(|x| s.to - x.to < STREAMED_KEEP);
+    match list.iter_mut().find(|x| x.kind == s.kind && x.id == s.id && x.ep == s.ep) {
+        Some(x) => {
+            x.from = x.from.min(s.from);
+            x.to = x.to.max(s.to);
+        }
+        None => list.push(s),
+    }
+}
+
+fn streamed_mark(list: &[Streamed], kind: &str, id: i64, ep: Option<(i64, i64)>, at: i64, now: i64) -> bool {
+    list.iter().any(|x| x.kind == kind && x.id == id && x.ep == ep && now - x.to < STREAMED_KEEP && at >= x.from - MARK_SLACK)
+}
+
+/// Whether a Played mark set at `at` (unix seconds) on this title came from
+/// a play of its shelf placeholder: the watch log leaves it out.
+pub(crate) fn placeholder_mark(kind: &str, id: i64, ep: Option<(i64, i64)>, at: i64) -> bool {
+    streamed_mark(&STREAMED.lock().unwrap_or_else(|e| e.into_inner()), kind, id, ep, at, now_unix())
+}
+
+fn just_streamed(kind: &str, id: i64, now: i64) -> bool {
+    STREAMED.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|x| x.kind == kind && x.id == id && now - x.to < AFTER_PLAY)
+}
+
+fn streamed(kind: &str, id: i64, ep: Option<(i64, i64)>, from: i64) {
+    let s = Streamed { kind: kind.to_string(), id, ep, from, to: now_unix() };
+    note_streamed(&mut STREAMED.lock().unwrap_or_else(|e| e.into_inner()), s);
 }
 
 /// Asked-for titles that have arrived leave the shelf; the real one shows in
@@ -1626,6 +1822,9 @@ pub fn spawn(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
         // Let Jellyfin and the catalog come up first.
         tokio::time::sleep(Duration::from_secs(60)).await;
+        if app.state::<Shelf>().set_aside {
+            log(&app, Level::Amber, "The Discover shelf's saved list couldn't be read, so it starts over. The old file is kept as discover.json.bad.");
+        }
         let mut last_refresh: Option<std::time::Instant> = None;
         let mut tick = 0u64;
         loop {
@@ -2114,6 +2313,7 @@ async fn serve(app: AppHandle, mut sock: tokio::net::TcpStream, req: Req) -> std
     };
     let Some(entry) = entry else { return plain(&mut sock, "404 Not Found", "That title isn't on the shelf any more.").await };
     let _playing = Playing::start(kind, id);
+    let started = now_unix();
     let Some(ep) = ep else {
         // A movie.
         // A stopped title is read by Jellyfin in the background for a while after
@@ -2129,7 +2329,9 @@ async fn serve(app: AppHandle, mut sock: tokio::net::TcpStream, req: Req) -> std
         let Some(src) = find_source(&app, kind, id, deadline).await else {
             return plain(&mut sock, "503 Service Unavailable", "No copy is downloading yet. It's been asked for and shows up in your library when it's ready.").await;
         };
-        return stream_range(&mut sock, &req, &src, deadline).await;
+        let r = stream_range(&mut sock, &req, &src, deadline).await;
+        streamed(kind, id, None, started);
+        return r;
     };
     // One episode of a show: that episode is asked for, and only it.
     // In the library already: its placeholder is gone, an old read of it never asks.
@@ -2165,7 +2367,9 @@ async fn serve(app: AppHandle, mut sock: tokio::net::TcpStream, req: Req) -> std
     let Some(src) = find_source_for(&app, "series", id, Want::Episode(ep.0, ep.1), Lookup { hash: None, tune: true }, deadline).await else {
         return plain(&mut sock, "503 Service Unavailable", "No copy of this episode is downloading yet. It's been asked for and shows up in your library when it's ready.").await;
     };
-    stream_range(&mut sock, &req, &src, deadline).await
+    let r = stream_range(&mut sock, &req, &src, deadline).await;
+    streamed(kind, id, Some(ep), started);
+    r
 }
 
 /// The first and last byte a request gets of a `size`-byte video, or None when
@@ -2386,6 +2590,10 @@ mod tests {
         assert_eq!(folder_for("movie", "Inception", Some(2010), Some(27205)), "Inception (2010) [tmdbid-27205]");
         assert_eq!(safe_name("Mission: Impossible / Fallout?"), "Mission Impossible Fallout");
         assert_eq!(safe_name("Dots..."), "Dots");
+        // Cut to 90 where a space falls: the space goes too, as Windows would drop it.
+        let long = format!("{} tail", "a".repeat(89));
+        assert_eq!(safe_name(&long), "a".repeat(89));
+        assert_eq!(safe_name(&format!("{}. tail", "b".repeat(88))), "b".repeat(88));
         assert_eq!(folder_for("series", "Breaking Bad", Some(2008), None), "Breaking Bad (2008)");
     }
 
@@ -2754,5 +2962,71 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&ep).unwrap(), format!("http://localhost:8690/w/{kept}/tok"));
         assert_eq!(std::fs::read_to_string(&other).unwrap(), format!("/{old}/"), "only placeholders");
         assert_eq!(swap_secret_in_placeholders(dir.path(), "", &kept), 0);
+    }
+    #[test]
+    fn a_broken_list_is_set_aside_and_its_placeholders_keep_working() {
+        let dir = tempfile::tempdir().unwrap();
+        let old = "0123456789abcdef0123456789abcdef";
+        std::fs::write(dir.path().join("discover.json"), r#"{"secret":"half"#).unwrap();
+        let strm = dir.path().join(FOLDER).join("Movies").join("A (2000)").join("A (2000).strm");
+        std::fs::create_dir_all(strm.parent().unwrap()).unwrap();
+        std::fs::write(&strm, format!("http://1.2.3.4:8690/d/{old}/movie/1")).unwrap();
+        let shelf = Shelf::load(dir.path().to_path_buf());
+        assert!(shelf.set_aside && dir.path().join("discover.json.bad").exists());
+        let new = shelf.secret();
+        assert_ne!(new, old);
+        assert_eq!(std::fs::read_to_string(&strm).unwrap(), format!("http://1.2.3.4:8690/d/{new}/movie/1"), "the placeholder follows the new secret");
+        // Saved whole, it reads back.
+        let back: Saved = serde_json::from_str(&std::fs::read_to_string(dir.path().join("discover.json")).unwrap()).unwrap();
+        assert_eq!(back.secret, new);
+        // The lost list's folder isn't any entry's: it goes.
+        let e = Entry { kind: "movie".into(), id: 2, folder: "B (2001)".into(), ..Default::default() };
+        shelf.write(&e, "http://1.2.3.4:8690", &new, false).unwrap();
+        assert_eq!(shelf.remove_unknown(&[e.clone()]), 1);
+        assert!(!strm.exists() && shelf.strm_path(&e).exists());
+    }
+
+    #[test]
+    fn the_secret_is_read_from_a_play_address() {
+        let s = "0123456789abcdef0123456789abcdef";
+        assert_eq!(secret_in(&format!("http://h:1/d/{s}/series/5/1/1")).as_deref(), Some(s));
+        assert_eq!(secret_in(&format!("http://h:1/w/{s}/tok")).as_deref(), Some(s));
+        assert_eq!(secret_in("http://h:1/d/short/movie/1"), None);
+    }
+    #[test]
+    fn a_request_made_during_a_refresh_is_kept() {
+        let e = |id: i64| Entry { kind: "movie".into(), id, folder: format!("M{id}"), ..Default::default() };
+        let show = Entry { kind: "series".into(), id: 9, episodes: vec![(1, 1), (1, 2)], ..Default::default() };
+        let old = vec![e(1), e(2), e(3), show.clone()];
+        // The refresh keeps 1 and 3 and the show (new episode laid out), drops 2, adds 4.
+        let laid = Entry { episodes: vec![(1, 1), (1, 2), (1, 3)], episodes_at: Some(50), ..show.clone() };
+        let keep = vec![e(1), e(3), laid, e(4)];
+        // Meanwhile: 1 asked for, 2 asked for, 3 arrived and left, the show's E2 arrived, 5 searched for.
+        let now = vec![Entry { requested: true, ..e(1) }, Entry { requested: true, ..e(2) }, Entry { arrived: vec![(1, 2)], episodes: vec![(1, 1)], ..show }, e(5)];
+        let (out, lost, back) = merge_refresh(&old, keep, &now);
+        let ids: Vec<i64> = out.iter().map(|x| x.id).collect();
+        assert_eq!(ids, vec![1, 9, 4, 2, 5]);
+        assert!(out[0].requested, "the request isn't undone");
+        assert_eq!(out[1].episodes, vec![(1, 1), (1, 3)], "the new layout, minus what arrived");
+        assert_eq!(out[1].episodes_at, Some(50));
+        assert_eq!(lost.iter().map(|x| x.id).collect::<Vec<_>>(), vec![3]);
+        assert_eq!(back.iter().map(|x| x.id).collect::<Vec<_>>(), vec![2]);
+    }
+    #[test]
+    fn a_mark_from_a_placeholder_play_is_its_own() {
+        let mut list = Vec::new();
+        let read = |from: i64, to: i64| Streamed { kind: "movie".into(), id: 1, ep: None, from, to };
+        // One play, several reads: one span.
+        note_streamed(&mut list, read(1000, 1010));
+        note_streamed(&mut list, read(1005, 1600));
+        assert_eq!(list, vec![read(1000, 1600)]);
+        assert!(streamed_mark(&list, "movie", 1, None, 1610, 1620), "stopped at minute 10: the placeholder's");
+        assert!(!streamed_mark(&list, "movie", 1, None, 500, 1620), "a mark from before the play is the real file's");
+        assert!(!streamed_mark(&list, "movie", 2, None, 1610, 1620), "another title");
+        assert!(!streamed_mark(&list, "movie", 1, None, 1610, 1600 + STREAMED_KEEP), "long after, it's left alone");
+        let ep = Streamed { kind: "series".into(), id: 9, ep: Some((1, 2)), from: 100, to: 200 };
+        note_streamed(&mut list, ep);
+        assert!(streamed_mark(&list, "series", 9, Some((1, 2)), 210, 220));
+        assert!(!streamed_mark(&list, "series", 9, Some((1, 3)), 210, 220), "only that episode");
     }
 }

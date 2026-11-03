@@ -64,6 +64,13 @@ async fn installed(j: &Jf) -> Option<String> {
     v.as_array()?.iter().find(|p| p["Name"] == PLUGIN_NAME).map(|p| p["Version"].as_str().unwrap_or_default().to_string())
 }
 
+/// The pinned version (or newer) is in Jellyfin's plugin list, loaded or
+/// waiting for a restart. An upgrade lists the old copy too.
+async fn downloaded(j: &Jf) -> bool {
+    let Ok(v) = j.get_json("/Plugins").await else { return false };
+    v.as_array().into_iter().flatten().any(|p| p["Name"] == PLUGIN_NAME && at_least_pinned(p["Version"].as_str().unwrap_or_default()))
+}
+
 /// `a.b.c.d` as numbers, so 12.0.10.0 sorts above 12.0.5.0.
 fn version_parts(v: &str) -> Vec<u64> {
     v.split('.').map(|n| n.trim().parse().unwrap_or(0)).collect()
@@ -118,8 +125,20 @@ pub async fn ensure_plugin(app: &AppHandle) -> Option<String> {
         log(app, Level::Amber, format!("Jellyfin couldn't install Intro Skipper, so Skip intro stays off: {e}"));
         return None;
     }
-    // The install finishes in the background; then a restart loads it.
-    tokio::time::sleep(Duration::from_secs(6)).await;
+    // The download and unpack run in the background: restart only once the
+    // new version is listed (Jellyfin lists it before it loads it).
+    let mut there = false;
+    for _ in 0..90 {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        if downloaded(&j).await {
+            there = true;
+            break;
+        }
+    }
+    if !there {
+        log(app, Level::Amber, "Jellyfin didn't finish installing Intro Skipper. Press Fix everything in a minute to try again.");
+        return None;
+    }
     let _ = j.post_json("/System/Restart", &json!({})).await;
     for _ in 0..60 {
         tokio::time::sleep(Duration::from_secs(2)).await;

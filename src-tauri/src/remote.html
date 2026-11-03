@@ -142,6 +142,7 @@
     try {
       const r = await fetch("/search", { method: "POST", headers: { "X-Pin": pin, "Content-Type": "application/json" }, body: JSON.stringify({ q }) });
       if (r.status === 401) { showPair("The code changed. Type the new one."); return; }
+      if (r.status === 409) { $("#getnote").textContent = offline(); return; }
       list = await r.json();
     } catch (e) { $("#getnote").textContent = LOST; return; }
     if (seq !== searchSeq) return;

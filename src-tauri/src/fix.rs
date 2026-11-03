@@ -487,7 +487,9 @@ async fn restart_if_stale(app: &AppHandle, id: AppId, passed: &[String], proxies
 
 /// Before starting anything: a qBittorrent whose Web UI is off can't be
 /// reached by Sonarr or Radarr. Switch it on in its settings file while it
-/// is closed (a running qBittorrent would overwrite the file on exit).
+/// is closed (a running qBittorrent would overwrite the file on exit). One
+/// whose file already has the Web UI on is left running: it is still
+/// starting, or listens on the port its file names.
 async fn wire_qbit_ini(app: &AppHandle, rep: &mut FixReport) {
     let Some(cfg) = app.state::<Core>().config(AppId::QBittorrent) else { return };
     let Some(exe) = cfg.exe.clone() else { return };
@@ -497,34 +499,71 @@ async fn wire_qbit_ini(app: &AppHandle, rep: &mut FixReport) {
     }
     let Some(dir) = std::env::var_os("APPDATA").map(|p| std::path::PathBuf::from(p).join("qBittorrent")) else { return };
     let path = dir.join("qBittorrent.ini");
-    let ini = std::fs::read_to_string(&path).unwrap_or_default();
+    let ini = match crate::wire::IniFile::read(&path) {
+        Ok(ini) => ini,
+        Err(e) => return log(app, Level::Red, format!("Couldn't check qBittorrent's Web UI: {e}")),
+    };
     let port = cfg.base_url.rsplit(':').next().and_then(|p| p.parse().ok()).unwrap_or(8080);
-    let new = crate::wire::enable_webui(&ini, port);
-    if new == ini && !running {
+    let ini_port = crate::discover::parse_qbit_port(&ini.text);
+    let host = cfg.base_url.rsplit_once(':').map_or("http://localhost", |(h, _)| h).to_string();
+    let url = |p: u16| format!("{host}:{p}");
+    if crate::wire::enable_webui(&ini.text, port) == ini.text {
+        // Already on. qBittorrent reads its port from this file, so Chillarr
+        // follows the file rather than restarting it.
+        if let Some(p) = ini_port.filter(|p| *p != port) {
+            if let Some(c) = app.state::<Core>().configs.write().unwrap().iter_mut().find(|c| c.id == AppId::QBittorrent) {
+                c.base_url = url(p);
+            }
+            log(app, Level::Ok, format!("qBittorrent's Web UI is on port {p}, so Chillarr uses that."));
+        }
         return;
     }
     // qBittorrent rewrites its settings file when it exits, so an open one is
     // closed first, changed, then started again. Its torrents pick up again.
     if running {
         busy(app, AppId::QBittorrent, "Turning on its Web UI...");
-        tokio::task::spawn_blocking(|| procs::force_close("qbittorrent.exe")).await.ok();
+        close_qbit(&url(ini_port.unwrap_or(port))).await;
     }
-    let ini = std::fs::read_to_string(&path).unwrap_or(ini);
-    let new = crate::wire::enable_webui(&ini, port);
-    if std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(&path, new)).is_ok() {
-        let msg = format!("Turned on qBittorrent's Web UI (port {port}) so Sonarr, Radarr and Chillarr can reach it.");
-        log(app, Level::Ok, &msg);
-        rep.actions.push(msg);
+    let written = crate::wire::IniFile::read(&path).and_then(|ini| {
+        let new = crate::wire::enable_webui(&ini.text, port);
+        ini.write(&path, &new).map(|_| crate::discover::parse_qbit_port(&new).unwrap_or(port))
+    });
+    let mut now_on = ini_port.unwrap_or(port);
+    match written {
+        Ok(p) => {
+            now_on = p;
+            let msg = format!("Turned on qBittorrent's Web UI (port {p}) so Sonarr, Radarr and Chillarr can reach it.");
+            log(app, Level::Ok, &msg);
+            rep.actions.push(msg);
+        }
+        Err(e) => log(app, Level::Red, format!("Couldn't turn on qBittorrent's Web UI: {e}")),
     }
     if running {
         let since = qbit_log_now();
         let _ = procs::start_qbit(&exe);
-        if !procs::wait_until(&cfg.base_url, WAIT_QBIT_SECS).await {
+        if !procs::wait_until(&url(now_on), WAIT_QBIT_SECS).await {
             if let Some(why) = qbit_webui_failure(&since) {
                 log(app, Level::Red, format!("qBittorrent's Web UI didn't start. qBittorrent says: {why}"));
             }
         }
     }
+}
+
+/// Closes qBittorrent so its settings file can be changed: through its Web UI
+/// when that answers, else like closing its window, forced only after 10 s.
+async fn close_qbit(url: &str) {
+    if procs::port_open(url).await {
+        let asked = reqwest::Client::new().post(format!("{url}/api/v2/app/shutdown")).timeout(Duration::from_secs(5)).send().await;
+        if asked.is_ok_and(|r| r.status().is_success()) {
+            for _ in 0..20 {
+                if !procs::process_running("qbittorrent.exe") {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+        }
+    }
+    tokio::task::spawn_blocking(|| procs::close_gently("qbittorrent.exe", Duration::from_secs(10))).await.ok();
 }
 
 /// Connects the apps to each other now (used before adding indexers).

@@ -9,6 +9,22 @@ export const viewer = { name: "", admin: !WEB, can_delete: !WEB };
 /** Deleting files, stopping downloads, removing Watch now titles. */
 export const canDelete = () => viewer.admin || viewer.can_delete;
 
+/* Settings kept on this device per person: the signed-in Jellyfin user on
+   the web, the active profile in the app ("" until known: the shared ones). */
+let person = "";
+export function setPerson(id) { person = id ? String(id) : ""; }
+export const personKey = () => person;
+/** A per-person setting. Someone with none of their own yet starts from the device's old shared one. */
+export function getPref(name) {
+  try {
+    const own = person ? localStorage.getItem(`${name}:${person}`) : null;
+    return own ?? localStorage.getItem(name);
+  } catch (e) { return null; }
+}
+export function setPref(name, value) {
+  try { localStorage.setItem(person ? `${name}:${person}` : name, value); } catch (e) { /* storage blocked */ }
+}
+
 export const $ = (sel, root = document) => root.querySelector(sel);
 
 /** Small element builder. Text always goes in as text, never as HTML. */
@@ -78,6 +94,10 @@ export function toast(msg, bad = false) {
   }, 4200);
 }
 
+/** The question on screen's answer, until it closes. */
+let answer = null;
+$("#ask").addEventListener("close", () => { const a = answer; answer = null; a?.($("#ask").returnValue === "yes"); });
+
 /** A themed yes/no question. Resolves true on yes. `no` names the other button. */
 export function ask(title, body, items = [], yes = "Install", no = "Not now") {
   $("#ask-title").textContent = title;
@@ -86,19 +106,31 @@ export function ask(title, body, items = [], yes = "Install", no = "Not now") {
   $("#ask button[value=no]").textContent = no;
   $("#ask-list").replaceChildren(...items.map((t) => el("li", { text: t })));
   const d = $("#ask");
+  // A question already up (or fading out) gives way: it answers now ("not
+  // yes" unless it had just closed on yes), and the dialog stays open for
+  // this one instead of closing under it.
+  const before = answer;
+  answer = null;
+  before?.((!d.open || d.classList.contains("closing")) && d.returnValue === "yes");
   d.returnValue = "";
-  if (d.open) { d.classList.remove("closing"); d.close(); }
-  d.showModal();
+  d.classList.remove("closing");
+  if (!d.open) d.showModal();
   d.querySelectorAll("button[value]").forEach((b) => (b.onclick = (e) => { e.preventDefault(); d.returnValue = b.value; closeDialog(d); }));
   $("#ask-yes").focus();
-  return new Promise((done) => d.addEventListener("close", () => done(d.returnValue === "yes"), { once: true }));
+  return new Promise((done) => (answer = done));
 }
 
-/** Closes a dialog with its fade-out instead of snapping shut. */
+/** Closes a dialog with its fade-out instead of snapping shut. Opened again
+ *  during the fade (the "closing" class taken off), it stays open. */
 export function closeDialog(d) {
   if (!d.open || d.classList.contains("closing")) return;
   d.classList.add("closing");
-  setTimeout(() => { d.classList.remove("closing"); d.close(); }, 200);
+  clearTimeout(d.shutTimer);
+  d.shutTimer = setTimeout(() => {
+    if (!d.classList.contains("closing")) return;
+    d.classList.remove("closing");
+    d.close();
+  }, 200);
 }
 
 export function fmtTime(s) {
@@ -133,7 +165,11 @@ export const store = {
 };
 
 listen("card", (e) => { store.cards.set(e.payload.id, e.payload); store.emit("cards"); });
-listen("log", (e) => { store.logs.unshift(e.payload); store.emit("logs"); });
+listen("log", (e) => {
+  store.logs.unshift(e.payload);
+  if (store.logs.length > 500) store.logs.length = 500;
+  store.emit("logs");
+});
 listen("fix-state", (e) => { store.fixing = e.payload; store.emit("fixing"); });
 listen("indexers", (e) => { store.indexers = e.payload; store.emit("indexers"); });
 

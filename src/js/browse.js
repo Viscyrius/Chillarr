@@ -1,10 +1,10 @@
 // Home, Movies, Series, Anime and My downloads: a hero, genre chips and rows
 // of posters; hover previews; Top 10; and "Explore all" pages that keep loading.
-import { $, canDelete, el, icon, ICON, invoke, listen, metaBits, store, toast } from "./api.js";
+import { $, canDelete, el, getPref, icon, ICON, invoke, listen, metaBits, personKey, store, toast } from "./api.js";
 import { openDetail, playShowNow } from "./detail.js";
 import { canWatchNow, confirmRemove, isWatchNow, movieLike, play, removeWatchNow, watchNow } from "./player.js";
-import { completedActions, confirmRedownload, listable, markWatched, onMyList, removeCompleted, setMyList } from "./mylist.js";
-import { goBack, remember } from "./place.js";
+import { completedActions, confirmRedownload, listable, markWatched, onMyList, removeCompleted, removeContinue, resumable, setMyList } from "./mylist.js";
+import { goBack, remember, restore } from "./place.js";
 
 const WIDE = new Set(["continue", "downloading"]);
 let refreshTimer;
@@ -25,7 +25,13 @@ export function stopBrowse() {
   clearTimeout(emptyTimer);
   clearInterval(refreshTimer);
   clearInterval(heroTimer);
+  heroShow = null;
+  for (const t of [...fitsWatched]) unwatchFits(t);
   hidePreview(true);
+  // A kept tab going out of view: its rows' sideways scroll is noted (taking
+  // a box out of the page loses it), and its entrances may play again later.
+  if (onScreen) { for (const t of tracksOf(onScreen)) t._left = t.scrollLeft; onScreen = null; }
+  $("#view").classList.remove("kept");
 }
 
 /** A title with no picture: a designed card with its name, tinted per title so a row of them isn't one grey block. */
@@ -76,8 +82,7 @@ async function cardPlay(t) {
 async function cardDownload(t) {
   if (!movieLike(t)) return openDetail(t, { get: true });
   if (!(await confirmRedownload(t))) return;
-  let quality = "best";
-  try { quality = localStorage.getItem("chillarr-quality") || "best"; } catch (e) { /* storage blocked */ }
+  const quality = getPref("chillarr-quality") || "best";
   try {
     toast(`${await invoke("media_get", { tile: t, quality })} You'll get a notification when it's ready.`);
     store.emit("added");
@@ -92,6 +97,7 @@ export function tile(t, wide = false, rank = 0) {
   const cap = el("div", { class: "cap" }, el("strong", { text: t.title }), t.subtitle ? ` · ${t.subtitle}` : t.year ? ` · ${t.year}` : "");
   const cls = ["tile", wide ? "wide" : "", rank ? "top10" : ""].filter(Boolean).join(" ");
   const b = el("button", { class: cls, "aria-label": t.title, dataset: { key: t.key } }, rank ? el("span", { class: "rank", "aria-hidden": "true", text: String(rank) }) : null, art(t, wide), rank ? null : cap);
+  b._tsig = `${rank}|${JSON.stringify(t)}`; // what it shows; a kept tab redraws a card only when this changes
   if (isWatchNow(t) && t.status && !rank) b.append(el("div", { class: "cap wn-state", text: t.status }));
   b.addEventListener("click", () => { hidePreview(true); open(t); });
   b.addEventListener("mouseenter", () => schedulePreview(b, t));
@@ -127,6 +133,14 @@ function cardPic(t) {
   return pic ? pic.replace("/w1280/", "/w780/").replace("/original/", "/w780/") : "";
 }
 
+/** Loads `src` into `img`; resolves once it can be drawn. decode() is Chrome 64: older ones wait for load. */
+function decoded(img, src) {
+  if (img.decode) { img.src = src; return img.decode(); }
+  const p = new Promise((done, fail) => { img.onload = done; img.onerror = fail; });
+  img.src = src;
+  return p;
+}
+
 const warmed = new Map();
 /** Starts fetching and decoding the card's picture before the card opens. */
 function warm(t) {
@@ -134,8 +148,8 @@ function warm(t) {
   if (!src || warmed.has(src)) return;
   const img = new Image();
   img.decoding = "async";
-  img.src = src;
-  warmed.set(src, img.decode().catch(() => {}));
+  const ready = decoded(img, src);
+  warmed.set(src, ready.catch(() => {}));
   if (warmed.size > 200) warmed.delete(warmed.keys().next().value);
 }
 
@@ -165,6 +179,7 @@ function previewCard(t) {
     else if (!t.status && canWatchNow(t)) actions.append(pill("Watch now", ICON.play, () => watchFrom(t)), round("", "Download", ICON.download, () => cardDownload(t)));
     else if (!t.status) actions.append(pill("Download", ICON.download, () => cardDownload(t)));
     if (listable(t)) actions.append(myListRound(t));
+    if (resumable(t)) actions.append(round("", "Remove from Continue watching", REMOVE, () => removeContinue(t)));
     if (t.completed) actions.append(round("", "Remove from Completed", REMOVE, () => removeCompleted(t)));
   }
   actions.append(el("span", { style: "flex:1" }));
@@ -356,10 +371,14 @@ function exploreHref(r) {
 const fitsWatcher = new ResizeObserver((entries) => {
   for (const e of entries) {
     const t = e.target;
-    if (!t.isConnected) { fitsWatcher.unobserve(t); continue; }
+    if (!t.isConnected) { unwatchFits(t); continue; }
     t.parentElement.classList.toggle("fits", t.scrollWidth - t.clientWidth < 48);
   }
 });
+// What it watches, so a page going away lets go of all of its rows.
+const fitsWatched = new Set();
+function watchFits(track) { fitsWatched.add(track); fitsWatcher.observe(track); }
+function unwatchFits(track) { fitsWatched.delete(track); fitsWatcher.unobserve(track); }
 
 function rowEl(r, i = 0) {
   const wide = WIDE.has(r.id);
@@ -370,7 +389,7 @@ function rowEl(r, i = 0) {
   const step = () => track.clientWidth * 0.85;
   const prev = el("button", { class: "arrow prev", "aria-label": "Scroll left", onclick: () => track.scrollBy({ left: -step(), behavior: "smooth" }) }, icon(ICON.left));
   const next = el("button", { class: "arrow next", "aria-label": "Scroll right", onclick: () => track.scrollBy({ left: step(), behavior: "smooth" }) }, icon(ICON.right));
-  fitsWatcher.observe(track);
+  watchFits(track);
   const head = el("div", { class: "row-head" }, el("h2", { text: r.title }),
     r.explore ? el("a", { class: "explore", href: exploreHref(r) }, "Explore all", icon(ICON.right)) : el("span", { class: "count", text: String(r.tiles.length) }));
   return el("section", { class: "row", dataset: { row: r.id }, id: `row-${r.id}`, style: `--i:${Math.min(i, 6)}` }, head, el("div", { class: "track-wrap" }, prev, track, next));
@@ -457,6 +476,8 @@ function hero(picks, keep = null) {
   const bgA = el("div", { class: "hero-bg", style: `background-image:${bgUrl(picks[at])}` });
   const bgB = el("div", { class: "hero-bg out" });
   const section = el("section", { class: "hero" }, bgA, bgB, heroCopy(picks[at]));
+  section.lastChild.classList.add("first"); // the copy a kept tab comes back with (styles.css)
+  section.picks = picks.map((p) => p.t.key).join("|");
   let front = bgA, back = bgB;
   // A press anywhere on the banner opens the title, like a card does. A drag
   // (to move between titles) or a press on a button doesn't.
@@ -467,6 +488,7 @@ function hero(picks, keep = null) {
     pressX = null;
     if (still && !e.target.closest("button, a")) openDetail(picks[at].t);
   });
+  section.resume = () => { heroShow = null; };
   if (picks.length < 2) return section;
   const dots = el("div", { class: "hero-dots" }, picks.map((_, i) => el("button", { class: i === at ? "on" : "", "aria-label": `Show featured title ${i + 1}`, onclick: () => show(i) })));
   // Arrows at the sides, a swipe or drag, or the arrow keys move between titles.
@@ -484,7 +506,11 @@ function hero(picks, keep = null) {
     if (e.key === "ArrowLeft" && e.target.closest(".hero-arrow")) { e.preventDefault(); show(at - 1); }
     if (e.key === "ArrowRight" && e.target.closest(".hero-arrow")) { e.preventDefault(); show(at + 1); }
   });
-  heroShow = (step) => document.body.contains(section) && show(at + step);
+  // Its rotation and keys, started again when a kept tab comes back.
+  section.resume = () => {
+    heroShow = (step) => document.body.contains(section) && show(at + step);
+    restart();
+  };
   function show(i) {
     at = (i + picks.length) % picks.length;
     heroKey = picks[at].t.key;
@@ -500,7 +526,7 @@ function hero(picks, keep = null) {
     clearInterval(heroTimer);
     heroTimer = setInterval(() => { if (!document.hidden && $("#player").hidden && !$("#detail").open && !preview && document.body.contains(section)) show(at + 1); }, 9000);
   }
-  restart();
+  section.resume();
   return section;
 }
 
@@ -519,16 +545,20 @@ function skeleton() {
   return [hero, el("div", { class: "rows", "aria-busy": "true" }, row(0), row(1), row(2))];
 }
 
-async function emptyState(tab) {
-  const ms = await invoke("media_status");
+async function emptyState(view, tab, seq) {
   const box = el("div", { class: "empty-state" });
+  let ms;
+  try { ms = await invoke("media_status"); } catch (err) {
+    box.append(el("h2", { text: "Couldn't load this page" }), el("p", { text: String(err) }), el("button", { class: "btn primary", onclick: () => renderTab(view, tab) }, "Try again"));
+    return box;
+  }
   if (!ms.signed_in && tab === "downloads") {
     box.append(el("h2", { text: "Your library lives in Jellyfin" }), el("p", { text: "Sign in to Jellyfin and your movies and series show up here, ready to play." }), el("a", { class: "btn primary", href: "#settings/account" }, "Set up Jellyfin"));
   } else if (tab === "downloads") {
     box.append(el("h2", { text: "Nothing downloaded yet" }), el("p", { text: "Pick something from Home and press Download." }), el("a", { class: "btn primary", href: "#home" }, "Find something"));
   } else {
     box.append(el("h2", { text: "Getting the catalog ready" }), el("p", { text: "Chillarr is gathering movies, series and anime for the first time. This takes a minute; the page fills in on its own." }));
-    emptyTimer = setTimeout(() => window.dispatchEvent(new Event("chillarr:refresh")), 20000);
+    if (seq === renderSeq) emptyTimer = setTimeout(() => window.dispatchEvent(new Event("chillarr:refresh")), 20000);
   }
   return box;
 }
@@ -569,11 +599,14 @@ async function fillDownloads(view, seq) {
   if (!slot) return;
   const list = await invoke("media_downloads").catch(() => null);
   if (seq !== renderSeq || !list) return;
+  const sig = sigFor(view, ".downloads-slot", list);
+  if (sig == null) return;
   const section = list.length
     ? stopSection("downloads", "Downloading now", null, list, canDelete() && ((d) => invoke("media_stop_download", { which: d.app, downloadId: d.download_id })))
     : el("div");
   section.classList.add("downloads-slot");
-  put(slot, section, seq);
+  section._sig = sig;
+  put(view.querySelector(".downloads-slot"), section, seq);
 }
 
 /** Watch now titles, each with Remove (My downloads and My List). */
@@ -582,11 +615,15 @@ async function fillWatchNow(view, seq) {
   if (!slot) return;
   const list = await invoke("watchnow_list").catch(() => []);
   if (seq !== renderSeq) return;
-  if (!list.length) { slot.replaceWith(el("div", { class: "watchnow-slot" })); return; }
+  const sig = sigFor(view, ".watchnow-slot", list);
+  if (sig == null) return;
+  const now = view.querySelector(".watchnow-slot");
+  if (!list.length) { now.replaceWith(Object.assign(el("div", { class: "watchnow-slot" }), { _sig: sig })); return; }
   const remove = async (w) => ((await confirmRemove(w.tile)) ? invoke("watchnow_remove", { key: w.tile.key }) : null);
   const section = stopSection("watchnow", "Watch now", "Playing while they download. Remove one to delete what's downloaded so far.", list.map((tile) => ({ tile })), remove, "Remove");
   section.classList.add("watchnow-slot");
-  put(slot, section, seq);
+  section._sig = sig;
+  put(now, section, seq);
 }
 
 /** The waiting list: what Radarr/Sonarr are still watching for, each with Stop. */
@@ -595,11 +632,15 @@ async function fillWaiting(view, seq) {
   if (!slot) return;
   const list = await invoke("media_waiting").catch(() => []);
   if (seq !== renderSeq) return;
+  const sig = sigFor(view, ".waiting-slot", list);
+  if (sig == null) return;
+  const slotNow = view.querySelector(".waiting-slot");
   const section = stopSection("enter", "Waiting list", "Chillarr keeps looking for these. The moment a copy is out, it downloads it and lets you know.",
     list.filter((w) => !(w.tile.status || "").startsWith("Downloading")), canDelete() && ((w) => invoke("media_stop_waiting", { which: w.app, id: w.id })));
   section.classList.add("waiting-slot");
-  if (section.querySelector(".wait-item")) put(slot, section, seq);
-  else slot.replaceWith(el("div", { class: "waiting-slot" }));
+  section._sig = sig;
+  if (section.querySelector(".wait-item")) put(slotNow, section, seq);
+  else slotNow.replaceWith(Object.assign(el("div", { class: "waiting-slot" }), { _sig: sig }));
 }
 
 /** A My List tile. One that isn't in the library says so on its poster (or where its download is). */
@@ -619,6 +660,8 @@ function completedTile(t, j) {
   return b;
 }
 
+let completedGone = null;
+
 /** My List > Completed: everything finished, still here or deleted. */
 function completedSection(list) {
   if (!list.length) return null;
@@ -627,9 +670,10 @@ function completedSection(list) {
     el("div", { class: "row-head" }, el("h2", { text: "Completed" })),
     el("p", { class: "note completed-note", text: "Everything you finished. Deleted ones can be downloaded again any time." }),
     grid);
-  // The last one taken off: the section goes too.
-  const gone = () => { if (!grid.querySelector(".tile")) { section.remove(); window.removeEventListener("chillarr:completed", gone); } };
-  window.addEventListener("chillarr:completed", gone);
+  // The last one taken off: the section goes too. One listener, for the section drawn last.
+  window.removeEventListener("chillarr:completed", completedGone);
+  completedGone = () => { if (!grid.querySelector(".tile")) { section.remove(); window.removeEventListener("chillarr:completed", completedGone); } };
+  window.addEventListener("chillarr:completed", completedGone);
   return section;
 }
 
@@ -638,11 +682,14 @@ async function fillCompleted(page, seq) {
   const list = await invoke("media_completed").catch(() => []);
   const slot = page.querySelector(".completed-slot");
   if (seq !== renderSeq || !slot) return;
-  if (!list.length) { slot.replaceWith(el("div", { class: "completed-slot" })); return; }
+  const sig = sigFor(page, ".completed-slot", list);
+  if (sig == null) return;
+  if (!list.length) { slot.replaceWith(Object.assign(el("div", { class: "completed-slot" }), { _sig: sig })); return; }
   // An empty list's big message gets smaller once there's something under it.
   page.querySelector(".empty-state")?.style.setProperty("padding", "4vh 0 2vh");
   const section = completedSection(list);
   section.classList.add("completed-slot");
+  section._sig = sig;
   put(slot, section, seq);
 }
 
@@ -710,6 +757,8 @@ let lazyChain = Promise.resolve();
 
 /** Lazy rows ask for their tiles one at a time as they come near, never all at once. */
 function watchLazyRows(view, rows, seq) {
+  lazyObserver?.disconnect();
+  lazyObserver = null;
   const lazy = rows.filter((r) => r.style === "lazy");
   if (!lazy.length) return;
   const byId = new Map(lazy.map((r) => [`row-${r.id}`, r]));
@@ -721,7 +770,8 @@ function watchLazyRows(view, rows, seq) {
       lazyChain = lazyChain.then(() => fillLazyRow(section, byId.get(section.id), seq));
     }
   }, { rootMargin: "600px 0px" });
-  for (const id of byId.keys()) { const s = document.getElementById(id); if (s) lazyObserver.observe(s); }
+  // Only the ones still waiting: a kept tab's filled rows stay as they are.
+  for (const id of byId.keys()) { const s = document.getElementById(id); if (s?.querySelector(".skel")) lazyObserver.observe(s); }
 }
 
 async function fillLazyRow(section, r, seq) {
@@ -731,6 +781,7 @@ async function fillLazyRow(section, r, seq) {
   if (!tiles.length) { section.remove(); return; }
   const n = rowEl({ ...r, tiles, style: null });
   n.style.animation = "none";
+  section.querySelectorAll(".track").forEach(unwatchFits);
   section.replaceWith(n);
 }
 
@@ -769,10 +820,227 @@ export function swapIn(view, nodes, mode) {
   if (mode) calm(view);
 }
 
+/* ---------- Kept tabs ---------- */
+// Each tab's last page (its nodes and the rows it was drawn from), per
+// person. Coming back to a tab puts it up at once, as it was left, with its
+// timers and observers started again; then it is asked for again behind the
+// scenes and only what changed is redrawn: a card whose facts changed, a row
+// that came or went, the hero when its titles changed. Six tabs at most.
+const pages = new Map(); // tab -> { kind: "rows" | "list", nodes, rows }
+let pagesFor = null; // whose they are, and whether Jellyfin was signed in
+let onScreen = null; // the kept page in #view now
+
+function* tracksOf(entry) {
+  for (const n of entry.nodes) yield* n.querySelectorAll(".row .track");
+}
+
+/** A slot showing `list` already: null (leave it). Otherwise what to mark its new contents with. */
+function sigFor(root, sel, list) {
+  const sig = JSON.stringify(list);
+  return root.querySelector(sel)?._sig === sig ? null : sig;
+}
+
+/** True when `rows` make a page (not "nothing here yet"). */
+function hasContent(tab, rows) {
+  if (tab === "mylist") return true;
+  const content = rows.filter((r) => !r.id.startsWith("library") && r.id !== "downloading" && r.id !== "continue");
+  return rows.length > 0 && (tab === "downloads" || content.length > 0);
+}
+
+function keep(tab, kind, nodes, rows) {
+  const entry = { kind, nodes, rows };
+  pages.set(tab, entry);
+  onScreen = entry;
+  return entry;
+}
+
+/** The parts of a page that fill in later, asked for again. */
+function fillSlots(view, tab, seq) {
+  if (tab === "downloads") { fillDownloads(view, seq); fillWatchNow(view, seq); fillWaiting(view, seq); }
+  if (tab === "mylist") { fillWatchNow(view, seq); fillCompleted(view, seq); }
+}
+
+/** A kept page back on screen: where its rows were, and its timers and observers going again. */
+function resume(view, tab, entry, seq) {
+  onScreen = entry;
+  for (const t of tracksOf(entry)) { if (t._left) t.scrollLeft = t._left; watchFits(t); }
+  if (entry.kind === "rows") {
+    entry.nodes[0].resume?.();
+    watchLazyRows(view, entry.rows, seq);
+  }
+  fillSlots(view, tab, seq);
+  startRefresh(view, tab, entry, seq);
+}
+
+/** What keeps a page current while it's up: the downloads list, and rows with downloads or My List in them. */
+function startRefresh(view, tab, entry, seq) {
+  clearInterval(refreshTimer);
+  if (tab === "downloads") {
+    refreshTimer = setInterval(() => { if (!document.hidden && $("#player").hidden) fillDownloads(view, seq); }, 15000);
+  } else if (entry.kind === "rows" && entry.rows.some((r) => r.id === "downloading" || r.id === "mylist")) {
+    refreshTimer = setInterval(() => {
+      if (document.hidden || !$("#player").hidden || $("#detail").open || preview) return;
+      refreshPage(view, tab, entry, seq);
+    }, 20000);
+  }
+}
+
+/** Asks for a kept page's rows again and redraws only what changed. */
+async function refreshPage(view, tab, entry, seq) {
+  const fresh = await invoke("media_rows", { tab }).catch(() => null);
+  // Gone meanwhile, or the answer failed: the page stays as it is.
+  if (seq !== renderSeq || onScreen !== entry || !fresh) return;
+  if (JSON.stringify(fresh) === JSON.stringify(entry.rows)) return;
+  if (entry.kind === "rows" && hasContent(tab, fresh)) { patchRows(view, tab, entry, fresh, seq); return; }
+  // A list page (or one that has nothing now): drawn again, kept where you are.
+  pages.delete(tab);
+  onScreen = null;
+  await draw(view, tab, fresh, "redraw", seq);
+  if (seq === renderSeq) restore();
+}
+
+/** New cards fade in where they land (the entrance animations are for whole pages). */
+function fadeIn(n) {
+  n.style.animation = "none";
+  n.animate?.([{ opacity: 0 }, { opacity: 1 }], { duration: 260, easing: "ease-out" });
+}
+
+/** A row's cards, made like `r` says, keeping every card that shows the same thing (and its loaded picture). */
+function patchTrack(section, r) {
+  const track = section.querySelector(".track");
+  const wide = WIDE.has(r.id), top10 = r.style === "top10";
+  const old = new Map();
+  for (const b of track.children) if (b.dataset.key) old.set(b.dataset.key, b);
+  const nodes = r.tiles.map((t, j) => {
+    const rank = top10 ? j + 1 : 0;
+    const prev = old.get(t.key);
+    if (prev && prev._tsig === `${rank}|${JSON.stringify(t)}`) { old.delete(t.key); return prev; }
+    const b = tile(t, wide, rank);
+    fadeIn(b);
+    return b;
+  });
+  // Moved only where the order changed: a node taken out and put back starts its entrance again.
+  const left = track.scrollLeft;
+  for (const b of old.values()) b.remove();
+  nodes.forEach((b, i) => {
+    if (track.children[i] === b) return;
+    if (b.parentNode) b.style.animation = "none"; // a card moving along, not arriving
+    track.insertBefore(b, track.children[i] || null);
+  });
+  track.scrollLeft = left;
+  const count = section.querySelector(".row-head .count");
+  if (count) count.textContent = String(r.tiles.length);
+}
+
+/** A kept rows page brought up to `fresh`, in place. */
+function patchRows(view, tab, entry, fresh, seq) {
+  const [heroNow, box] = entry.nodes;
+  const picks = pickHeroes(fresh);
+  if (picks.map((p) => p.t.key).join("|") !== (heroNow.picks || "")) {
+    const h = hero(picks, heroKey);
+    heroNow.replaceWith(h);
+    entry.nodes[0] = h;
+  }
+  const genreIds = (rows) => rows.filter((r) => r.id.startsWith("genre-")).map((r) => r.id).join("|");
+  if (genreIds(fresh) !== genreIds(entry.rows)) box.querySelector(".genre-chips")?.replaceWith(chipBar(fresh, tab));
+  const before = new Map(entry.rows.map((r) => [r.id, r]));
+  const shown = new Map();
+  for (const n of box.children) if (n.dataset.row) shown.set(n.dataset.row, n);
+  const want = fresh.map((r, i) => {
+    const was = before.get(r.id), sec = shown.get(r.id);
+    shown.delete(r.id);
+    const same = was && JSON.stringify(was) === JSON.stringify(r);
+    if (sec && same) return sec;
+    // A row that came up empty when it filled in (fillLazyRow) stays out.
+    if (!sec && same && r.style === "lazy") return null;
+    // Same row, new cards: only the cards that changed.
+    if (sec && was && r.style !== "lazy" && was.style !== "lazy" && r.title === was.title && r.explore === was.explore && r.style === was.style && sec.querySelector(".track")) {
+      patchTrack(sec, r);
+      return sec;
+    }
+    const n = rowEl(r, i);
+    fadeIn(n);
+    if (sec) {
+      // Drawn again where it was, at the same sideways scroll.
+      const left = sec.querySelector(".track")?.scrollLeft || 0;
+      sec.querySelectorAll(".track").forEach(unwatchFits);
+      sec.replaceWith(n);
+      const t = n.querySelector(".track");
+      if (left && t) t.scrollLeft = left;
+    }
+    return n;
+  });
+  for (const sec of shown.values()) { sec.querySelectorAll(".track").forEach(unwatchFits); sec.remove(); }
+  const order = want.filter(Boolean);
+  // The rows in order after the chips and the sign-in tip, moving only what's out of place.
+  const fixed = [...box.children].filter((n) => !n.dataset.row);
+  order.forEach((n, i) => {
+    const at = box.children[fixed.length + i];
+    if (at === n) return;
+    const left = n.querySelector(".track")?.scrollLeft || 0;
+    // A row moving up or down, not arriving: no entrance for it or its cards.
+    if (n.parentNode) for (const x of [n, ...n.querySelectorAll(".tile")]) x.style.animation = "none";
+    box.insertBefore(n, at || null);
+    if (left) n.querySelector(".track").scrollLeft = left;
+  });
+  entry.rows = fresh;
+  watchLazyRows(view, fresh, seq);
+  startRefresh(view, tab, entry, seq);
+}
+
+/** Builds a tab's page from its rows and puts it in (`mode` as for renderTab). */
+async function draw(view, tab, rows, mode, seq) {
+  if (tab === "mylist") {
+    const page = await myListPage(rows, seq);
+    if (!page || seq !== renderSeq) return;
+    swapIn(view, [page], mode);
+    keep(tab, "list", [page], rows);
+    return;
+  }
+  if (!hasContent(tab, rows)) {
+    pages.delete(tab);
+    const box = await emptyState(view, tab, seq);
+    if (seq === renderSeq) swapIn(view, [box], mode);
+    return;
+  }
+  if (tab === "downloads") {
+    const page = libraryPage(rows);
+    swapIn(view, [page], mode);
+    const entry = keep(tab, "list", [page], rows);
+    fillSlots(view, tab, seq);
+    startRefresh(view, tab, entry, seq);
+    return;
+  }
+  const h = hero(pickHeroes(rows), mode === "redraw" ? heroKey : null);
+  const banner = store.media && !store.media.signed_in
+    ? el("div", { class: "tip", style: "margin:0 var(--gutter) 28px" }, el("span", { text: "Sign in to Jellyfin to see your own movies and series here and play them." }), el("a", { class: "btn small primary", href: "#settings/account", style: "margin-left:auto" }, "Sign in"))
+    : null;
+  const box = el("div", { class: "rows" }, chipBar(rows, tab), banner, rows.map((r, i) => rowEl(r, i)));
+  swapIn(view, [h, box], mode);
+  const entry = keep(tab, "rows", [h, box], rows);
+  watchLazyRows(view, rows, seq);
+  startRefresh(view, tab, entry, seq);
+}
+
 export async function renderTab(view, tab, mode = null) {
   stopBrowse();
   const seq = renderSeq;
   quietSeq = mode ? seq : -1;
+  // Another profile, or Jellyfin signed in or out (the sign-in tip): nothing kept fits.
+  const owner = `${personKey()}|${store.media && !store.media.signed_in ? "tip" : ""}`;
+  if (pagesFor !== owner) { pages.clear(); pagesFor = owner; }
+  const kept = pages.get(tab);
+  if (kept) {
+    quietSeq = seq;
+    // `kept` tells styles.css to skip the entrances a node plays when put back
+    // (calm() can't stop them before Chrome 84).
+    view.classList.add("kept");
+    if (kept.nodes[0].parentNode !== view) view.replaceChildren(...kept.nodes);
+    calm(view);
+    resume(view, tab, kept, seq);
+    refreshPage(view, tab, kept, seq);
+    return;
+  }
   if (!mode) view.replaceChildren(...skeleton());
   let rows;
   try {
@@ -792,49 +1060,47 @@ export async function renderTab(view, tab, mode = null) {
   }
   // Something newer (another tab, a search) was drawn while this loaded.
   if (seq !== renderSeq) return;
-  if (tab === "mylist") {
-    const page = await myListPage(rows, seq);
-    if (page && seq === renderSeq) swapIn(view, [page], mode);
-    return;
+  await draw(view, tab, rows, mode, seq);
+}
+
+/* Remove from Continue watching (mylist.js): the card leaves every
+   Continue watching row, the one on screen with a short animation, and the
+   kept rows forget it so a redraw doesn't bring it back. */
+window.addEventListener("chillarr:forgot", (e) => {
+  const key = e.detail;
+  for (const entry of pages.values()) {
+    for (const r of entry.rows) if (r.id === "continue") r.tiles = r.tiles.filter((t) => t.key !== key);
   }
-  const content = rows.filter((r) => !r.id.startsWith("library") && r.id !== "downloading" && r.id !== "continue");
-  if (!rows.length || (tab !== "downloads" && !content.length)) {
-    const box = await emptyState(tab);
-    if (seq === renderSeq) swapIn(view, [box], mode);
-    return;
+  for (const b of document.querySelectorAll(`#view [data-row="continue"] .tile[data-key="${CSS.escape(key)}"]`)) dropCard(b);
+  for (const entry of pages.values()) {
+    if (entry === onScreen) continue;
+    for (const n of entry.nodes) for (const b of n.querySelectorAll(`[data-row="continue"] .tile[data-key="${CSS.escape(key)}"]`)) dropCard(b, false);
   }
-  if (tab === "downloads") {
-    swapIn(view, [libraryPage(rows)], mode);
-    fillDownloads(view, seq);
-    fillWatchNow(view, seq);
-    fillWaiting(view, seq);
-    refreshTimer = setInterval(() => { if (!document.hidden && $("#player").hidden) fillDownloads(view, seq); }, 15000);
-    return;
-  }
-  const h = hero(pickHeroes(rows), mode === "redraw" ? heroKey : null);
-  const banner = store.media && !store.media.signed_in
-    ? el("div", { class: "tip", style: "margin:0 var(--gutter) 28px" }, el("span", { text: "Sign in to Jellyfin to see your own movies and series here and play them." }), el("a", { class: "btn small primary", href: "#settings/account", style: "margin-left:auto" }, "Sign in"))
-    : null;
-  swapIn(view, [h, el("div", { class: "rows" }, chipBar(rows, tab), banner, rows.map((r, i) => rowEl(r, i)))], mode);
-  watchLazyRows(view, rows, seq);
-  if (rows.some((r) => r.id === "downloading" || r.id === "mylist")) {
-    refreshTimer = setInterval(async () => {
-      if (document.hidden || !$("#player").hidden || $("#detail").open || preview) return;
-      const fresh = await invoke("media_rows", { tab });
-      if (seq !== renderSeq) return;
-      for (const id of ["mylist", "downloading"]) {
-        const d = fresh.find((r) => r.id === id);
-        const old = view.querySelector(`[data-row="${id}"]`);
-        if (!old) continue;
-        const n = d ? rowEl(d) : el("span");
-        n.style.animation = "none";
-        const left = old.querySelector(".track")?.scrollLeft || 0;
-        old.replaceWith(n);
-        // Fresh tiles, same sideways scroll.
-        if (left) n.querySelector?.(".track")?.scrollTo({ left, behavior: "instant" });
-      }
-    }, 20000);
-  }
+});
+
+/** Takes a card out of its row: it fades and shrinks, then the cards after it close the gap. The row goes with its last card. */
+function dropCard(b, animate = true) {
+  const row = b.closest(".row");
+  const done = () => {
+    b.remove();
+    const left = row?.querySelectorAll(".track .tile").length || 0;
+    const count = row?.querySelector(".row-head .count");
+    if (count) count.textContent = String(left);
+    if (row && !left) {
+      row.querySelectorAll(".track").forEach(unwatchFits);
+      if (animate && row.animate) { const a = row.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 200, fill: "forwards" }); a.onfinish = () => row.remove(); }
+      else row.remove();
+    }
+  };
+  if (!animate || !b.animate) { done(); return; }
+  const w = b.offsetWidth;
+  const gap = parseFloat(getComputedStyle(b.parentElement).columnGap) || 0;
+  b.style.pointerEvents = "none";
+  const out = b.animate([{ opacity: 1, transform: "none" }, { opacity: 0, transform: "scale(0.86)" }], { duration: 200, easing: "ease-in", fill: "forwards" });
+  out.onfinish = () => {
+    const shut = b.animate([{ width: `${w}px`, marginRight: "0px" }, { width: "0px", marginRight: `${-gap}px` }], { duration: 260, easing: "cubic-bezier(0.16, 1, 0.3, 1)", fill: "forwards" });
+    shut.onfinish = done;
+  };
 }
 
 /**
@@ -1083,8 +1349,7 @@ function searchBackdrop(page, t) {
   if (!src) { front.classList.remove("on"); return; }
   const img = new Image();
   img.decoding = "async";
-  img.src = src;
-  img.decode().then(() => {
+  decoded(img, src).then(() => {
     if (page.bgKey !== src) return;
     back.style.backgroundImage = `url("${src.replace(/"/g, "%22")}")`;
     back.classList.add("on");
@@ -1120,7 +1385,13 @@ listen("get-progress", (e) => {
 // My List changed: redraw so its row is current, once the detail panel or
 // hover card it changed from has closed (a redraw under them would jump).
 let listChanged = false;
+let savedInDetail = false;
 window.addEventListener("chillarr:saved", () => {
-  if ($("#detail").open) $("#detail").addEventListener("close", () => window.dispatchEvent(new Event("chillarr:refresh")), { once: true });
+  if ($("#detail").open) savedInDetail = true; // one redraw however many times it changed
   else listChanged = true;
+});
+$("#detail").addEventListener("close", () => {
+  if (!savedInDetail) return;
+  savedInDetail = false;
+  window.dispatchEvent(new Event("chillarr:refresh"));
 });

@@ -1,7 +1,7 @@
 {
   "name": "chillarr",
   "private": true,
-  "version": "0.8.3",
+  "version": "0.10.0",
   "license": "GPL-3.0-or-later",
   "scripts": {
     "tauri": "tauri"

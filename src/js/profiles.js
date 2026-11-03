@@ -3,7 +3,7 @@
 // Jellyfin account of its own (profiles.rs), so its history and My List
 // follow it to Jellyfin's TV and phone apps. In Jellyfin's web pages
 // (WEB) it's pick and add only, and a pick signs the browser in as them.
-import { $, ask, el, icon, invoke, toast, WEB } from "./api.js";
+import { $, ask, el, icon, invoke, setPerson, toast, WEB } from "./api.js";
 
 const COLORS = ["#e50914", "#f5a623", "#2ecc71", "#1abc9c", "#3498db", "#9b59b6", "#e84393", "#95a5a6"];
 const LOCK = "M7 11V8a5 5 0 0 1 10 0v3M6 11h12v9H6z";
@@ -20,6 +20,8 @@ function avatar(p, size = "") {
 async function load() {
   // On the web, this device's key: the main profile asks for its password only once per device.
   list = await invoke("profiles_list", WEB ? { trust: window.__CHILLARR_JF__.trust() } : {}).catch(() => []);
+  // On the web it's whoever is signed in (app.js), profile or not.
+  if (!WEB) setPerson(list.find((p) => p.active)?.id);
   drawTopbar();
   return list;
 }
@@ -28,7 +30,7 @@ async function load() {
 export async function startProfiles() {
   await load();
   // More than one profile, or a PIN to ask for: someone has to pick first.
-  if (list.length > 1 || list.some((p) => p.has_pin)) {
+  if (list.length > 1 || list.some((p) => p.has_pin || p.needs_login)) {
     root.dataset.startup = "1";
     openPicker();
   }
@@ -56,7 +58,7 @@ function openPicker(manage = false) {
   const tiles = list.map((p) => {
     const b = el("button", { class: "pf-tile", style: `--c:${p.color}` },
       el("span", { class: "pf-face" }, avatar(p, "big"), manage ? el("span", { class: "pf-edit" }, icon(PENCIL)) : null),
-      el("span", { class: "pf-name" }, p.name, p.has_pin && !manage ? el("span", { class: "pf-lock" }, icon(LOCK)) : null));
+      el("span", { class: "pf-name" }, p.name, (p.has_pin || p.needs_login) && !manage ? el("span", { class: "pf-lock" }, icon(LOCK)) : null));
     b.addEventListener("click", () => (manage ? edit(p) : choose(p)));
     return b;
   });
@@ -96,12 +98,14 @@ function setBehind(off) {
   }
 }
 
-async function choose(p, pin = null) {
+async function choose(p, pin = null, login = null) {
   if (WEB) return chooseWeb(p, pin);
+  if (p.needs_login && login == null) { loginPad(p); return; }
   if (p.has_pin && pin == null) { pinPad(p); return; }
   try {
-    await invoke("profiles_switch", { id: p.id, pin });
+    await invoke("profiles_switch", { id: p.id, pin, login });
   } catch (e) {
+    if (p.needs_login) { loginPad(p, String(e)); return; }
     if (p.has_pin) { pinPad(p, String(e)); return; }
     toast(String(e), true);
     return;
@@ -148,6 +152,26 @@ function passwordPad(p, error = "", pin = null) {
     err,
     p.owner ? el("p", { class: "pf-sub pf-pass-hint", text: "This browser will remember it. Give the main profile a PIN if others use this browser." }) : null,
     el("div", { class: "pf-foot" }, go, el("button", { class: "btn ghost", onclick: () => openPicker() }, "Back"))));
+  pass.focus();
+}
+
+/** The main profile after Chillarr lost its profiles file: the Chillarr login opens it. */
+function loginPad(p, error = "") {
+  const pass = el("input", { type: "password", autocomplete: "current-password", placeholder: "Your Chillarr password", "aria-label": "Your Chillarr password" });
+  const go = el("button", { class: "btn primary" }, "Continue");
+  const err = el("p", { class: "pf-pin-err", text: error });
+  go.addEventListener("click", () => {
+    if (!pass.value) { err.textContent = "Type your Chillarr password."; return; }
+    go.disabled = true;
+    choose(p, null, pass.value);
+  });
+  pass.addEventListener("keydown", (e) => { if (e.key === "Enter") go.click(); });
+  root.replaceChildren(el("div", { class: "pf-inner pf-pin" },
+    avatar(p, "big"),
+    el("p", { class: "pf-pin-lead", text: "Chillarr couldn't read its profiles. Type your Chillarr password to go on." }),
+    el("div", { class: error ? "pf-fields pf-pass shake" : "pf-fields pf-pass" }, pass),
+    err,
+    el("div", { class: "pf-foot" }, go)));
   pass.focus();
 }
 

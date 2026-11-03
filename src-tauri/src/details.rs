@@ -139,7 +139,7 @@ async fn anime(id: i64) -> Option<Details> {
     let q = format!(
         "{{ Media(id: {id}) {{ format episodes duration status season seasonYear averageScore popularity source startDate {{ year month day }} endDate {{ year month day }} studios(isMain: true) {{ nodes {{ name }} }} staff(perPage: 6, sort: RELEVANCE) {{ edges {{ role node {{ name {{ full }} }} }} }} characters(perPage: 24, sort: [ROLE, RELEVANCE]) {{ edges {{ role node {{ name {{ full }} image {{ medium }} }} voiceActors(language: JAPANESE) {{ name {{ full }} }} }} }} }} }}"
     );
-    let v: Value = http().post("https://graphql.anilist.co").json(&json!({ "query": q })).send().await.ok()?.json().await.ok()?;
+    let v = crate::media::anilist(&json!({ "query": q })).await.ok()?;
     let m = &v["data"]["Media"];
     if m.is_null() {
         return None;

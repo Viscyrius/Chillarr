@@ -50,6 +50,11 @@
     if (!P.after) P.after = function (...a) { if (this.parentNode) this.parentNode.insertBefore(nodes(a), this.nextSibling); };
     if (!P.replaceWith) P.replaceWith = function (...a) { if (this.parentNode) this.parentNode.replaceChild(nodes(a), this); };
   }
+  // Node.isConnected (Chrome 54): the app asks it everywhere a page may have
+  // gone while something loaded; missing, every answer read as "gone".
+  if (!("isConnected" in Node.prototype)) {
+    Object.defineProperty(Node.prototype, "isConnected", { configurable: true, get() { return (this.ownerDocument || this).contains(this); } });
+  }
   // addEventListener's { once } (Chrome 55): older ones read the object as
   // "capture" and keep the listener forever. Wrapped so it runs once.
   let onceOk = false;
@@ -167,17 +172,50 @@
     };
   }
   // ResizeObserver (Chrome 64): a stand-in fed by the window's own resizes.
+  // An element taken out of the page is let go (checked on each resize and
+  // every few seconds), so a page's old rows aren't held forever.
   if (!window.ResizeObserver) {
     window.ResizeObserver = class {
-      constructor(cb) { this.cb = cb; this.els = new Set(); this.fire = () => this.cb([...this.els].map((target) => ({ target, contentRect: target.getBoundingClientRect() })), this); }
+      constructor(cb) {
+        this.cb = cb;
+        this.els = new Set();
+        this.timer = 0;
+        this.fire = () => { this.sweep(); if (this.els.size) this.cb([...this.els].map((target) => ({ target, contentRect: target.getBoundingClientRect() })), this); };
+      }
+      sweep() {
+        for (const el of [...this.els]) if (!el.isConnected) this.els.delete(el);
+        if (!this.els.size) this.disconnect();
+      }
       observe(el) {
-        if (!this.els.size) { window.addEventListener("resize", this.fire); window.addEventListener("orientationchange", this.fire); }
+        if (!this.els.size) {
+          window.addEventListener("resize", this.fire);
+          window.addEventListener("orientationchange", this.fire);
+          this.timer = setInterval(() => this.sweep(), 5000);
+        }
         this.els.add(el);
-        requestAnimationFrame(() => this.cb([{ target: el, contentRect: el.getBoundingClientRect() }], this));
+        requestAnimationFrame(() => { if (this.els.has(el)) this.cb([{ target: el, contentRect: el.getBoundingClientRect() }], this); });
       }
       unobserve(el) { this.els.delete(el); if (!this.els.size) this.disconnect(); }
-      disconnect() { this.els.clear(); window.removeEventListener("resize", this.fire); window.removeEventListener("orientationchange", this.fire); }
+      disconnect() { this.els.clear(); clearInterval(this.timer); this.timer = 0; window.removeEventListener("resize", this.fire); window.removeEventListener("orientationchange", this.fire); }
     };
+  }
+  // Pointer events (Chrome 55): the app's pointerdown and pointerup (a press on
+  // the hero, a click outside a menu) are made here from the mouse and touch
+  // events. A touch's own mouse events right after it don't count twice.
+  if (!window.PointerEvent) {
+    let touchAt = 0;
+    const relay = (type, kind) => (e) => {
+      if (kind === "mouse" && Date.now() - touchAt < 800) return;
+      if (kind === "touch") touchAt = Date.now();
+      const p = kind === "touch" ? (e.changedTouches && e.changedTouches[0]) || {} : e;
+      const ev = new MouseEvent(type, { bubbles: true, cancelable: true, clientX: p.clientX || 0, clientY: p.clientY || 0, screenX: p.screenX || 0, screenY: p.screenY || 0, button: e.button || 0 });
+      Object.defineProperty(ev, "pointerType", { value: kind });
+      if (e.target && e.target.dispatchEvent) e.target.dispatchEvent(ev);
+    };
+    window.addEventListener("mousedown", relay("pointerdown", "mouse"), true);
+    window.addEventListener("mouseup", relay("pointerup", "mouse"), true);
+    window.addEventListener("touchstart", relay("pointerdown", "touch"), { capture: true, passive: true });
+    window.addEventListener("touchend", relay("pointerup", "touch"), { capture: true, passive: true });
   }
   // CSS grid (57) and sticky (56) are missing too: styles.css has fallbacks under these.
   if (!(window.CSS && CSS.supports && CSS.supports("display", "grid"))) html.classList.add("no-grid");

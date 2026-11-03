@@ -47,6 +47,11 @@ pub struct Entry {
 #[derive(Serialize, Deserialize, Default, Debug, Clone, PartialEq)]
 pub struct Schedule {
     entries: HashMap<String, Entry>,
+    /// Sonarr ids of shows that have had an episode file. One whose files all
+    /// went (the clean-up, a delete) isn't "nothing yet": its older gaps stay
+    /// Sonarr's, or each would be searched as if you were waiting for it.
+    #[serde(default)]
+    had_files: HashSet<i64>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -184,6 +189,14 @@ impl Schedule {
         jobs
     }
 
+    /// Notes the shows (Sonarr's full list) with episode files now, and
+    /// forgets shows Sonarr no longer has.
+    pub fn note_files(&mut self, series: &[Value]) {
+        let ids: HashSet<i64> = series.iter().filter_map(|s| s["id"].as_i64()).collect();
+        self.had_files.retain(|id| ids.contains(id));
+        self.had_files.extend(series.iter().filter(|s| s["statistics"]["episodeFileCount"].as_i64().unwrap_or(0) > 0).filter_map(|s| s["id"].as_i64()));
+    }
+
     /// A search went out for `keys`.
     pub fn searched(&mut self, keys: &[String], now: i64) {
         for k in keys {
@@ -258,12 +271,12 @@ pub fn movie_wants(movies: &[Value], queued: &HashSet<i64>) -> Vec<Want> {
 
 /// Sonarr's monitored episodes that have aired with no file (`wanted/missing`
 /// records), limited to what you're actually waiting for: every episode of a
-/// show with nothing on disk yet (it's on the waiting list), and any episode
+/// show that never had a file (`had_files`; it's on the waiting list), and any episode
 /// that aired after its show was added. Older gaps in a show you already have
 /// some of (episodes that were out when you asked and weren't found then) are
 /// left to Sonarr: those may be leftovers of a pick, and searching them would
 /// pull whole seasons nobody is waiting for.
-pub fn episode_wants(missing: &[Value], series: &[Value], queued: &HashSet<i64>) -> Vec<Want> {
+pub fn episode_wants(missing: &[Value], series: &[Value], queued: &HashSet<i64>, had_files: &HashSet<i64>) -> Vec<Want> {
     let shows: HashMap<i64, &Value> = series.iter().filter_map(|s| Some((s["id"].as_i64()?, s))).collect();
     missing
         .iter()
@@ -272,7 +285,7 @@ pub fn episode_wants(missing: &[Value], series: &[Value], queued: &HashSet<i64>)
             let (id, sid) = (e["id"].as_i64()?, e["seriesId"].as_i64()?);
             let show = shows.get(&sid).filter(|s| s["monitored"] == true)?;
             let aired = ts(&e["airDateUtc"])?;
-            let none_yet = show["statistics"]["episodeFileCount"].as_i64() == Some(0);
+            let none_yet = show["statistics"]["episodeFileCount"].as_i64() == Some(0) && !had_files.contains(&sid);
             let after_added = ts(&show["added"]).is_some_and(|added| aired >= added);
             if !none_yet && !after_added {
                 return None;
@@ -352,7 +365,11 @@ pub async fn tick(app: &AppHandle, s: &mut Searcher, movies: Option<&[Value]>, s
     for owner in [AppId::Radarr, AppId::Sonarr] {
         // Not set up: nothing to search, nothing to say.
         let Some(a) = arr(app, owner) else { continue };
-        let wants = match wants_of(&a, owner, movies, series).await {
+        if let (AppId::Sonarr, Some(series)) = (owner, series) {
+            s.sched.lock().unwrap().note_files(series);
+        }
+        let had = s.sched.lock().unwrap().had_files.clone();
+        let wants = match wants_of(&a, owner, movies, series, &had).await {
             Ok(w) => w,
             Err(why) => {
                 s.down_once(app, owner, why);
@@ -403,7 +420,7 @@ pub async fn tick(app: &AppHandle, s: &mut Searcher, movies: Option<&[Value]>, s
     }
 }
 
-async fn wants_of(a: &crate::arr::Arr, owner: AppId, movies: Option<&[Value]>, series: Option<&[Value]>) -> Result<Vec<Want>, String> {
+async fn wants_of(a: &crate::arr::Arr, owner: AppId, movies: Option<&[Value]>, series: Option<&[Value]>, had_files: &HashSet<i64>) -> Result<Vec<Want>, String> {
     // Without the queue there's no telling what's already downloading, so no searching at all.
     let queue = a.get_one("queue?pageSize=2000").await.map_err(|e| e.to_string())?;
     if owner == AppId::Radarr {
@@ -413,7 +430,7 @@ async fn wants_of(a: &crate::arr::Arr, owner: AppId, movies: Option<&[Value]>, s
     let series = series.ok_or("it didn't list its shows")?;
     let missing = a.get_one("wanted/missing?pageSize=2000&monitored=true&sortKey=airDateUtc&sortDirection=descending").await.map_err(|e| e.to_string())?;
     let records = missing["records"].as_array().ok_or("its missing list came back empty")?;
-    Ok(episode_wants(records, series, &ids_in(&queue, "episodeId")))
+    Ok(episode_wants(records, series, &ids_in(&queue, "episodeId"), had_files))
 }
 
 fn announce(app: &AppHandle, fresh: &[Want]) {
@@ -583,10 +600,23 @@ mod tests {
             missing(72, 2, "2021-01-10T15:00:00Z"), // a show with nothing yet: searched
             missing(73, 3, "2026-10-12T15:00:00Z"), // a show Sonarr isn't watching
         ];
-        let got: Vec<String> = episode_wants(&rows, &series, &[72].into()).into_iter().map(|w| format!("{} {}", w.key, w.queued)).collect();
+        let got: Vec<String> = episode_wants(&rows, &series, &[72].into(), &HashSet::new()).into_iter().map(|w| format!("{} {}", w.key, w.queued)).collect();
         assert_eq!(got, vec!["e:71 false", "e:72 true"]);
-        let w = &episode_wants(&rows, &series, &HashSet::new())[0];
+        let w = &episode_wants(&rows, &series, &HashSet::new(), &HashSet::new())[0];
         assert_eq!(w.ready_at, ts(&json!("2026-10-12T15:00:00Z")).unwrap() + GRACE, "searched a while after it airs");
+    }
+
+    #[test]
+    fn a_show_whose_files_were_cleaned_up_isnt_waited_for() {
+        let show = |id: i64, files: i64| json!({ "id": id, "title": "Show", "monitored": true, "added": "2026-07-25T19:42:09Z", "statistics": { "episodeFileCount": files } });
+        let old_gap = json!({ "id": 80, "seriesId": 1, "seasonNumber": 1, "episodeNumber": 1, "monitored": true, "hasFile": false, "airDateUtc": "2021-01-10T15:00:00Z" });
+        let mut s = Schedule::default();
+        s.note_files(&[show(1, 3), show(9, 1)]);
+        // Every file cleaned up: still not a show you're waiting for.
+        s.note_files(&[show(1, 0)]);
+        assert_eq!(s.had_files, [1].into(), "a show Sonarr dropped is forgotten");
+        assert!(episode_wants(&[old_gap.clone()], &[show(1, 0)], &HashSet::new(), &s.had_files).is_empty());
+        assert_eq!(episode_wants(&[old_gap], &[show(1, 0)], &HashSet::new(), &HashSet::new()).len(), 1, "never had one: waited for");
     }
 
     #[test]

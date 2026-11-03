@@ -1,6 +1,6 @@
 // Recent searches under the top bar's search box: shown on focus while the box
 // is empty, one list per profile, kept in this window's storage.
-import { el, icon, invoke } from "./api.js";
+import { el, icon, invoke, viewer, WEB } from "./api.js";
 
 const MAX = 8;
 // A term is saved once it has stood this long (or on Enter), so half-typed
@@ -11,6 +11,8 @@ let profile = null;
 let saveTimer = null;
 
 async function profileId() {
+  // On the web, whoever is signed in: one list per Jellyfin user, profile or not.
+  if (WEB) return viewer.user_id || "default";
   if (profile) return profile;
   const me = (await invoke("profiles_list").catch(() => [])).find((p) => p.active);
   profile = me?.id || "default";

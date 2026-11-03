@@ -58,6 +58,11 @@ pub struct SeriesWatch {
     /// Episode files half watched right now (from the latest sync).
     #[serde(default)]
     pub resuming: BTreeSet<String>,
+    /// "season:episode" -> when it was started over (`forget_episodes`). A
+    /// Played mark from before then is old news: a sync that read Jellyfin
+    /// just before the Start over would otherwise bring it straight back.
+    #[serde(default)]
+    pub forgotten: BTreeMap<String, i64>,
 }
 
 impl SeriesWatch {
@@ -157,8 +162,9 @@ impl History {
                 w.genres = g.iter().filter_map(|x| x.as_str().map(String::from)).collect();
             }
             w.anime = s.anime.contains(id) || w.anime;
-            if played && w.complete_at.is_none() {
-                w.complete_at = Some(secs(&v["UserData"]["LastPlayedDate"]).unwrap_or(now));
+            let at = secs(&v["UserData"]["LastPlayedDate"]).unwrap_or(now);
+            if played && w.complete_at.is_none() && !w.forgotten.values().any(|f| at <= *f) {
+                w.complete_at = Some(at);
             }
         }
         for v in &s.episodes {
@@ -166,6 +172,9 @@ impl History {
             let w = self.series.entry(series.to_string()).or_default();
             if w.title.is_empty() {
                 w.title = v["SeriesName"].as_str().unwrap_or_default().to_string();
+            }
+            if w.forgotten.get(&ep_key(season, ep)).is_some_and(|f| at <= *f) {
+                continue;
             }
             // A double episode is one item (E14 to E15): both are watched.
             let last = v["IndexNumberEnd"].as_i64().filter(|l| *l > ep && *l - ep < 10).unwrap_or(ep);
@@ -206,10 +215,11 @@ impl History {
     /// episode numbers in the file name), and the show isn't complete any more.
     /// So the clean-up won't delete a file you're rewatching, and Completed
     /// stops listing them.
-    pub fn forget_episodes(&mut self, tvdb: i64, which: &[(i64, i64)]) {
+    pub fn forget_episodes(&mut self, tvdb: i64, which: &[(i64, i64)], at: i64) {
         for w in self.series.values_mut().filter(|w| w.tvdb == Some(tvdb)) {
             for (s, e) in which {
                 w.episodes.remove(&ep_key(*s, *e));
+                w.forgotten.insert(ep_key(*s, *e), at);
             }
             w.files.retain(|path, _| {
                 let name = path.rsplit(['\\', '/']).next().unwrap_or(path);
@@ -382,18 +392,34 @@ pub fn file(dir: &Path, user_id: &str) -> PathBuf {
     dir.join(format!("history-{user_id}.json"))
 }
 
+/// One profile's log, for reading only: one that can't be read reads as empty.
 pub fn load(dir: &Path, user_id: &str) -> History {
-    std::fs::read_to_string(file(dir, user_id)).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
+    read(dir, user_id, false).unwrap_or_default()
 }
 
-fn save(dir: &Path, user_id: &str, h: &History) {
+/// One profile's log, to change and save back. No file yet is an empty log.
+/// Err when it couldn't be read, so the caller saves nothing over it; one
+/// that won't parse (`set_aside`) is moved to `.json.bad` first, so the next
+/// run starts a new one without losing it.
+fn read(dir: &Path, user_id: &str, set_aside: bool) -> Result<History, String> {
     let path = file(dir, user_id);
-    let tmp = path.with_extension("json.tmp");
-    if let Ok(text) = serde_json::to_string(h) {
-        if std::fs::write(&tmp, text).is_ok() {
-            let _ = std::fs::rename(&tmp, &path);
+    let text = match std::fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(History::default()),
+        Err(e) => return Err(format!("Couldn't read the watch history ({e}), so it wasn't updated.")),
+    };
+    serde_json::from_str(&text).map_err(|e| {
+        if set_aside && std::fs::rename(&path, path.with_extension("json.bad")).is_ok() {
+            format!("The watch history couldn't be read ({e}). It was kept as {}.bad and a new one starts.", path.file_name().unwrap_or_default().to_string_lossy())
+        } else {
+            format!("The watch history couldn't be read ({e}), so it wasn't updated.")
         }
-    }
+    })
+}
+
+fn save(dir: &Path, user_id: &str, h: &History) -> Result<(), String> {
+    let text = serde_json::to_string(h).map_err(|e| e.to_string())?;
+    crate::catalog::save_atomic(&file(dir, user_id), &text).map_err(|e| format!("Couldn't save the watch history: {e}"))
 }
 
 /// Reads one profile's play data from Jellyfin.
@@ -418,6 +444,26 @@ async fn snapshot(j: &Jf) -> Option<Snapshot> {
         }
     }
     Some(s)
+}
+
+/// Leaves out the Played marks that came from playing a Discover shelf
+/// placeholder (`is_mark`, which is `discover_shelf::placeholder_mark`):
+/// Jellyfin calls any stop of one watched and shares the mark with the real
+/// file, so a film stopped at minute 10 would be logged as finished (and
+/// cleaned up). The shelf takes the mark back within a minute.
+fn drop_placeholder_marks(s: &mut Snapshot, is_mark: impl Fn(&str, i64, Option<(i64, i64)>, i64) -> bool) {
+    let tvdb: HashMap<&str, i64> = s.series.iter().filter_map(|v| Some((v["Id"].as_str()?, provider(v, "Tvdb")?))).collect();
+    s.movies.retain(|v| match (provider(v, "Tmdb"), secs(&v["UserData"]["LastPlayedDate"])) {
+        (Some(id), Some(at)) => !is_mark("movie", id, None, at),
+        _ => true,
+    });
+    s.episodes.retain(|v| {
+        let show = v["SeriesId"].as_str().and_then(|id| tvdb.get(id));
+        match (show, v["ParentIndexNumber"].as_i64(), v["IndexNumber"].as_i64(), secs(&v["UserData"]["LastPlayedDate"])) {
+            (Some(id), Some(season), Some(ep), Some(at)) => !is_mark("series", *id, Some((season, ep)), at),
+            _ => true,
+        }
+    });
 }
 
 /// Episodes finished since `before` (new, or finished again), with when
@@ -446,12 +492,24 @@ pub fn newly_finished(before: &History, after: &History) -> Vec<(i64, crate::mar
 pub async fn sync(app: &AppHandle) {
     let Some(dir) = crate::media::data_dir(app) else { return };
     for (user_id, j) in crate::profiles::all_jf(app) {
-        let Some(s) = snapshot(&j).await else { continue };
-        let mut h = load(&dir, &user_id);
-        let before = h.clone();
-        h.record(&s);
-        h.synced_at = chrono::Utc::now().timestamp();
-        save(&dir, &user_id, &h);
+        let Some(mut s) = snapshot(&j).await else { continue };
+        drop_placeholder_marks(&mut s, crate::discover_shelf::placeholder_mark);
+        let updated = {
+            let _one = UPDATING.lock().unwrap_or_else(|e| e.into_inner());
+            read(&dir, &user_id, true).and_then(|mut h| {
+                let before = h.clone();
+                h.record(&s);
+                h.synced_at = chrono::Utc::now().timestamp();
+                save(&dir, &user_id, &h).map(|_| (before, h))
+            })
+        };
+        let (before, h) = match updated {
+            Ok(x) => x,
+            Err(e) => {
+                crate::log::log(app, crate::model::Level::Amber, e);
+                continue;
+            }
+        };
         for (tvdb, spot, at) in newly_finished(&before, &h) {
             if let Err(e) = crate::marker::finished(&dir, &user_id, tvdb, spot, at) {
                 crate::log::log(app, crate::model::Level::Amber, e);
@@ -460,12 +518,21 @@ pub async fn sync(app: &AppHandle) {
     }
 }
 
+/// Held while a log is read, changed and saved back, so a sync and a Start
+/// over never save over each other.
+static UPDATING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Takes episodes out of the watching profile's log (Start over).
 pub fn forget(app: &AppHandle, tvdb: i64, which: &[(i64, i64)]) {
     if let (Some(dir), Some(uid)) = (crate::media::data_dir(app), crate::media::active_user(app)) {
-        let mut h = load(&dir, &uid);
-        h.forget_episodes(tvdb, which);
-        save(&dir, &uid, &h);
+        let _one = UPDATING.lock().unwrap_or_else(|e| e.into_inner());
+        let r = read(&dir, &uid, true).and_then(|mut h| {
+            h.forget_episodes(tvdb, which, chrono::Utc::now().timestamp());
+            save(&dir, &uid, &h)
+        });
+        if let Err(e) = r {
+            crate::log::log(app, crate::model::Level::Amber, e);
+        }
     }
 }
 
@@ -690,7 +757,7 @@ mod tests {
             w.files.insert(norm(r"C:\Series\Show\Season 2\Show - 2x01.mkv"), 10);
         }
         h.series.get_mut("a").unwrap().files.insert(norm(r"C:\Series\Show\Season 1\Show S01E02E03.mkv"), 10);
-        h.forget_episodes(7, &[(1, 2), (1, 3), (2, 1)]);
+        h.forget_episodes(7, &[(1, 2), (1, 3), (2, 1)], 20);
         for id in ["a", "b"] {
             let w = &h.series[id];
             assert_eq!(w.complete_at, None, "{id}: not complete any more");
@@ -791,5 +858,48 @@ mod tests {
         let spot = |season, episode| crate::marker::Spot { season, episode };
         assert_eq!(newly_finished(&before, &after), vec![(7, spot(1, 1), 30), (7, spot(1, 3), 20)], "S1E1 again and S1E3 new, in order; specials don't count");
         assert!(newly_finished(&after, &after).is_empty());
+    }
+    #[test]
+    fn a_mark_from_a_shelf_play_is_not_logged() {
+        let mut s = Snapshot {
+            movies: vec![movie("m1", "Inception", 27205, "2026-10-01T20:00:00Z"), movie("m2", "Other", 1, "2026-10-01T20:00:00Z")],
+            series: vec![series("s1", "Show", 500, false)],
+            episodes: vec![ep("s1", 1, 2, "2026-10-01T20:00:00Z"), ep("s1", 1, 3, "2026-10-01T20:00:00Z")],
+            ..Default::default()
+        };
+        drop_placeholder_marks(&mut s, |kind, id, ep, _| (kind == "movie" && id == 27205) || (kind == "series" && id == 500 && ep == Some((1, 2))));
+        assert_eq!(s.movies.len(), 1);
+        assert_eq!(s.movies[0]["Id"], "m2");
+        assert_eq!(s.episodes.len(), 1);
+        assert_eq!(s.episodes[0]["IndexNumber"], 3);
+    }
+    #[test]
+    fn a_log_that_wont_read_is_set_aside_not_overwritten() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(read(dir.path(), "u", true).is_ok_and(|h| h.movies.is_empty()), "no file yet: empty");
+        std::fs::write(file(dir.path(), "u"), "{\"movies\":").unwrap();
+        assert!(read(dir.path(), "u", false).is_err());
+        assert!(file(dir.path(), "u").exists(), "only looked at");
+        assert!(read(dir.path(), "u", true).is_err(), "never read as empty, so nothing saves over it");
+        assert!(dir.path().join("history-u.json.bad").exists() && !file(dir.path(), "u").exists());
+        let mut h = History::default();
+        h.synced_at = 5;
+        save(dir.path(), "u", &h).unwrap();
+        assert_eq!(load(dir.path(), "u").synced_at, 5);
+    }
+    #[test]
+    fn a_sync_read_before_a_start_over_cant_bring_it_back() {
+        let mut h = History::default();
+        let seen = |at: &str| Snapshot { series: vec![series("s1", "Show", 500, true)], episodes: vec![ep("s1", 1, 1, at), ep("s1", 1, 2, at)], ..Default::default() };
+        h.record(&seen("2026-10-01T20:00:00Z"));
+        assert!(h.series["s1"].complete_at.is_some());
+        h.forget_episodes(500, &[(1, 1), (1, 2)], t("2026-10-11T12:00:00Z"));
+        // Jellyfin read just before the Start over: the old marks.
+        h.record(&seen("2026-10-01T20:00:00Z"));
+        let w = &h.series["s1"];
+        assert!(w.episodes.is_empty() && w.files.is_empty() && w.complete_at.is_none());
+        // Watched again since: that counts.
+        h.record(&Snapshot { episodes: vec![ep("s1", 1, 1, "2026-10-12T20:00:00Z")], ..Default::default() });
+        assert_eq!(h.series["s1"].episodes.keys().cloned().collect::<Vec<_>>(), vec![ep_key(1, 1)]);
     }
 }

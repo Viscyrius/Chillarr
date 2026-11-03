@@ -258,6 +258,26 @@ pub fn force_close(exe_name: &str) {
         .status();
 }
 
+/// Asks a program to close (taskkill without /F sends its windows WM_CLOSE),
+/// waits up to `wait` for it to exit, and forces it only if it hasn't.
+pub fn close_gently(exe_name: &str, wait: Duration) {
+    let _ = Command::new(sys32("taskkill.exe"))
+        .args(["/IM", exe_name])
+        .creation_flags(CREATE_NO_WINDOW)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    let end = std::time::Instant::now() + wait;
+    while std::time::Instant::now() < end {
+        if !process_running(exe_name) {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    force_close(exe_name);
+}
+
 pub fn service_running(name: &str) -> Option<bool> {
     crate::winsvc::query(name)
 }

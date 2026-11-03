@@ -1464,7 +1464,7 @@ pub async fn remove(app: &tauri::AppHandle, key: &str) -> Result<String, String>
 
 /// What `remove` does to an owned torrent.
 enum Removal {
-    /// Done downloading: the library's (cleared from qBittorrent, files kept).
+    /// Done downloading: the library's (cleared from qBittorrent, see `drop_finished`).
     Finished,
     Partial(OnRemove),
 }
@@ -1496,11 +1496,13 @@ async fn removal(app: &tauri::AppHandle, uid: &str, e: &Entry, hash: &str) -> Re
     Ok(Some(Removal::Partial(on_remove(&files, (s, n), &downloads, &mine))))
 }
 
-/// A finished Watch now torrent leaves qBittorrent (so it never seeds),
-/// its files kept: the library copy is a hardlink to them. One Radarr/Sonarr
-/// still list in their queue hasn't been brought in yet, so it stays for them;
-/// a trimmed pack Sonarr holds only for episodes nobody wants (`pack_done`)
-/// can go. True when it was cleared.
+/// A finished Watch now torrent leaves qBittorrent (so it never seeds). Once
+/// Radarr/Sonarr imported it the library has its own hardlink, so the
+/// Downloads copy goes too, or its space never comes back; one never
+/// imported, or sitting inside a library folder, keeps its files. One
+/// Radarr/Sonarr still list in their queue hasn't been brought in yet, so it
+/// stays for them; a trimmed pack Sonarr holds only for episodes nobody
+/// wants (`pack_done`) can go. True when it was cleared.
 async fn drop_finished(app: &tauri::AppHandle, e: &Entry, hash: &str) -> Result<bool, String> {
     use crate::model::AppId;
     let owner = if e.kind == "movie" { AppId::Radarr } else { AppId::Sonarr };
@@ -1511,8 +1513,21 @@ async fn drop_finished(app: &tauri::AppHandle, e: &Entry, hash: &str) -> Result<
         return Ok(false);
     }
     let q = crate::waiting::qbit(app).ok_or("qBittorrent isn't set up.")?;
-    q.delete(&[hash.to_string()], false).await.map_err(qb_err)?;
+    let files = imported(&a, hash).await && !crate::storage::safe_to_delete_files(app, &q, &[hash.to_ascii_lowercase()]).await.is_empty();
+    q.delete(&[hash.to_string()], files).await.map_err(qb_err)?;
     Ok(true)
+}
+
+/// Whether Radarr/Sonarr brought this torrent into the library (their history says so).
+async fn imported(a: &crate::arr::Arr, hash: &str) -> bool {
+    // They keep the hash in upper case; qBittorrent hands it out in lower.
+    for h in [hash.to_ascii_uppercase(), hash.to_ascii_lowercase()] {
+        let Ok(v) = a.get_one(&format!("history?downloadId={h}&pageSize=200")).await else { continue };
+        if v["records"].as_array().is_some_and(|r| r.iter().any(|x| x["eventType"] == "downloadFolderImported")) {
+            return true;
+        }
+    }
+    false
 }
 
 /// A removed profile's titles no other profile has (`WatchNow::forget`):

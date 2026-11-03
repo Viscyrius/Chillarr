@@ -44,10 +44,43 @@ pub fn read(path: &Path) -> Option<String> {
     open(&std::fs::read_to_string(path).ok()?)
 }
 
-/// Never falls back to writing it in the clear.
+/// How many times `read_raw` reads a file another program is holding.
+const READ_TRIES: u32 = 4;
+
+/// A file's text as it is on disk, sealed or not. Ok(None): there is none.
+/// A read that fails (an antivirus scan or OneDrive holding the file) is tried
+/// again a moment later; Err then means "couldn't read it this time", never
+/// "damaged": only text that won't open or parse is that.
+pub fn read_raw(path: &Path) -> std::io::Result<Option<String>> {
+    let mut i = 0;
+    loop {
+        match std::fs::read(path) {
+            Ok(b) => return Ok(Some(String::from_utf8_lossy(&b).into_owned())),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) if i + 1 >= READ_TRIES => return Err(e),
+            Err(_) => std::thread::sleep(std::time::Duration::from_millis(250)),
+        }
+        i += 1;
+    }
+}
+
+/// Never falls back to writing it in the clear. Written beside the file and
+/// then swapped in, so a crash mid-write leaves the old file whole.
 pub fn write(path: &Path, text: &str) -> std::io::Result<()> {
+    use std::io::Write;
     let sealed = seal(text).ok_or_else(|| std::io::Error::other("Windows couldn't seal it"))?;
-    std::fs::write(path, sealed)
+    let mut name = path.file_name().ok_or_else(|| std::io::Error::other("no file name"))?.to_os_string();
+    name.push(".tmp");
+    let tmp = path.with_file_name(name);
+    let written = std::fs::File::create(&tmp).and_then(|mut f| {
+        f.write_all(sealed.as_bytes())?;
+        f.sync_all()
+    });
+    let swapped = written.and_then(|_| std::fs::rename(&tmp, path));
+    if swapped.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    swapped
 }
 
 #[cfg(test)]
@@ -64,6 +97,20 @@ mod tests {
     #[test]
     fn a_file_from_before_sealing_reads_as_is() {
         assert_eq!(open(r#"{"a":1}"#).unwrap(), r#"{"a":1}"#);
+    }
+
+    #[test]
+    fn a_write_replaces_the_file_whole_and_leaves_nothing_beside_it() {
+        let dir = std::env::temp_dir().join(format!("chillarr-seal-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("x.json");
+        write(&f, "first").unwrap();
+        write(&f, "second").unwrap();
+        let back = read(&f);
+        let left: Vec<_> = std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok()).map(|e| e.file_name()).collect();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(back.as_deref(), Some("second"));
+        assert_eq!(left.len(), 1, "{left:?}");
     }
 
     #[test]

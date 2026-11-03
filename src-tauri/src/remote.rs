@@ -13,6 +13,7 @@
 //! device on the PC. Commands typed under a device's code go to that device
 //! only, over its event stream.
 
+use crate::viewer::Viewer;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -47,6 +48,10 @@ const CODE_LEN: usize = 10;
 /// room; while every one was seen lately, a new device is turned away.
 const MAX_DEVICES: usize = 64;
 const STALE_SECS: u64 = 30 * 24 * 3600;
+/// Devices one Jellyfin user may have; a new one past this replaces their oldest.
+const MAX_PER_USER: usize = 5;
+/// New devices one Jellyfin user may make in an hour.
+const NEW_PER_HOUR: usize = 6;
 /// A device's key: random bytes, sent as hex.
 const KEY_BYTES: usize = 16;
 /// A device's name as shown on the PC and the phone.
@@ -86,6 +91,17 @@ struct Device {
     /// Last time it asked for its code or opened its event stream (seconds).
     #[serde(default)]
     seen: u64,
+    /// The Jellyfin user who last asked for its code.
+    #[serde(default)]
+    user: String,
+}
+
+/// A device's code as handed out. `changed`: worth writing to disk.
+struct Issued {
+    id: String,
+    code: String,
+    key: String,
+    changed: bool,
 }
 
 /// A device as the window lists it (no key).
@@ -126,6 +142,14 @@ pub struct Remote {
     tailscale: Mutex<Option<String>>,
     /// And its Tailscale IP, for the addresses shown.
     tailscale_ip: Mutex<Option<String>>,
+    /// Who is signed in to Jellyfin on each device (by device id), as last
+    /// seen: a device's code searches as them, never as the PC's owner.
+    viewers: Mutex<HashMap<String, Viewer>>,
+    /// When each Jellyfin user made a new device lately (seconds).
+    made: Mutex<HashMap<String, Vec<u64>>>,
+    /// remote.json couldn't be read this run (another program held it): the
+    /// remote stays off and nothing is saved over the file.
+    unread: bool,
 }
 
 #[derive(Serialize)]
@@ -252,7 +276,14 @@ fn header<'a>(head: &'a str, name: &str) -> Option<&'a str> {
 impl Remote {
     pub fn load(dir: PathBuf) -> Remote {
         let path = dir.join("remote.json");
-        let mut saved: Saved = crate::seal::read(&path).and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+        let read = crate::seal::read_raw(&path);
+        let unread = read.is_err();
+        let parsed = read.as_ref().ok().cloned().flatten().and_then(|t| crate::seal::open(&t)).and_then(|t| serde_json::from_str::<Saved>(&t).ok());
+        if parsed.is_none() && matches!(&read, Ok(Some(_))) {
+            // Damaged: kept aside, and the remote starts off.
+            let _ = std::fs::rename(&path, path.with_extension("json.bad"));
+        }
+        let mut saved = parsed.unwrap_or_default();
         // A device saved without a key (a test build's) can't prove itself: dropped.
         let before = saved.devices.len();
         saved.devices.retain(|d| key_valid(&d.key) && pin_valid(&d.code));
@@ -270,6 +301,9 @@ impl Remote {
             tries: Mutex::new(HashMap::new()),
             tailscale: Mutex::new(None),
             tailscale_ip: Mutex::new(None),
+            viewers: Mutex::new(HashMap::new()),
+            made: Mutex::new(HashMap::new()),
+            unread,
         };
         if (replace || r.saved.lock().unwrap().devices.len() != before) && r.path.exists() {
             r.store();
@@ -278,6 +312,9 @@ impl Remote {
     }
 
     fn store(&self) {
+        if self.unread {
+            return;
+        }
         let text = serde_json::to_string(&*self.saved.lock().unwrap()).unwrap_or_default();
         let _ = crate::seal::write(&self.path, &text);
     }
@@ -301,11 +338,11 @@ impl Remote {
         Status { on: s.on, running, url: urls.first().cloned(), urls, pin: s.pin, devices }
     }
 
-    /// The device holding `key`, as (its code, its key). A key nobody holds
-    /// (or none) makes a new device with a new key: a page can never pick the
-    /// key it's known by. `renew` gives that device a new code. Its name is
-    /// updated each time, so a renamed TV shows its new name.
-    fn device_code(&self, key: Option<&str>, name: &str, renew: bool, at: u64) -> Result<(String, String), String> {
+    /// The device holding `key`, asked for by Jellyfin user `user`. A key
+    /// nobody holds (or none) makes a new device with a new key: a page can
+    /// never pick the key it's known by. `renew` gives that device a new code.
+    /// Its name is updated each time, so a renamed TV shows its new name.
+    fn device_code(&self, key: Option<&str>, name: &str, renew: bool, user: &str, at: u64) -> Result<Issued, String> {
         const FAILED: &str = "Couldn't make a code. Try again.";
         let mut s = self.saved.lock().unwrap();
         let name = clean_name(name);
@@ -313,12 +350,28 @@ impl Remote {
         let fresh = || (0..8).find_map(|_| new_pin().filter(|c| !taken.contains(c)));
         let key = key.filter(|k| key_valid(k));
         if let Some(d) = key.and_then(|k| s.devices.iter_mut().find(|d| ct_eq(d.key.as_bytes(), k.as_bytes()))) {
+            let mut changed = d.name != name || d.user != user || at.saturating_sub(d.seen) >= 3600;
             if renew || !pin_valid(&d.code) {
                 d.code = fresh().ok_or(FAILED)?;
+                changed = true;
             }
             d.name = name;
+            d.user = user.to_string();
             d.seen = at;
-            return Ok((d.code.clone(), d.key.clone()));
+            return Ok(Issued { id: d.id.clone(), code: d.code.clone(), key: d.key.clone(), changed });
+        }
+        let mut made = self.made.lock().unwrap();
+        let recent = made.entry(user.to_string()).or_default();
+        recent.retain(|t| at.saturating_sub(*t) < 3600);
+        if recent.len() >= NEW_PER_HOUR {
+            return Err("Too many new codes for this account. Try again in an hour.".into());
+        }
+        // One account can't fill the list: its own oldest device makes room.
+        let mine = s.devices.iter().enumerate().filter(|(_, d)| d.user == user);
+        if mine.clone().count() >= MAX_PER_USER {
+            if let Some(i) = mine.min_by_key(|(_, d)| d.seen).map(|(i, _)| i) {
+                s.devices.remove(i);
+            }
         }
         if s.devices.len() >= MAX_DEVICES {
             // Only one unseen for a month makes room, so a flood of new ones
@@ -332,8 +385,29 @@ impl Remote {
             }
         }
         let (code, key, id) = (fresh().ok_or(FAILED)?, new_key(KEY_BYTES).ok_or(FAILED)?, new_key(8).ok_or(FAILED)?);
-        s.devices.push(Device { id, key: key.clone(), name, code: code.clone(), seen: at });
-        Ok((code, key))
+        s.devices.push(Device { id: id.clone(), key: key.clone(), name, code: code.clone(), seen: at, user: user.to_string() });
+        recent.push(at);
+        Ok(Issued { id, code, key, changed: true })
+    }
+
+    /// Remembers who is signed in on a device, for its code's searches.
+    fn signed_in(&self, id: &str, v: Viewer) {
+        let mut m = self.viewers.lock().unwrap();
+        if m.len() > MAX_DEVICES * 2 {
+            let s = self.saved.lock().unwrap();
+            m.retain(|k, _| s.devices.iter().any(|d| &d.id == k));
+        }
+        m.insert(id.to_string(), v);
+    }
+
+    /// Who a code's searches and requests run as: the window's own profile
+    /// (None), or whoever is signed in on the device. Err for a device nobody
+    /// has opened Chillarr on yet, which never falls back to the owner.
+    fn runs_as(&self, t: &Target) -> Result<Option<Viewer>, ()> {
+        match t {
+            Target::Window => Ok(None),
+            Target::Device(id, _) => self.viewers.lock().unwrap().get(id).cloned().map(Some).ok_or(()),
+        }
     }
 
     /// The id of the device holding `key`, marking it seen; None for a key
@@ -359,6 +433,7 @@ impl Remote {
     /// Checks a code from `ip` at time `at` (seconds), counting wrong ones.
     /// Every code is compared in full, so the time taken doesn't tell which matched.
     fn pin_ok_at(&self, ip: IpAddr, pin: &str, at: u64) -> Option<Target> {
+        let ip = lock_key(ip);
         let mut tries = self.tries.lock().unwrap();
         if tries.get(&ip).is_some_and(|t| at < t.locked_until) {
             return None;
@@ -403,9 +478,35 @@ impl Remote {
     }
 }
 
+/// What wrong codes are counted against: an IPv6 host can take any address
+/// in its /64, so the /64 counts as one address.
+fn lock_key(ip: IpAddr) -> IpAddr {
+    match ip {
+        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
+            Some(v4) => IpAddr::V4(v4),
+            None => {
+                let mut o = v6.octets();
+                o[8..].fill(0);
+                IpAddr::V6(o.into())
+            }
+        },
+        v4 => v4,
+    }
+}
+
+/// Writes remote.json off the async threads.
+async fn store_off_thread(app: &AppHandle) {
+    let h = app.clone();
+    let _ = tokio::task::spawn_blocking(move || h.state::<Remote>().store()).await;
+}
+
 /// Turns the remote on or off (and remembers it). A new code disconnects phones.
-pub fn set(app: &AppHandle, on: bool, new_code: bool) -> Status {
+pub async fn set(app: &AppHandle, on: bool, new_code: bool) -> Status {
     let r = app.state::<Remote>();
+    if r.unread {
+        unread_note(app);
+        return r.status();
+    }
     {
         let mut s = r.saved.lock().unwrap();
         s.on = on;
@@ -415,35 +516,41 @@ pub fn set(app: &AppHandle, on: bool, new_code: bool) -> Status {
             }
         }
     }
-    r.store();
+    store_off_thread(app).await;
     r.generation.fetch_add(1, Ordering::SeqCst);
     if on {
         start(app.clone());
     }
     // Give a new server a moment to bind before reporting the address.
-    std::thread::sleep(std::time::Duration::from_millis(150));
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
     r.status()
 }
 
 /// The code for the device holding `key` (a bridge command, for any signed-in
 /// page). With the remote off nothing is made: the page says it's off.
-pub fn for_device(app: &AppHandle, key: Option<&str>, name: &str, renew: bool) -> Result<DeviceStatus, String> {
+pub async fn for_device(app: &AppHandle, key: Option<&str>, name: &str, renew: bool) -> Result<DeviceStatus, String> {
+    let v = crate::viewer::current().ok_or("No viewer")?;
     let r = app.state::<Remote>();
     if !r.saved.lock().unwrap().on {
         return Ok(DeviceStatus { on: false, urls: Vec::new(), code: String::new(), key: key.unwrap_or_default().to_string() });
     }
-    let (code, key) = r.device_code(key, name, renew, now())?;
-    r.store();
-    Ok(DeviceStatus { on: true, urls: r.urls(), code, key })
+    let got = r.device_code(key, name, renew, &v.session.user_id, now())?;
+    r.signed_in(&got.id, v);
+    if got.changed {
+        store_off_thread(app).await;
+    }
+    Ok(DeviceStatus { on: true, urls: r.urls(), code: got.code, key: got.key })
 }
 
 /// The device an event stream belongs to, by the key its page sent; None
-/// for no key or one nobody holds (that stream hears no remote).
-pub fn stream_device(app: &AppHandle, key: &str) -> Option<String> {
+/// for no key or one nobody holds (that stream hears no remote). `v` is
+/// who is signed in there.
+pub async fn stream_device(app: &AppHandle, key: &str, v: &Viewer) -> Option<String> {
     let r = app.state::<Remote>();
     let (id, moved) = r.device_by_key(key, now())?;
+    r.signed_in(&id, v.clone());
     if moved {
-        r.store();
+        store_off_thread(app).await;
     }
     Some(id)
 }
@@ -465,9 +572,17 @@ async fn refresh_tailscale(app: &AppHandle) {
     *r.tailscale_ip.lock().unwrap() = ip;
 }
 
+fn unread_note(app: &AppHandle) {
+    crate::log::log(app, crate::model::Level::Red, "Chillarr couldn't open remote.json (another program may be using it), so the remote is off. Restart Chillarr to use it.");
+}
+
 /// Starts the server when the remote is on (at launch, or when switched on).
 pub fn start(app: AppHandle) {
     let r = app.state::<Remote>();
+    if r.unread {
+        unread_note(&app);
+        return;
+    }
     if !r.saved.lock().unwrap().on {
         return;
     }
@@ -584,13 +699,21 @@ async fn serve(app: AppHandle, mut sock: tokio::net::TcpStream, ip: IpAddr) -> s
             None => reply(&mut sock, "401 Unauthorized", "text/plain", b"wrong code").await,
         },
         ("POST", "/search") => {
-            if r.pin_ok(ip, &pin).is_none() {
+            let Some(target) = r.pin_ok(ip, &pin) else {
                 return reply(&mut sock, "401 Unauthorized", "text/plain", b"wrong code").await;
-            }
+            };
+            let Ok(who) = r.runs_as(&target) else {
+                return reply(&mut sock, "409 Conflict", "text/plain", b"not showing Chillarr").await;
+            };
             let v: Value = serde_json::from_slice(body).unwrap_or_default();
             let term: String = v["q"].as_str().unwrap_or_default().chars().take(80).collect();
-            let found: Vec<Value> = crate::media::search(&app, &term)
-                .await
+            // As whoever watches on that screen, so a kids' account sees only its own library.
+            let search = crate::media::search(&app, &term);
+            let found = match who {
+                Some(v) => crate::viewer::run(v, search).await,
+                None => search.await,
+            };
+            let found: Vec<Value> = found
                 .tiles
                 .into_iter()
                 .take(24)
@@ -607,14 +730,18 @@ async fn serve(app: AppHandle, mut sock: tokio::net::TcpStream, ip: IpAddr) -> s
             reply(&mut sock, "200 OK", "application/json", &json).await
         }
         ("POST", "/get") => {
-            if r.pin_ok(ip, &pin).is_none() {
+            let Some(target) = r.pin_ok(ip, &pin) else {
                 return reply(&mut sock, "401 Unauthorized", "text/plain", b"wrong code").await;
-            }
+            };
             let v: Value = serde_json::from_slice(body).unwrap_or_default();
             let Ok(tile) = serde_json::from_value::<crate::tiles::Tile>(v["tile"].clone()) else {
                 return reply(&mut sock, "400 Bad Request", "text/plain", b"bad title").await;
             };
-            let msg = crate::discover_shelf::get_for_phone(&app, tile).await;
+            let msg = match r.runs_as(&target) {
+                Ok(Some(v)) => crate::viewer::run(v, crate::discover_shelf::get_for_phone(&app, tile)).await,
+                Ok(None) => crate::discover_shelf::get_for_phone(&app, tile).await,
+                Err(()) => Err("Open Chillarr on that screen first.".to_string()),
+            };
             let json = serde_json::to_vec(&match msg { Ok(m) => serde_json::json!({ "ok": true, "msg": m }), Err(e) => serde_json::json!({ "ok": false, "msg": e }) }).unwrap_or_default();
             reply(&mut sock, "200 OK", "application/json", &json).await
         }
@@ -673,6 +800,25 @@ mod tests {
 
     fn remote() -> Remote {
         Remote::load(std::env::temp_dir().join("chillarr-remote-test-nonexistent"))
+    }
+
+    #[test]
+    fn a_remote_file_held_by_another_program_is_left_alone() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let dir = std::env::temp_dir().join(format!("chillarr-remote-held-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("remote.json");
+        std::fs::write(&file, "the remote").unwrap();
+        let held = std::fs::OpenOptions::new().read(true).share_mode(0).open(&file).unwrap();
+        let r = Remote::load(dir.clone());
+        r.store();
+        drop(held);
+        let text = std::fs::read_to_string(&file).unwrap();
+        let bad = dir.join("remote.json.bad").exists();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(r.unread && !r.saved.lock().unwrap().on);
+        assert_eq!(text, "the remote", "nothing saved over it");
+        assert!(!bad, "not put aside as damaged");
     }
 
     #[test]
@@ -757,18 +903,20 @@ mod tests {
     #[test]
     fn each_device_has_its_own_code_that_stays_until_renewed() {
         let r = remote();
+        let code = |key: Option<&str>, name: &str, renew: bool, at: u64| r.device_code(key, name, renew, "u1", at).map(|i| (i.code, i.key));
         let window = r.saved.lock().unwrap().pin.clone();
-        let (tv, tv_key) = r.device_code(None, "Living room TV", false, 10).unwrap();
-        let (phone, phone_key) = r.device_code(None, "Phone", false, 11).unwrap();
+        let (tv, tv_key) = code(None, "Living room TV", false, 10).unwrap();
+        let (phone, phone_key) = code(None, "Phone", false, 11).unwrap();
         assert!(pin_valid(&tv) && tv != phone && tv != window);
         assert!(key_valid(&tv_key) && tv_key != phone_key);
-        assert_eq!(r.device_code(Some(&tv_key), "Living room TV", false, 50).unwrap(), (tv.clone(), tv_key.clone()), "asking again keeps the code");
+        assert_eq!(code(Some(&tv_key), "Living room TV", false, 50).unwrap(), (tv.clone(), tv_key.clone()), "asking again keeps the code");
+        assert!(!r.device_code(Some(&tv_key), "Living room TV", false, "u1", 51).unwrap().changed, "nothing to write");
         let tv_id = r.device_by_key(&tv_key, 55).unwrap().0;
         let at = ip("192.168.1.9");
         assert_eq!(r.pin_ok_at(at, &tv, 60), Some(Target::Device(tv_id.clone(), "Living room TV".into())));
         assert!(matches!(r.pin_ok_at(at, &phone, 60), Some(Target::Device(id, _)) if id != tv_id));
         assert_eq!(r.pin_ok_at(at, &window, 60), Some(Target::Window));
-        let (renewed, same_key) = r.device_code(Some(&tv_key), "Bedroom TV", true, 70).unwrap();
+        let (renewed, same_key) = code(Some(&tv_key), "Bedroom TV", true, 70).unwrap();
         assert!(renewed != tv && same_key == tv_key);
         assert!(r.pin_ok_at(at, &tv, 80).is_none(), "the old code stops working");
         assert_eq!(r.pin_ok_at(at, &renewed, 80), Some(Target::Device(tv_id, "Bedroom TV".into())));
@@ -778,12 +926,13 @@ mod tests {
     #[test]
     fn only_the_device_holding_the_key_gets_its_code() {
         let r = remote();
-        let (tv, tv_key) = r.device_code(None, "TV", false, 10).unwrap();
+        let code = |key: Option<&str>, name: &str, renew: bool, at: u64| r.device_code(key, name, renew, "u1", at).map(|i| (i.code, i.key));
+        let (tv, tv_key) = code(None, "TV", false, 10).unwrap();
         let tv_id = r.device_by_key(&tv_key, 10).unwrap().0;
         // Knowing the TV's id (it's no secret) or guessing a key gets a new device, never the TV.
         for guess in [tv_id.as_str(), "00000000000000000000000000000000", "not a key", ""] {
-            let (code, key) = r.device_code(Some(guess), "Me", true, 20).unwrap();
-            assert!(code != tv && key != tv_key && key != guess, "{guess}");
+            let (c, key) = code(Some(guess), "Me", true, 20).unwrap();
+            assert!(c != tv && key != tv_key && key != guess, "{guess}");
             assert!(r.device_by_key(guess, 20).is_none(), "{guess}");
         }
         assert_eq!(r.pin_ok_at(ip("10.0.0.1"), &tv, 30), Some(Target::Device(tv_id, "TV".into())), "the TV's code wasn't renewed");
@@ -793,21 +942,54 @@ mod tests {
     #[test]
     fn devices_stay_bounded_without_pushing_out_one_in_use() {
         let r = remote();
-        let (_, tv_key) = r.device_code(None, "TV", false, 0).unwrap();
+        let tv_key = r.device_code(None, "TV", false, "family", 0).unwrap().key;
         for i in 1..MAX_DEVICES {
-            r.device_code(None, "x", false, i as u64).unwrap();
+            r.device_code(None, "x", false, &format!("u{i}"), i as u64).unwrap();
         }
         // Full of devices seen this month: a new one is turned away.
-        assert!(r.device_code(None, "new", false, 100).is_err());
+        assert!(r.device_code(None, "new", false, "someone", 100).is_err());
         assert!(r.device_by_key(&tv_key, 100).is_some(), "the TV is still there");
         // A month on, with the TV still in use, the stalest unused one makes room.
         let later = 100 + STALE_SECS + 10;
         r.device_by_key(&tv_key, later);
-        assert!(r.device_code(None, "new", false, later).is_ok());
+        assert!(r.device_code(None, "new", false, "someone", later).is_ok());
         let s = r.saved.lock().unwrap();
         assert_eq!(s.devices.len(), MAX_DEVICES);
         drop(s);
         assert!(r.device_by_key(&tv_key, later).is_some(), "the TV in use stays");
+    }
+
+    #[test]
+    fn one_account_cant_fill_the_list() {
+        let r = remote();
+        let first = r.device_code(None, "TV", false, "kid", 0).unwrap();
+        for i in 1..MAX_PER_USER as u64 {
+            r.device_code(None, "x", false, "kid", i).unwrap();
+        }
+        let mum = r.device_code(None, "Mum's TV", false, "mum", 5).unwrap();
+        // One more replaces the kid's own oldest, nobody else's.
+        r.device_code(None, "x", false, "kid", 6).unwrap();
+        assert!(r.device_by_key(&first.key, 7).is_none());
+        assert!(r.device_by_key(&mum.key, 7).is_some());
+        assert_eq!(r.saved.lock().unwrap().devices.iter().filter(|d| d.user == "kid").count(), MAX_PER_USER);
+        // Six new ones in an hour, then a wait.
+        assert!(r.device_code(None, "x", false, "kid", 8).is_err());
+        assert!(r.device_code(None, "x", false, "mum", 8).is_ok(), "only that account waits");
+        assert!(r.device_code(None, "x", false, "kid", 3700).is_ok());
+    }
+
+    #[test]
+    fn an_ipv6_network_counts_as_one_address() {
+        assert_eq!(lock_key(ip("2001:db8:1:2:aaaa::1")), lock_key(ip("2001:db8:1:2:bbbb::9")));
+        assert_ne!(lock_key(ip("2001:db8:1:2::1")), lock_key(ip("2001:db8:1:3::1")));
+        assert_eq!(lock_key(ip("::ffff:192.168.1.5")), ip("192.168.1.5"));
+        assert_eq!(lock_key(ip("192.168.1.5")), ip("192.168.1.5"));
+        let r = remote();
+        for i in 0..LOCK_AFTER {
+            r.pin_ok_at(ip(&format!("2001:db8::{:x}", i + 1)), "WRONGCODE2", 100);
+        }
+        let good = r.saved.lock().unwrap().pin.clone();
+        assert!(r.pin_ok_at(ip("2001:db8::ffff"), &good, 101).is_none(), "a new address in the same /64 is still locked");
     }
 
     #[test]

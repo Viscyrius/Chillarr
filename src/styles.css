@@ -390,6 +390,8 @@ img, svg { -webkit-user-drag: none; }
 /* Rows and tiles cascade in */
 .row { animation: rise 0.7s var(--out) both; animation-delay: calc(var(--i, 0) * 70ms + 120ms); }
 .track .tile, .results .tile, .grid-lib .tile { animation: pop 0.55s var(--out) both; animation-delay: calc(var(--j, 0) * 35ms + var(--i, 0) * 70ms + 160ms); }
+/* A kept tab put back (browse.js): no entrances, it was already on screen. */
+#view.kept .row, #view.kept .track .tile, #view.kept .grid-lib .tile, #view.kept .enter, #view.kept .hero, #view.kept .hero-copy.first > *, #view.kept .empty-state > * { animation: none !important; }
 
 /* Posters fade in once they have loaded */
 .art img { opacity: 0; transform: scale(1.04); transition: opacity 0.5s ease, transform 0.6s var(--out); }
@@ -780,6 +782,7 @@ body.nav-on .tile.top10:focus .rank { -webkit-text-stroke-color: var(--accent); 
 .sub-size-val { width: 44px; text-align: right; font: 600 14px var(--display); }
 .sub-sample { margin-top: 10px; padding: 14px 18px; border-radius: 8px; background: linear-gradient(135deg, #3a4a5c, #1b2430); text-align: center; }
 .sub-sample span { color: #fff; font-weight: 600; -webkit-text-stroke: 3px #000; paint-order: stroke fill; }
+html.no-paint-order .sub-sample span { -webkit-text-stroke: 0; text-shadow: 2px 0 0 #000, -2px 0 0 #000, 0 2px 0 #000, 0 -2px 0 #000, 1.4px 1.4px 0 #000, -1.4px 1.4px 0 #000, 1.4px -1.4px 0 #000, -1.4px -1.4px 0 #000; }
 
 /* Settings: panels and rows ease in, one after another; the nav highlight slides */
 .settings .panel > * { animation: rise 0.45s var(--out) both; }
@@ -869,6 +872,22 @@ body.nav-on .tile.top10:focus .rank { -webkit-text-stroke-color: var(--accent); 
 .osd-meter i { position: absolute; top: 0; right: auto; bottom: 0; left: 0; border-radius: 4px; background: var(--accent); }
 .osd-meter b { position: absolute; top: -3px; bottom: -3px; width: 2px; background: rgba(255,255,255,0.7); }
 .pad-osd:empty { display: none; }
+.osd-pic { display: block; border-radius: 6px; background-color: #000; background-repeat: no-repeat; box-shadow: 0 4px 16px rgba(0,0,0,0.5); }
+
+/* The player's shortcuts list (player.js) */
+.p-keys-btn { font: 700 18px var(--display); }
+.p-keys { position: absolute; top: 0; right: 0; bottom: 0; left: 0; z-index: 4; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.6); animation: fade 0.2s ease; cursor: default; }
+.p-keys-in { width: 520px; max-width: calc(100% - 32px); max-height: calc(100% - 48px); overflow: auto; padding: 22px 26px; border-radius: 14px; background: rgba(21,23,29,0.97); border: 1px solid var(--line-2); animation: pop 0.28s var(--out); }
+.p-keys h2 { margin: 0 0 12px; font: 700 20px var(--display); }
+.p-keys h3 { margin: 16px 0 8px; color: var(--muted); font: 600 13px var(--display); }
+.p-keys ul { list-style: none; margin: 0; padding: 0; }
+.p-keys li { display: flex; align-items: center; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+.p-keys li > span:last-child { text-align: right; color: #cfd0d5; margin-left: 16px; }
+.p-keys-k { display: flex; align-items: center; flex: none; }
+.p-keys-k i { font-style: normal; color: var(--muted); font-size: 12px; margin: 0 6px; }
+.p-keys kbd { min-width: 28px; height: 26px; padding: 0 8px; display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; background: rgba(255,255,255,0.12); border-bottom: 2px solid rgba(255,255,255,0.08); font: 700 12px var(--display); color: var(--text); }
+.p-keys p { margin: 14px 0 0; color: var(--muted); font-size: 13px; text-align: center; }
+html.tv .p-keys-btn, .player.pad-mode .p-keys-btn { display: none; }
 
 /* Controller mode across the app: a Big Picture-style guide at the bottom */
 .pad-guide { position: fixed; left: 50%; bottom: 18px; z-index: 60; transform: translate(-50%, 20px); opacity: 0; pointer-events: none;

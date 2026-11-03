@@ -1,7 +1,7 @@
 // The detail panel: what a title is, Play / Resume / Download, My List, and episodes.
-import { $, ask, canDelete, closeDialog, el, icon, ICON, invoke, listen, metaBits, store, toast } from "./api.js";
+import { $, ask, canDelete, closeDialog, el, getPref, icon, ICON, invoke, listen, metaBits, setPref, store, toast } from "./api.js";
 import { canWatchNow, isWatchNow, movieLike, play, removeWatchNow, watchNow } from "./player.js";
-import { completedActions, confirmRedownload, isWatched, listable, loadWatched, onMyList, setMyList } from "./mylist.js";
+import { completedActions, confirmRedownload, isWatched, listable, loadWatched, onMyList, removeContinue, resumable, setMyList } from "./mylist.js";
 import { subtitlesControl } from "./subpick.js";
 
 const dlg = $("#detail");
@@ -99,8 +99,7 @@ function stateText(r) {
 
 /** Gets one episode, the quality last picked. */
 async function downloadEpisode(r) {
-  let quality = "best";
-  try { quality = localStorage.getItem("chillarr-quality") || "best"; } catch (e) { /* storage blocked */ }
+  const quality = getPref("chillarr-quality") || "best";
   const msg = await invoke("media_get_picked", { tile: showTile(), quality, pick: { seasons: [], episodes: [[r.season, r.episode]] } });
   toast(`${msg} You'll get a notification when it's ready.`);
   store.emit("added");
@@ -698,11 +697,10 @@ listen("get-progress", (e) => {
 function downloadControls(t, isPickable, inPicker = false) {
   const get = el("button", { class: inPicker ? "btn primary" : "btn play", disabled: isPickable }, icon(ICON.download), isPickable ? "Pick what to get" : "Download");
   // The quality to ask for; the last choice is remembered.
-  let saved = "best";
-  try { saved = localStorage.getItem("chillarr-quality") || "best"; } catch (e) { /* storage blocked */ }
+  const saved = getPref("chillarr-quality") || "best";
   const quality = el("select", { class: "quality", "aria-label": "Quality" },
     [["best", "Best (720p/1080p)"], ["4k", "4K"], ["1080p", "1080p"], ["720p", "720p"]].map(([v, label]) => el("option", { value: v, text: label, selected: v === saved })));
-  quality.addEventListener("change", () => { try { localStorage.setItem("chillarr-quality", quality.value); } catch (e) { /* storage blocked */ } });
+  quality.addEventListener("change", () => setPref("chillarr-quality", quality.value));
   // Library titles get theirs in the top buttons (openDetail), so it's there even with nothing left to get.
   const subs = t.jf_id ? null : subtitlesControl(t);
   let busy = false;
@@ -742,6 +740,8 @@ function downloadControls(t, isPickable, inPicker = false) {
 }
 
 export async function openDetail(t, opts = {}) {
+  // Started part way: it can come off Continue watching from here (an episode, from its show's panel).
+  const started = resumable(t) ? t : null;
   // More info on an episode (Continue Watching) is about its show.
   if (t.kind === "episode" && t.series_id) {
     t = { ...t, kind: "series", key: `jf:${t.series_id}`, jf_id: t.series_id, subtitle: null, overview: null, progress: null, resume_seconds: null, tmdb: null, tvdb: null, played: null };
@@ -773,7 +773,9 @@ export async function openDetail(t, opts = {}) {
   $("#detail-episodes").hidden = true;
   const actions = $("#detail-actions");
   actions.replaceChildren();
-  dlg.showModal();
+  // Opened from inside itself (a Similar card, Back): already open, and a
+  // second showModal throws on Chrome before 114 (TVs).
+  if (!dlg.open) dlg.showModal();
 
   const seq = openSeq;
   const isShow = t.kind === "series" || (t.kind === "anime" && t.jf_id);
@@ -848,6 +850,10 @@ export async function openDetail(t, opts = {}) {
   if (opts.episodes) showEpisodes(seq);
   else if (listable(t) && !watching) actions.append(myListButton(t));
   if (t.jf_id && t.kind !== "episode" && !watching) actions.append(subtitlesControl(t).el, canDelete() ? deleteButton(t) : null);
+  if (started && seq === openSeq) {
+    const off = el("button", { class: "btn soft", onclick: async () => { off.disabled = true; if (await removeContinue(started)) off.remove(); else off.disabled = false; } }, "Remove from Continue watching");
+    actions.append(off);
+  }
   const tr = trailerButton(t);
   if (tr) actions.append(tr);
   else {

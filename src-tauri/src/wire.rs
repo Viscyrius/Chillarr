@@ -5,6 +5,67 @@
 //! missing is added; anything the user already set is left as it is.
 
 use serde_json::Value;
+use std::path::Path;
+
+/// An ini file (qBittorrent.ini) as read from disk, with the BOM and line
+/// endings it had, so writing it back changes only the keys that were set.
+pub struct IniFile {
+    /// The text without a BOM, with `\n` line endings.
+    pub text: String,
+    bom: bool,
+    crlf: bool,
+}
+
+impl IniFile {
+    /// A missing file reads as empty. Any other failure (locked, not UTF-8)
+    /// is an error: written back as empty, it would wipe every setting.
+    pub fn read(path: &Path) -> Result<IniFile, String> {
+        let raw = match std::fs::read_to_string(path) {
+            Ok(t) => t,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
+                return Err(format!("{} isn't plain text, so Chillarr left it alone", path.display()))
+            }
+            Err(e) => return Err(format!("Couldn't read {}: {e}", path.display())),
+        };
+        let bom = raw.starts_with('\u{feff}');
+        let raw = raw.strip_prefix('\u{feff}').unwrap_or(&raw);
+        let crlf = raw.contains("\r\n");
+        Ok(IniFile { text: raw.replace("\r\n", "\n"), bom, crlf })
+    }
+
+    /// `text` with this file's BOM and line endings.
+    pub fn encode(&self, text: &str) -> String {
+        let body = if self.crlf { text.replace("\r\n", "\n").replace('\n', "\r\n") } else { text.to_string() };
+        if self.bom { format!("\u{feff}{body}") } else { body }
+    }
+
+    /// Writes `text` over the file in one move, never half written.
+    pub fn write(&self, path: &Path, text: &str) -> Result<(), String> {
+        crate::catalog::save_atomic(path, &self.encode(text))
+    }
+}
+
+/// A string value the way Qt's QSettings writes one to an ini file. Unquoted,
+/// QSettings reads a value with a comma as a list, so a save path like
+/// `D:/Films, TV` would come back as two. Backslashes and quotes are escaped,
+/// and a leading `@` is doubled (one alone marks a typed value).
+pub fn qsettings_string(value: &str) -> String {
+    let mut out = String::new();
+    if value.starts_with('@') {
+        out.push('@');
+    }
+    for c in value.chars() {
+        if c == '\\' || c == '"' {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    if value.contains([';', ',', '=']) || value.starts_with(' ') || value.ends_with(' ') {
+        out = format!("\"{out}\"");
+    }
+    out
+}
 
 /// Sets one `key=value` in a section of an ini file, adding either if missing,
 /// and keeps everything else as it was.
@@ -173,6 +234,32 @@ pub fn pick_schema(schemas: &[Value], implementation: &str) -> Option<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn save_paths_are_written_the_way_qsettings_reads_them() {
+        assert_eq!(qsettings_string("C:/Users/anime/Downloads"), "C:/Users/anime/Downloads", "a plain path is unchanged");
+        assert_eq!(qsettings_string("D:/Films, TV"), "\"D:/Films, TV\"");
+        assert_eq!(qsettings_string("D:/a=b;c"), "\"D:/a=b;c\"");
+        assert_eq!(qsettings_string(r#"D:\say "hi""#), r#"D:\\say \"hi\""#);
+        assert_eq!(qsettings_string("@home"), "@@home");
+        assert_eq!(qsettings_string("D:/x "), "\"D:/x \"");
+    }
+
+    #[test]
+    fn an_ini_file_keeps_its_bom_and_line_endings() {
+        let dir = std::env::temp_dir().join(format!("chillarr-ini-{}", std::process::id()));
+        let path = dir.join("q.ini");
+        assert_eq!(IniFile::read(&path).unwrap().text, "", "missing is empty");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&path, "\u{feff}[A]\r\nX=1\r\n").unwrap();
+        let ini = IniFile::read(&path).unwrap();
+        assert_eq!(ini.text, "[A]\nX=1\n");
+        ini.write(&path, &set_ini_value(&ini.text, "A", "Y", "2")).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "\u{feff}[A]\r\nX=1\r\nY=2\r\n");
+        std::fs::write(&path, [0x5b, 0xff, 0xfe, 0x5d]).unwrap();
+        assert!(IniFile::read(&path).is_err(), "not UTF-8: an error, never an empty file");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn ini_values_are_set_in_place_or_added() {

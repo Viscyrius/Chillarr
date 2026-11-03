@@ -133,17 +133,47 @@ pub async fn stop_item(app: &AppHandle, owner: AppId, id: i64, forget: bool) -> 
         .as_array()
         .map(|r| r.iter().filter(|x| x[field].as_i64() == Some(id)).cloned().collect())
         .unwrap_or_default();
-    let grabbed = grabbed_hashes(&a, owner, id).await;
+    let grabs = grab_records(&a, owner, id).await;
+    let grabbed = hashes_of(&grabs);
     remove_from_queue(&a, &recs).await?;
-    delete_unfinished(app, &grabbed).await;
+    let deleted = delete_unfinished(app, &grabbed).await;
     // A missing field counts as "has files": the title is only forgotten when it surely has none.
     let files = if owner == AppId::Radarr { (item["hasFile"] != false) as i64 } else { item["statistics"]["episodeFileCount"].as_i64().unwrap_or(1) };
     if forget && files == 0 {
         a.delete(&format!("{kind}/{id}?deleteFiles=false&addImportExclusion=false")).await.map_err(|e| format!("Couldn't stop {title}: {e}"))?;
         return Ok(format!("Stopped {title}."));
     }
-    unwant(&a, owner, id, &recs).await;
+    // A grab not in the queue yet (stopped right after it) has its torrent
+    // deleted above: its episodes stop being wanted too, or the next search
+    // grabs them again.
+    let mut covered = recs.clone();
+    covered.extend(grabs_of(&grabs, &deleted));
+    unwant(&a, owner, id, &covered).await;
     Ok(if recs.is_empty() { format!("Stopped {title}.") } else { format!("Cancelled the download of {title}.") })
+}
+
+/// Grab records Radarr/Sonarr have for a title, from their history.
+async fn grab_records(a: &crate::arr::Arr, owner: AppId, id: i64) -> Vec<Value> {
+    let path = if owner == AppId::Radarr { format!("history/movie?movieId={id}") } else { format!("history/series?seriesId={id}") };
+    a.list(&path).await.unwrap_or_default().into_iter().filter(|r| r["eventType"] == "grabbed").collect()
+}
+
+/// The torrents (lower case) those grabs were.
+fn hashes_of(grabs: &[Value]) -> Vec<String> {
+    let mut out: Vec<String> = grabs.iter().filter_map(|r| r["downloadId"].as_str().map(|h| h.to_ascii_lowercase())).collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// The grabs of these torrents, as stand-ins for queue rows (with
+/// `episodeId` for a show). No queue id, so remove_from_queue skips them.
+fn grabs_of(grabs: &[Value], hashes: &[String]) -> Vec<Value> {
+    grabs
+        .iter()
+        .filter(|r| r["downloadId"].as_str().is_some_and(|h| hashes.contains(&h.to_ascii_lowercase())))
+        .map(|r| json!({ "episodeId": r["episodeId"].clone() }))
+        .collect()
 }
 
 pub(crate) fn qbit(app: &AppHandle) -> Option<crate::qbit::Qbit> {
@@ -514,17 +544,20 @@ async fn grabbed_hashes(a: &crate::arr::Arr, owner: AppId, id: i64) -> Vec<Strin
 }
 
 /// Deletes those of `hashes` that are still downloading (finished ones may be
-/// seeding a file in the library, so they stay).
-async fn delete_unfinished(app: &AppHandle, hashes: &[String]) {
-    let Some(q) = qbit(app) else { return };
-    let Ok(all) = q.list().await else { return };
+/// seeding a file in the library, so they stay). Returns the ones deleted.
+async fn delete_unfinished(app: &AppHandle, hashes: &[String]) -> Vec<String> {
+    let Some(q) = qbit(app) else { return vec![] };
+    let Ok(all) = q.list().await else { return vec![] };
     let doomed: Vec<String> = all
         .iter()
         .filter(|t| t["progress"].as_f64().unwrap_or(0.0) < 1.0)
         .filter_map(|t| t["hash"].as_str().map(|h| h.to_ascii_lowercase()))
         .filter(|h| hashes.contains(h))
         .collect();
-    let _ = q.delete(&doomed, true).await;
+    if doomed.is_empty() || q.delete(&doomed, true).await.is_err() {
+        return vec![];
+    }
+    doomed
 }
 
 /// Takes queue rows out of Radarr/Sonarr and their torrents out of qBittorrent.
@@ -554,10 +587,56 @@ async fn unwant(a: &crate::arr::Arr, owner: AppId, id: i64, recs: &[Value]) {
     }
 }
 
+/// What a delete from Jellyfin's web pages acts on: the title the viewer can
+/// open in Jellyfin, by its own ids. The page's tile is never trusted, since
+/// its tmdb/tvdb could name any title on the PC. None for the window, which
+/// deletes the tile as it is, and for a Jellyfin admin, who already runs
+/// storage for the whole PC (Library & storage lists Radarr/Sonarr titles
+/// Jellyfin hasn't matched, with no Jellyfin id).
+async fn seen_tile(app: &AppHandle, tile: &Tile) -> Result<Option<Tile>, String> {
+    let Some(v) = crate::viewer::current() else { return Ok(None) };
+    if v.admin {
+        return Ok(None);
+    }
+    let id = tile.jf_id.as_deref().filter(|id| !id.is_empty() && id.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-')).ok_or("Only titles in your Jellyfin can be deleted here.")?;
+    let j = crate::media::jf(app).ok_or("Jellyfin isn't answering.")?;
+    let get = |id: String| {
+        let j = &j;
+        let path = format!("/Users/{}/Items/{id}", v.session.user_id);
+        async move { j.get_json(&path).await.map_err(|_| "That title isn't in your Jellyfin.".to_string()) }
+    };
+    let mut item = get(id.to_string()).await?;
+    // An episode or season stands for its show.
+    if matches!(item["Type"].as_str(), Some("Episode" | "Season")) {
+        let sid = item["SeriesId"].as_str().ok_or("That title isn't in your Jellyfin.")?.to_string();
+        item = get(sid).await?;
+    }
+    from_item(&item).map(Some)
+}
+
+/// A movie or show as Jellyfin has it: its id, name and provider ids, nothing else.
+fn from_item(item: &Value) -> Result<Tile, String> {
+    let kind = match item["Type"].as_str() {
+        Some("Movie") => "movie",
+        Some("Series") => "series",
+        _ => return Err("Only movies and shows can be deleted here.".into()),
+    };
+    let id = item["Id"].as_str().filter(|s| !s.is_empty()).ok_or("That title isn't in your Jellyfin.")?;
+    let provider = |k: &str| item["ProviderIds"][k].as_str().and_then(|s| s.parse().ok());
+    let mut t = Tile::new(&format!("jf:{id}"), kind, item["Name"].as_str().unwrap_or_default());
+    t.jf_id = Some(id.to_string());
+    t.year = item["ProductionYear"].as_i64();
+    t.tmdb = provider("Tmdb");
+    t.tvdb = provider("Tvdb");
+    Ok(t)
+}
+
 /// Deletes a movie or show from the library, files included. Radarr/Sonarr
 /// do it when they have the title (so they don't fetch it back); otherwise
 /// Jellyfin does. Then Jellyfin forgets it.
 pub async fn delete_title(app: &AppHandle, tile: &Tile) -> Result<String, String> {
+    let seen = seen_tile(app, tile).await?;
+    let tile = seen.as_ref().unwrap_or(tile);
     let j = jf_admin(app).filter(|j| j.user_id.is_some());
     let (mut tmdb, mut tvdb) = (tile.tmdb, tile.tvdb);
     if let (Some(j), Some(id)) = (&j, &tile.jf_id) {
@@ -617,6 +696,11 @@ pub async fn delete_title(app: &AppHandle, tile: &Tile) -> Result<String, String
 pub async fn delete_episodes(app: &AppHandle, tile: &Tile, episodes: &[(i64, i64)]) -> Result<String, String> {
     if episodes.is_empty() {
         return Err("Pick the episodes to delete first.".into());
+    }
+    let seen = seen_tile(app, tile).await?;
+    let tile = seen.as_ref().unwrap_or(tile);
+    if seen.as_ref().is_some_and(|t| t.kind == "movie") {
+        return Err("Only shows have episodes to delete.".into());
     }
     let (a, lookup, _, _) = crate::media::series_lookup(app, tile).await?;
     let title = lookup["title"].as_str().unwrap_or(&tile.title).to_string();
@@ -1015,6 +1099,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_web_delete_takes_its_ids_from_jellyfin_only() {
+        let item = json!({ "Id": "abc123", "Type": "Series", "Name": "Show", "ProductionYear": 2020, "ProviderIds": { "Tvdb": "81189", "Tmdb": "1396" } });
+        let t = from_item(&item).unwrap();
+        assert_eq!((t.kind.as_str(), t.jf_id.as_deref(), t.tvdb, t.tmdb, t.title.as_str()), ("series", Some("abc123"), Some(81189), Some(1396), "Show"));
+        assert_eq!(from_item(&json!({ "Id": "m1", "Type": "Movie", "ProviderIds": {} })).unwrap().tmdb, None, "no provider id: none is made up");
+        assert!(from_item(&json!({ "Id": "f1", "Type": "Folder" })).is_err());
+        assert!(from_item(&json!({ "Type": "Movie" })).is_err());
+    }
+
+    #[test]
     fn watch_now_downloads_are_left_out_of_downloading_now() {
         let d = |id: &str| Download { tile: Tile::new(&format!("dl:{id}"), "movie", id), app: "radarr", download_id: id.into() };
         let owned: HashSet<String> = ["abc".to_string()].into();
@@ -1085,5 +1179,15 @@ mod tests {
         // Only Watch now wants anything: its file still stays.
         assert_eq!(files_to_skip(&files, &release, &[(1, 2)]), vec![0, 2]);
         assert!(files_to_skip(&files, &release, &[]).is_empty());
+    }
+    #[test]
+    fn a_stop_right_after_a_grab_unwants_what_the_grab_was_for() {
+        let grab = |h: &str, e: i64| json!({ "eventType": "grabbed", "downloadId": h, "episodeId": e });
+        let grabs = vec![grab("AAA", 1), grab("AAA", 2), grab("bbb", 3), grab("CCC", 4)];
+        assert_eq!(hashes_of(&grabs), vec!["aaa", "bbb", "ccc"]);
+        // AAA was still downloading and got deleted; bbb had finished and stays.
+        let ids: Vec<i64> = grabs_of(&grabs, &["aaa".to_string()]).iter().filter_map(|r| r["episodeId"].as_i64()).collect();
+        assert_eq!(ids, vec![1, 2]);
+        assert!(grabs_of(&grabs, &["aaa".to_string()]).iter().all(|r| r["id"].is_null()), "no queue id: never sent to the queue");
     }
 }

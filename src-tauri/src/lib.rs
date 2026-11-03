@@ -205,8 +205,8 @@ async fn profiles_add(app: AppHandle, name: String, color: String, pin: Option<S
 }
 
 #[tauri::command]
-fn profiles_switch(app: AppHandle, id: String, pin: Option<String>) -> Result<(), String> {
-    profiles::switch(&app, &id, pin)
+async fn profiles_switch(app: AppHandle, id: String, pin: Option<String>, login: Option<String>) -> Result<(), String> {
+    profiles::switch(&app, &id, pin, login).await
 }
 
 /// Settings > Profiles: browsers that typed the main profile's password ask again.
@@ -216,8 +216,8 @@ fn profiles_forget_web_devices(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn profiles_check_pin(app: AppHandle, id: String, pin: String) -> Result<(), String> {
-    profiles::verify_pin(&app, &id, &pin)
+async fn profiles_check_pin(app: AppHandle, id: String, pin: String) -> Result<(), String> {
+    profiles::verify_pin(&app, &id, pin).await
 }
 
 #[tauri::command]
@@ -342,8 +342,8 @@ fn remote_status(app: AppHandle) -> remote::Status {
 }
 
 #[tauri::command]
-fn remote_set(app: AppHandle, on: bool, new_code: bool) -> remote::Status {
-    remote::set(&app, on, new_code)
+async fn remote_set(app: AppHandle, on: bool, new_code: bool) -> remote::Status {
+    remote::set(&app, on, new_code).await
 }
 
 #[tauri::command]
@@ -437,6 +437,11 @@ fn subs_set(app: AppHandle, key: String, title: String, langs: Vec<String>) -> R
 #[tauri::command]
 async fn media_report(app: AppHandle, what: String, body: serde_json::Value) -> Result<(), String> {
     media::report(&app, &what, body).await
+}
+
+#[tauri::command]
+async fn media_forget_resume(app: AppHandle, id: String) -> Result<(), String> {
+    media::forget_resume(&app, &id).await
 }
 
 #[tauri::command]
@@ -736,6 +741,7 @@ pub fn run() {
             meili_set,
             media_play,
             media_report,
+            media_forget_resume,
             media_get,
             media_play_vlc,
             media_explore,

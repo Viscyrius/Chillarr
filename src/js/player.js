@@ -1,6 +1,6 @@
 // The in-app player. Jellyfin decides how to send each file: as-is when the
 // app can play it, or converted on the fly into an HLS stream (played with hls.js).
-import { $, ask, el, fmtTime, icon, invoke, listen, screenMode, store, toast, windowFull } from "./api.js";
+import { $, ask, el, fmtTime, getPref, icon, invoke, listen, screenMode, setPref, store, toast, windowFull } from "./api.js";
 import { SubRenderer, parseAss, parseVtt, setSubScale, subScale } from "./subrender.js";
 import { buffering, caughtUp, inGroup, loadedHere, openTogether, requestPause, requestPlay, requestSeek, startedHere } from "./syncplay.js";
 
@@ -22,10 +22,17 @@ const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2];
 // and a limiter (Web Audio), so loud scenes get louder without crackling.
 const MAX_VOL = 3;
 let level = 1;
-try { level = Math.min(MAX_VOL, Math.max(0, Number(localStorage.getItem("chillarr-volume") ?? 1) || 0)); } catch (e) { /* storage blocked */ }
 // Night mode: quiet talk up, explosions down (a compressor, like VLC's).
 let night = false;
-try { night = localStorage.getItem("chillarr-night") === "1"; } catch (e) { /* storage blocked */ }
+/** Volume and night mode as whoever is watching left them (read each time a title loads). */
+function readPrefs() {
+  level = Math.min(MAX_VOL, Math.max(0, Number(getPref("chillarr-volume") ?? 1) || 0));
+  night = getPref("chillarr-night") === "1";
+  video.volume = Math.min(1, level);
+  const v = $("#p-volume");
+  v.value = level;
+  fill(v);
+}
 // Sound delay for this title, in seconds; only later (see setSoundDelay).
 let soundDelay = 0;
 const MAX_SOUND_DELAY = 3;
@@ -54,6 +61,25 @@ let pendingCtx = null;
 function armGesture(ctx) {
   // Browsers start a context only after a tap, click or key: the next one starts it.
   const go = () => { ["click", "keydown", "touchend"].forEach((t) => document.removeEventListener(t, go, true)); ctx.resume().then(route, () => {}); };
+  ["click", "keydown", "touchend"].forEach((t) => document.addEventListener(t, go, true));
+}
+// How long the player stays shut before the sound graph rests (close()).
+const REST_AFTER = 60000;
+let restTimer = 0, wakeArmed = false;
+/** The sound graph running again for a title: at once where the browser
+ *  allows it (load() runs in the tap that opened it), else at the next tap or
+ *  key (a browser can leave resume() waiting for one without saying no). */
+function wakeSound() {
+  clearTimeout(restTimer);
+  if (graph?.ctx.state !== "suspended") return;
+  graph.ctx.resume().catch(() => {});
+  if (wakeArmed) return;
+  wakeArmed = true;
+  const go = () => {
+    ["click", "keydown", "touchend"].forEach((t) => document.removeEventListener(t, go, true));
+    wakeArmed = false;
+    if (graph?.ctx.state === "suspended") graph.ctx.resume().catch(() => {});
+  };
   ["click", "keydown", "touchend"].forEach((t) => document.addEventListener(t, go, true));
 }
 function route() {
@@ -211,10 +237,10 @@ let loadSeq = 0;
 /* ---------- Subtitles ---------- */
 // The language last picked (or "off"), so the next episode starts the same way.
 function subPref() {
-  try { return JSON.parse(localStorage.getItem("chillarr-subs") || "null"); } catch (e) { return null; }
+  try { return JSON.parse(getPref("chillarr-subs") || "null"); } catch (e) { return null; }
 }
 function saveSubPref(p) {
-  try { localStorage.setItem("chillarr-subs", JSON.stringify(p)); } catch (e) { /* storage blocked */ }
+  setPref("chillarr-subs", JSON.stringify(p));
 }
 const isEnglish = (lang) => !lang || /^en/i.test(lang);
 
@@ -360,7 +386,25 @@ function pickSub(s) {
   else showSub(s.index);
 }
 
+/* The audio language picked for a show, so its next episode starts in it too
+   (the way subtitles carry over). Per show: a film keeps its own default. */
+const showOf = (t) => (t?.kind === "episode" ? t.title : null);
+function saveAudioPref(tile, a) {
+  const show = showOf(tile);
+  if (show) setPref("chillarr-audio", JSON.stringify({ show, lang: a.lang || null }));
+}
+/** The track in the language last picked for this show, when the file starts in another. */
+function carriedAudio(tile, info) {
+  let p = null;
+  try { p = JSON.parse(getPref("chillarr-audio") || "null"); } catch (e) { return null; }
+  if (!p?.lang || p.show !== showOf(tile)) return null;
+  const def = info.audio.find((a) => a.default) || info.audio[0];
+  if (!def || def.lang === p.lang) return null;
+  return info.audio.find((a) => a.lang === p.lang)?.index ?? null;
+}
+
 function pickAudio(a) {
+  saveAudioPref(session.tile, a);
   report("stop");
   load(session.tile, session.playlist, now(), { audio: a.index, subtitle: session.burn });
 }
@@ -380,7 +424,7 @@ function setVolume(v) {
   route();
   $("#p-volume").value = level;
   fill($("#p-volume"));
-  try { localStorage.setItem("chillarr-volume", String(level)); } catch (e) { /* storage blocked */ }
+  setPref("chillarr-volume", String(level));
   padRefresh();
   volView();
 }
@@ -389,7 +433,7 @@ function setNight(on) {
   const why = noWebAudio();
   if (on && why) { osd(`Night mode: ${why.toLowerCase()}`); padRefresh(); return; }
   night = on;
-  try { localStorage.setItem("chillarr-night", on ? "1" : "0"); } catch (e) { /* storage blocked */ }
+  setPref("chillarr-night", on ? "1" : "0");
   route();
   padRefresh();
   osd(on ? "Night mode on: quiet talk louder, loud parts softer" : "Night mode off");
@@ -399,7 +443,7 @@ function setNight(on) {
    Only "later": a browser can hold the sound back, but can't play it ahead
    of the picture. */
 function soundDelays() {
-  try { return JSON.parse(localStorage.getItem("chillarr-sound-delay") || "{}"); } catch (e) { return {}; }
+  try { return JSON.parse(getPref("chillarr-sound-delay") || "{}") || {}; } catch (e) { return {}; }
 }
 const soundDelayOf = (tile) => +(soundDelays()[tile?.jf_id] || 0);
 function setSoundDelay(v) {
@@ -408,7 +452,7 @@ function setSoundDelay(v) {
   if (soundDelay) all[session.tile.jf_id] = soundDelay; else delete all[session.tile.jf_id];
   const keys = Object.keys(all);
   if (keys.length > 300) delete all[keys[0]];
-  try { localStorage.setItem("chillarr-sound-delay", JSON.stringify(all)); } catch (e) { /* storage blocked */ }
+  setPref("chillarr-sound-delay", JSON.stringify(all));
   route();
   osd(`Sound delay ${soundDelay ? `+${soundDelay.toFixed(1)} s` : "off"}`);
   const v2 = $("#p-menu .p-sound-val");
@@ -420,6 +464,7 @@ const volText = () => (video.muted ? "Muted" : `Volume ${Math.round(level * 100)
 async function load(tile, playlist, startAt, opts = {}) {
   const { audio = null, subtitle = null, preferExternal = null, watchKey = null } = opts;
   const seq = ++loadSeq;
+  wakeSound();
   $("#p-spinner").hidden = false;
   let info;
   try {
@@ -432,10 +477,16 @@ async function load(tile, playlist, startAt, opts = {}) {
   }
   // Back was pressed, or another title started, while this one was loading.
   if (seq !== loadSeq || box.hidden) return;
+  // A new episode of a show you picked another language for: asked again in it.
+  if (audio == null && session?.tile.jf_id !== tile.jf_id) {
+    const carried = carriedAudio(tile, info);
+    if (carried != null) return load(tile, playlist, startAt, { ...opts, audio: carried });
+  }
   teardown();
   // Jellyfin renumbers subtitle tracks when one is added, so nothing carries over.
   subCache.clear();
   // A saved volume past 100%, night mode or this title's sound delay (only ever after a click).
+  readPrefs();
   soundDelay = soundDelayOf(tile);
   // The browser playing HLS itself (iPhone without hls.js): its sound can't go through Web Audio.
   nativeHls = !!info.hls && !(window.Hls && window.Hls.isSupported());
@@ -488,8 +539,11 @@ async function load(tile, playlist, startAt, opts = {}) {
     else startedHere(tile, startAt || 0);
   } else {
     try { await video.play(); } catch (e) { /* the user can press play */ }
+    // Another load (a track, Next) or Back while it started: that one reports.
+    if (seq !== loadSeq || box.hidden) return;
   }
   report("start");
+  clearInterval(reportTimer);
   reportTimer = setInterval(() => { report("progress"); keepWatch(); }, 10000);
 }
 
@@ -539,6 +593,8 @@ export async function playTile(tile, playlist = null) {
 
 function close(sendStop = true) {
   loadSeq++;
+  showKeys(false);
+  seekTip.hidden = true;
   if (sendStop) report("stop");
   dropEarly();
   leaveWatch();
@@ -549,6 +605,11 @@ function close(sendStop = true) {
   hideSkip();
   hideUpnext();
   exitPad(true);
+  // Nothing plays through it now, so it rests, but only once the player has
+  // stayed shut a while: a context suspended may only start again on a tap,
+  // and the next title (a remote, autoplay) may start without one.
+  clearTimeout(restTimer);
+  restTimer = setTimeout(() => { if (box.hidden && graph?.ctx.state === "running") graph.ctx.suspend().catch(() => {}); }, REST_AFTER);
   box.hidden = true;
   document.body.style.overflow = "";
   $("#p-menu").hidden = true;
@@ -728,16 +789,14 @@ $("#p-play").addEventListener("click", togglePlay);
 $("#p-back10").addEventListener("click", () => seekBy(-10));
 $("#p-fwd10").addEventListener("click", () => seekBy(10));
 $("#p-volume").addEventListener("input", (e) => { setVolume(+e.target.value); volOsd(); });
-$("#p-volume").value = level;
-video.volume = Math.min(1, level);
-fill($("#p-volume"));
+readPrefs();
 $("#p-full").addEventListener("click", toggleFull);
 $("#p-next").addEventListener("click", playNext);
 // Like Jellyfin: a click anywhere on the picture (not on a control) plays or
 // pauses, a double click goes full screen; the wheel is the volume, like VLC.
 // The bars count as the picture only while they're hidden: with them up, the
 // space between the buttons is part of the controls, like in Jellyfin.
-const onPicture = (e) => !e.target.closest("button, input, select, label, a, .p-menu, .p-upnext, .p-wait, .p-seek, .pad-panel, .pad-bar, .p-title")
+const onPicture = (e) => !e.target.closest("button, input, select, label, a, .p-menu, .p-upnext, .p-wait, .p-seek, .pad-panel, .pad-bar, .p-title, .p-keys")
   && !(shown() && e.target.closest(".p-top, .p-bottom"));
 // A finger is different: a tap on the picture shows or hides the bars (the
 // big play button pauses), and a tap on the controls keeps them up.
@@ -775,6 +834,7 @@ const seekTip = $("#p-seek-tip");
 seek.addEventListener("mousemove", (e) => {
   const d = total();
   if (!d) return;
+  clearTimeout(tipTimer);
   const r = seek.getBoundingClientRect();
   const x = Math.max(0, Math.min(r.width, e.clientX - r.left));
   const at = (x / r.width) * d;
@@ -785,22 +845,42 @@ seek.addEventListener("mousemove", (e) => {
 });
 seek.addEventListener("mouseleave", () => (seekTip.hidden = true));
 
-/** Jellyfin's preview picture for time `at` (trickplay.rs), or false when it has none. */
-function tipPicture(at) {
+/** The style that shows Jellyfin's preview picture for time `at` (trickplay.rs) `shown` px wide, or null when it has none. */
+function trickStyle(at, shown = 192) {
   const t = session?.info.trickplay;
-  const pic = $("#p-seek-pic");
-  if (!t || !t.count) { pic.hidden = true; return false; }
-  const shown = 192, scale = shown / t.w;
-  const i = Math.min(t.count - 1, Math.floor((at * 1000) / t.interval));
+  if (!t || !t.count) return null;
+  const scale = shown / t.w;
+  const i = Math.max(0, Math.min(t.count - 1, Math.floor((at * 1000) / t.interval)));
   const per = t.cols * t.rows, n = i % per;
-  Object.assign(pic.style, {
+  return {
     width: `${shown}px`, height: `${t.h * scale}px`,
     backgroundImage: `url("${t.url.replace("{n}", Math.floor(i / per))}")`,
     backgroundSize: `${t.cols * t.w * scale}px ${t.rows * t.h * scale}px`,
     backgroundPosition: `${-(n % t.cols) * t.w * scale}px ${-Math.floor(n / t.cols) * t.h * scale}px`,
-  });
-  pic.hidden = false;
-  return true;
+  };
+}
+
+/** The preview picture for time `at` in the seek bar's tip, or false when there is none. */
+function tipPicture(at) {
+  const pic = $("#p-seek-pic");
+  const st = trickStyle(at);
+  pic.hidden = !st;
+  if (st) Object.assign(pic.style, st);
+  return !!st;
+}
+
+/* A seek by key, remote or controller shows the picture it lands on over
+   the bar too, for a moment, like a hover does. */
+let tipTimer = 0;
+function keyTip(at) {
+  const d = total();
+  if (!d || !tipPicture(at)) return;
+  const r = seek.getBoundingClientRect();
+  $("#p-seek-time").textContent = fmtTime(at);
+  seekTip.style.left = `${Math.max(100, Math.min(r.width - 100, (at / d) * r.width))}px`;
+  seekTip.hidden = false;
+  clearTimeout(tipTimer);
+  tipTimer = setTimeout(() => { if (!seek.matches(":hover")) seekTip.hidden = true; }, 1400);
 }
 
 const flashFor = () => { const asked = performance.now() - flashWanted < 1500; flashWanted = 0; return asked; };
@@ -817,7 +897,7 @@ function wireVideo(v) {
   });
   v.addEventListener("play", () => {
     if (flashFor()) flash(PLAY);
-    if (graph?.ctx.state === "suspended") graph.ctx.resume().catch(() => {});
+    wakeSound();
     $("#p-play-icon").setAttribute("d", PAUSE);
     padRefresh();
     // Playing again with the controller overlay up: let it fade on its own.
@@ -1008,6 +1088,15 @@ window.addEventListener("mousemove", (e) => {
 
 window.addEventListener("keydown", (e) => {
   if (box.hidden) return;
+  // A dialog over the player (Watch together, a question) takes the keys
+  // first: its own Esc, and nav.js for the arrows and a remote's Back.
+  if (document.querySelector("dialog[open]:not(.closing)")) return;
+  // The shortcuts list: Esc, a remote's Back or ? again closes it; nothing else runs under it.
+  if (!keysBox.hidden) {
+    if (e.key === "Escape" || e.key === "?" || [461, 10009].includes(e.keyCode) || e.key === "GoBack" || e.key === "BrowserBack") showKeys(false);
+    if (e.key !== "Tab") e.preventDefault();
+    return;
+  }
   if (e.isTrusted) exitPad();
   // The menu's language list, or a shortcut with Ctrl / Alt, isn't ours.
   if (e.target.tagName === "SELECT" || e.ctrlKey || e.altKey || e.metaKey) return;
@@ -1034,7 +1123,8 @@ window.addEventListener("keydown", (e) => {
   else if (k === "s") skipNow();
   else if (k === "g") nudgeSub(-0.1);
   else if (k === "h") nudgeSub(0.1);
-  else if (/^[0-9]$/.test(k) && total()) { seekTo(total() * (+k / 10)); osd(`Jumped to ${+k * 10}%`, `${fmtTime(total() * (+k / 10))} / ${fmtTime(total())}`); }
+  else if (/^[0-9]$/.test(k) && total()) { seekTo(total() * (+k / 10)); osd(`Jumped to ${+k * 10}%`, `${fmtTime(total() * (+k / 10))} / ${fmtTime(total())}`); keyTip(total() * (+k / 10)); }
+  else if (k === "?") showKeys(true);
   // Esc steps back one thing at a time: the menu, then full screen, then the player.
   else if (k === "Escape") { if (!$("#p-menu").hidden) $("#p-menu").hidden = true; else if (full) setFull(false); else close(); }
   else used = false;
@@ -1043,6 +1133,43 @@ window.addEventListener("keydown", (e) => {
   // Phone remote keys arrive here too; with a controller in hand, show its overlay.
   if (pad.on) padWake(); else poke();
 });
+
+/* ---------- Shortcuts list ---------- */
+// What the keydown handler above does, as a list over the picture: "?" or the
+// bar's ? button opens it; Esc, Back, ? or a click closes it.
+const KEYS = [
+  [["Space", "K"], "Play or pause"],
+  [["\u2190", "J"], "Back 10 seconds"],
+  [["\u2192", "L"], "Forward 10 seconds"],
+  [["\u2191", "\u2193"], "Volume"],
+  [["M"], "Mute"],
+  [["0", "9"], "Jump to 0% to 90%"],
+  [["S"], "Skip intro or recap"],
+  [["G", "H"], "Subtitles earlier or later"],
+  [["N"], "Night mode"],
+  [["F"], "Full screen"],
+  [["Esc"], "Close a menu, leave full screen, then the player"],
+  [["?"], "This list"],
+];
+const MOUSE = [["Click", "Play or pause"], ["Double click", "Full screen"], ["Wheel", "Volume"]];
+const keysBox = el("div", { class: "p-keys", id: "p-keys-list", role: "dialog", "aria-label": "Keyboard shortcuts", hidden: true });
+box.append(keysBox);
+keysBox.addEventListener("click", () => showKeys(false));
+$("#p-keys").addEventListener("click", (e) => { e.stopPropagation(); showKeys(true); });
+
+function showKeys(on) {
+  if (on === !keysBox.hidden) return;
+  if (!on) { keysBox.hidden = true; poke(); return; }
+  $("#p-menu").hidden = true;
+  const row = (keys, what) => el("li", {}, el("span", { class: "p-keys-k" }, keys.map((k, i) => [i ? el("i", { text: k === "9" ? "to" : "or" }) : null, el("kbd", { text: k })])), el("span", { text: what }));
+  keysBox.replaceChildren(el("div", { class: "p-keys-in" },
+    el("h2", { text: "Keyboard shortcuts" }),
+    el("ul", {}, KEYS.map(([k, w]) => row(k, w))),
+    el("h3", { text: "Mouse" }),
+    el("ul", {}, MOUSE.map(([k, w]) => row([k], w))),
+    el("p", { text: "Press Esc or ? to close" })));
+  keysBox.hidden = false;
+}
 
 /* ---------- Controller mode ---------- */
 // Picking up a game pad swaps the mouse controls for a bar of big buttons,
@@ -1136,9 +1263,12 @@ function padHide() {
 /** A short note at the top of the picture (skips, volume, subtitle delay), like VLC's.
  *  With a controller, only for shortcuts used while its overlay is hidden. */
 const OSD_FOR = 3000;
-function osd(text, small = null, meter = null) {
+function osd(text, small = null, meter = null, picAt = null) {
   if (pad.on && shown()) return;
   const kids = [el("strong", { text })];
+  // A controller seek with its bar hidden: the picture goes here, not over the bar.
+  const st = picAt != null && pad.on ? trickStyle(picAt, 240) : null;
+  if (st) { const pic = el("span", { class: "osd-pic" }); Object.assign(pic.style, st); kids.push(pic); }
   if (small) kids.push(el("small", { text: small }));
   if (meter != null) {
     // VLC-style level bar; the mark is 100%.
@@ -1194,7 +1324,8 @@ function seekBy(d) {
   seekRun.to = Math.max(0, Math.min(total() - 1, from + d));
   seekRun.at = t;
   seekTo(seekRun.to);
-  osd(`${seekRun.sum > 0 ? "Forward" : "Back"} ${howLong(Math.abs(seekRun.sum))}`, `${fmtTime(seekRun.to)} / ${fmtTime(total())}`);
+  osd(`${seekRun.sum > 0 ? "Forward" : "Back"} ${howLong(Math.abs(seekRun.sum))}`, `${fmtTime(seekRun.to)} / ${fmtTime(total())}`, null, seekRun.to);
+  if (!pad.on || shown()) keyTip(seekRun.to);
 }
 
 function volumeBy(d) {
@@ -1409,6 +1540,7 @@ function panelInput(a) {
 /** One controller button, from nav.js. True when the player used it (always, while it is open). */
 export function padInput(a) {
   if (box.hidden) return false;
+  if (!keysBox.hidden) { if (a === "back" || a === "select") showKeys(false); return true; }
   if (!pad.on) enterPad();
   if (pad.panel) { panelInput(a); return true; }
   // Shortcuts that work with the overlay up or hidden.
