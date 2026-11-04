@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.11.2 (2026-11-04)
+- Settings are much simpler. The everyday options come first, and technical ones are folded under More options or listed under Advanced. Nothing was taken away.
+- System is now Status, and it just tells you if everything is working. The list of apps opens by itself if something breaks.
+- Jellyfin & streaming is now Account & devices, with how to watch on your TV or phone near the top. Indexers is now Download sites.
+- Explanations are shorter and use plainer words.
+- OpenSubtitles is now a choice at the end of setup: Set it up or Skip, with a link to make a free account. You can still set it up later in Settings.
+
 ## 0.11.1 (2026-11-04)
 - Tabs open at once. Each one shows what it had last time, even right after starting Chillarr, and updates what changed a moment later. Every tab is also made ready in the background shortly after starting.
 - Everything loads faster: Chillarr asks your apps for things side by side instead of one after another, shares answers instead of asking for the same list over and over, and only works out what the tab you opened needs. Animations are quicker too, so nothing is held back from view.
