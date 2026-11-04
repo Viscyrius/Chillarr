@@ -1777,6 +1777,18 @@ html.no-grid .pf-fields > * + *, html.no-grid .skel-copy > * + * { margin-top: 1
 .done-note ul { margin: 6px 0 4px; padding-left: 18px; font-size: 14px; }
 .done-screen .setup-go { margin-top: 22px; }
 
+/* Settings: folded-away options, the Advanced label, the subtitle sign-in */
+.more { margin-top: 28px; }
+.more > summary { cursor: pointer; width: fit-content; padding: 8px 12px 8px 8px; border-radius: 8px; color: var(--muted); font-weight: 600; font-size: 14px; }
+.more > summary:hover { color: var(--text); background: rgba(255,255,255,0.06); }
+.more > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.more[open] > summary { margin-bottom: 14px; }
+.nav-label { margin: 18px 0 4px; padding: 0 12px; color: var(--muted); font-size: 12px; font-weight: 600; opacity: 0.75; }
+.subs-form { display: grid; gap: 14px; max-width: 420px; margin-top: 14px; }
+.subs-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.done-note .subs-acts { margin-top: 12px; }
+@media (max-width: 980px) { .nav-label { width: 100%; margin-top: 8px; } }
+
 /* Watched episodes */
 .episodes-head { gap: 16px; flex-wrap: wrap; }
 .season-seen { display: flex; align-items: center; gap: 12px; margin-left: auto; flex-wrap: wrap; }

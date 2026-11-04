@@ -251,7 +251,7 @@ async fn download(app: &AppHandle, d: &Path) -> Result<(), String> {
 /// Turns smarter search on: the engine, then the plugin pointed at it, then
 /// Jellyfin restarted to load it and the library indexed.
 pub async fn enable(app: &AppHandle) -> Result<String, String> {
-    let j = jf_admin(app).filter(|j| j.user_id.is_some()).ok_or("Sign in to Jellyfin first (Settings > Account)")?;
+    let j = jf_admin(app).filter(|j| j.user_id.is_some()).ok_or("Sign in to Jellyfin first (Settings > Account & devices)")?;
     let d = dir(app).ok_or("No app data folder")?;
     download(app, &d).await?;
     let k = key(&d).ok_or("Couldn't make the search engine's key")?;
@@ -369,7 +369,7 @@ pub async fn reindex(app: &AppHandle) {
 /// Turns it off: the plugin comes out (Jellyfin's own search answers again
 /// after its restart) and the engine and its data are removed.
 pub async fn disable(app: &AppHandle) -> Result<String, String> {
-    let j = jf_admin(app).filter(|j| j.user_id.is_some()).ok_or("Sign in to Jellyfin first (Settings > Account)")?;
+    let j = jf_admin(app).filter(|j| j.user_id.is_some()).ok_or("Sign in to Jellyfin first (Settings > Account & devices)")?;
     if let Some(p) = plugin(&j).await {
         // Whatever version is installed, not the one we'd install.
         let (id, version) = (p["Id"].as_str().unwrap_or_default(), p["Version"].as_str().unwrap_or_default());

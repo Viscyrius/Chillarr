@@ -430,7 +430,7 @@ pub async fn add(app: &AppHandle, name: &str, color: &str, pin: Option<String>) 
         Some(p) => Some(new_pin(&p)?),
         None => None,
     };
-    let admin = jf_admin(app).filter(|j| j.user_id.is_some()).ok_or("Sign in to Jellyfin first (Settings > Jellyfin & streaming).")?;
+    let admin = jf_admin(app).filter(|j| j.user_id.is_some()).ok_or("Sign in to Jellyfin first (Settings > Account & devices).")?;
     let mut raw = [0u8; 24];
     getrandom::getrandom(&mut raw).map_err(|_| "Couldn't make a password right now.".to_string())?;
     let password = hex(&raw);

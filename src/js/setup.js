@@ -2,7 +2,7 @@
 // rest: every download, one Windows prompt, starting and connecting the apps,
 // the login, the folders and the sources (onboard.rs).
 import { $, audioChoice, el, invoke, listen, store, toast } from "./api.js";
-import { downloadsRow, folderPicker, saveLogsButton } from "./settings.js";
+import { downloadsRow, folderPicker, saveLogsButton, subtitleOffer } from "./settings.js";
 import { logoImg, themePicker } from "./theme.js";
 
 const root = $("#setup");
@@ -64,7 +64,7 @@ async function showForm() {
       el("div", { class: "login-row" },
         el("label", { class: "field" }, el("small", { text: "Name" }), user),
         el("label", { class: "field" }, el("small", { text: "Password, at least 5 characters" }), pass))),
-    el("section", {}, el("h2", { text: "Anime and movies" }), el("p", { class: "note", text: "You can switch for any title in the player, when its file has more than one." }), voices),
+    el("section", {}, el("h2", { text: "Original voices or dubbed?" }), el("p", { class: "note", text: "You can switch in the player when a file has both." }), voices),
     el("section", {}, el("h2", { text: "Pick a colour" }), el("p", { class: "note", text: "It colours the app and your desktop icon. You can change it any time in Settings." }), themePicker()),
     el("div", { class: "setup-go" }, go, el("p", { class: "note", text: "Windows asks for your OK once, then everything downloads and installs by itself." })),
     err);
@@ -230,7 +230,7 @@ async function showDone(m) {
   if (problems.length) {
     bits.push(el("div", { class: "done-note bad" }, el("strong", { text: "A few things need another try" }),
       el("ul", {}, problems.map((p) => el("li", { text: p }))),
-      el("p", { class: "note", text: "Settings > System shows what's left, and Fix everything tries again. Need help? Save logs makes a file to send." }),
+      el("p", { class: "note", text: "Settings > Status shows what's left, and Fix everything tries again. Need help? Save logs makes a file to send." }),
       el("div", { style: "margin-top:10px" }, saveLogsButton("btn small ghost"))));
   }
   if (waiting.length) {
@@ -240,8 +240,9 @@ async function showDone(m) {
   if (ms.signed_in) {
     bits.push(el("div", { class: "done-note" }, el("strong", { text: "Watch on your TV or phone" }),
       el("p", { class: "note", text: "Install the free Jellyfin app on it. On the same Wi-Fi it finds this PC as \"Chillarr\". If it asks for an address, use:" }),
-      el("span", { class: "addr selectable", text: ms.address || "http://this-pc:8096" }),
-      el("p", { class: "note", text: "More subtitle sources are in Settings if you want them." })));
+      el("span", { class: "addr selectable", text: ms.address || "http://this-pc:8096" })));
+    // Needs Jellyfin up, so it's asked here and not on the first screen.
+    if (m.finished) bits.push(await subtitleOffer(ms.user));
   }
   const start = m.finished
     ? el("button", { class: "btn primary large", type: "button", onclick: close }, "Start watching")
@@ -249,7 +250,7 @@ async function showDone(m) {
   root.replaceChildren(el("div", { class: "setup-inner done-screen" }, logoImg("welcome-logo"),
     el("h1", { id: "setup-title", text: problems.length ? "Nearly there" : "You're all set" }),
     el("p", { class: "lead", text: "Pick something and press Download or Watch now." }),
-    ...bits, el("div", { class: "setup-go" }, start)));
+    ...bits.filter(Boolean), el("div", { class: "setup-go" }, start)));
   start.focus();
 }
 

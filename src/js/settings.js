@@ -7,15 +7,17 @@ import { applyTheme, currentTheme, saveTheme, themePicker } from "./theme.js";
 import { setSubScale, subScale } from "./subrender.js";
 
 const SECTIONS = [
-  ["system", "System"],
-  ["appearance", "Appearance"],
-  ["indexers", "Indexers"],
-  ["library", "Library & storage"],
-  ["account", "Jellyfin & streaming"],
-  ["apps", "Apps"],
+  ["system", "Status"],
   ["general", "General"],
+  ["appearance", "Appearance"],
+  ["library", "Library & storage"],
+  ["account", "Account & devices"],
+  ["indexers", "Download sites"],
+  ["apps", "Apps"],
   ["logs", "Logs"],
 ];
+// Listed under "Advanced": Chillarr looks after these by itself.
+const ADVANCED = "indexers";
 // In Jellyfin's web pages: only what a Jellyfin user may change from a browser.
 const WEB_SECTIONS = () => [
   ["account", "Account"],
@@ -47,13 +49,19 @@ export function renderSettings(view, section = "system") {
   if (!sections.some(([id]) => id === section)) section = sections[0][0];
   stopSettings();
   const nav = el("nav", { class: "settings-nav", "aria-label": "Settings" }, el("h1", { text: "Settings" }),
-    sections.map(([id, name]) => el("button", { class: id === section ? "on" : "", onclick: () => (location.hash = `settings/${id}`) }, name)));
+    sections.flatMap(([id, name]) => [
+      !WEB && id === ADVANCED ? el("p", { class: "nav-label", text: "Advanced" }) : null,
+      el("button", { class: id === section ? "on" : "", onclick: () => (location.hash = `settings/${id}`) }, name),
+    ]));
   const panel = el("section", { class: "panel" });
   view.replaceChildren(el("div", { class: "settings" }, nav, panel));
   (WEB ? { account: webAccount, general: webGeneral, remote: webRemote, library } : { system, appearance, indexers, library, account, apps, general, logs })[section](panel);
 }
 
-/* ---------- System ---------- */
+/** Folds away what most people never need. */
+const more = (title, ...kids) => el("details", { class: "more" }, el("summary", { text: title }), ...kids);
+
+/* ---------- Status ---------- */
 function appCard(c) {
   const busy = BUSY.includes(c.line);
   const acts = el("div", { class: "acts" });
@@ -108,17 +116,22 @@ function system(panel) {
   const summary = el("p", { class: "sub" });
   const cardsBox = el("div", { class: "apps" });
   const chainBox = el("div");
+  const detail = more("Show each app", chainBox, cardsBox);
+  let hadBad = false;
   const draw = () => {
     const list = ORDER.map((id) => store.cards.get(id)).filter(Boolean);
     const bad = list.filter((c) => c.level === "red" || c.level === "amber");
-    summary.textContent = store.fixing ? "Starting what's down, then testing every indexer." : bad.length ? `${bad.length} of ${list.length} need attention. Fix everything starts what's down, re-tests every indexer and connects the apps.` : "Every app is running and every indexer works.";
+    // A new problem opens the list, so its reason is on screen. Closing it stays closed.
+    if (bad.length && !hadBad) detail.open = true;
+    hadBad = bad.length > 0;
+    summary.textContent = store.fixing ? "Starting what's down and checking your download sites." : !list.length ? "Checking your apps..." : bad.length ? `${bad.length} of ${list.length} apps need attention. Press Fix everything.` : "Everything is working.";
     fix.disabled = store.fixing;
     fix.textContent = store.fixing ? "Fixing..." : "Fix everything";
     cardsBox.replaceChildren(...list.map((c, j) => { const n = appCard(c); n.style.setProperty("--j", j); if (cardsBox.dataset.drawn) n.style.animation = "none"; return n; }));
     cardsBox.dataset.drawn = "1";
     chainBox.replaceChildren(chain());
   };
-  panel.append(el("div", { class: "panel-head" }, el("div", {}, el("h2", { text: "System" }), summary), fix), fixProgress(), chainBox, cardsBox);
+  panel.append(el("div", { class: "panel-head" }, el("div", {}, el("h2", { text: "Status" }), summary), fix), fixProgress(), detail);
   draw();
   unsub = store.on((w) => { if (w === "cards" || w === "fixing") draw(); });
 }
@@ -152,7 +165,7 @@ function appearance(panel) {
       el("div", { class: "opt" }, el("span", {}, el("b", { text: "Background" }), el("small", { text: "Tinted leans toward your colour. Pure black is darkest on OLED screens." })), seg)));
 }
 
-/* ---------- Indexers ---------- */
+/* ---------- Download sites ---------- */
 const inMinutes = (s) => (s >= 3600 ? `${Math.round(s / 3600)} h` : `${Math.max(1, Math.round(s / 60))} min`);
 
 /** The sites Chillarr adds by itself, and how each one stands. */
@@ -189,8 +202,8 @@ async function indexers(panel) {
   };
   const draw = (rows) => table.replaceChildren(...rows.map((r) => el("tr", {}, el("td", { text: r.name }), cell(r.prowlarr), cell(r.sonarr), cell(r.radarr))));
   panel.append(
-    el("div", { class: "panel-head" }, el("div", {}, el("h2", { text: "Indexers" }), el("p", { class: "sub", text: "The sites Prowlarr searches, and whether Sonarr and Radarr can use them." })), test),
-    el("table", { class: "grid" }, el("thead", {}, el("tr", {}, ["Indexer", "Prowlarr", "Sonarr", "Radarr"].map((h) => el("th", { text: h })))), table),
+    el("div", { class: "panel-head" }, el("div", {}, el("h2", { text: "Download sites" }), el("p", { class: "sub", text: "Where Chillarr looks for movies and shows. It adds and checks these by itself." })), test),
+    el("table", { class: "grid" }, el("thead", {}, el("tr", {}, ["Site", "Prowlarr", "Sonarr", "Radarr"].map((h) => el("th", { text: h })))), table),
     el("h2", { text: "Sites Chillarr adds for you", style: "margin-top:36px;font-size:1.2rem" }),
     el("p", { class: "sub", text: "Each one is added by itself. A site that's down is tried again later until it works." }),
     await suggestions(async () => draw(await invoke("indexer_table")))
@@ -241,7 +254,7 @@ const subhead = (text, style = "") => el("h2", { text, style: `font-size:1.2rem;
 // folder settings at the bottom.
 async function library(panel) {
   panel.append(el("h2", { text: "Library & storage" }),
-    el("p", { class: "sub", text: "Where your downloads go, how full your drives are, and clearing out what you've already watched. Each folder is also a library in Jellyfin." }));
+    el("p", { class: "sub", text: "See how full your drives are and clear out what you've watched." }));
   const drivesBox = el("div", {}, el("p", { class: "note", text: "Measuring..." }));
   const foldersBox = el("div");
   const roomBox = el("div");
@@ -327,7 +340,7 @@ function storageParts(o) {
   });
   const tidy = el("div", { class: "box" },
     el("div", { class: "opt" }, el("span", {}, el("b", { text: "Clean up watched" }),
-      el("small", { text: "Works per episode. Each episode you watch is deleted this many days later, and won't download again. Movies go once you finish them. Episodes you haven't watched and new ones stay. Nothing is deleted while another profile is still watching it. Off unless you pick a time." })), cleanup),
+      el("small", { text: "Deletes episodes and movies you've finished after this many days, and they won't download again. Anything another profile is still watching stays." })), cleanup),
     el("div", { class: "opt" }, el("span", {}, el("b", { text: `${o.items.length} titles, ${size(total)}` }),
       el("small", { text: `${watched.length} watched (${size(watchedSize)}).` })), sweep));
 
@@ -372,17 +385,16 @@ function changeFolders(f) {
     catch (e) { err.textContent = String(e); }
     save.disabled = false;
   });
-  return [
-    subhead("Change folders", "margin-top:36px"),
+  return [more("Change folders",
     downloadsRow(),
     el("p", { class: "note", text: "A folder with \"Anime\" in its name is used for anime. Removing a folder here doesn't delete anything." }),
     el("div", { class: "folder-step", style: "margin-top:16px" },
-      folderPicker("Movies", "Radarr puts movies here.", movies),
-      folderPicker("Series and anime", "Sonarr puts series here. Add a separate folder named Anime for anime.", series)),
-    err, el("div", { style: "margin-top:18px" }, save)];
+      folderPicker("Movies", "New movies go here.", movies),
+      folderPicker("Series and anime", "New series go here. Add a separate folder named Anime for anime.", series)),
+    err, el("div", { style: "margin-top:18px" }, save))];
 }
 
-/* ---------- Jellyfin & streaming ---------- */
+/* ---------- Account & devices ---------- */
 /** What apps_set_login did, as one toast line. */
 export function loginSummary(outcomes, lead = "") {
   const set = outcomes.filter((o) => o.result === "set").map((o) => o.app);
@@ -416,8 +428,8 @@ function appsLoginBlock(name) {
 
 async function account(panel) {
   const ms = await invoke("media_status");
-  panel.append(el("h2", { text: "Jellyfin & streaming" }),
-    el("p", { class: "sub", text: "Jellyfin plays your library in Chillarr and streams it to your phone, TV or laptop. Nothing goes through the cloud: your PC is the server." }));
+  panel.append(el("h2", { text: "Account & devices" }),
+    el("p", { class: "sub", text: "Your profiles, and how to watch on your phone, TV or laptop. Nothing goes through the cloud: your PC does the work." }));
   if (!ms.installed) {
     panel.append(el("button", { class: "btn primary", onclick: () => offerInstall(["Jellyfin"]) }, "Install Jellyfin"));
     return;
@@ -428,8 +440,11 @@ async function account(panel) {
   }
   if (ms.signed_in) {
     panel.append(el("div", { class: "box" },
-      el("div", { class: "opt" }, el("span", {}, el("b", { text: `Signed in as ${ms.user}` }), el("small", { text: "Chillarr uses this account to play and track what you watch." })),
-        el("button", { class: "btn small ghost", onclick: async () => { await invoke("media_sign_out"); renderSettings($("#view"), "account"); window.dispatchEvent(new Event("chillarr:refresh")); } }, "Sign out"))));
+      el("div", { class: "opt" }, el("span", {}, el("b", { text: `Signed in as ${ms.user}` })),
+        el("button", { class: "btn small ghost", onclick: async () => { await invoke("media_sign_out"); renderSettings($("#view"), "account"); window.dispatchEvent(new Event("chillarr:refresh")); } }, "Sign out")),
+      el("div", { class: "opt" }, el("span", {}, el("b", { text: "Profiles" }),
+        el("small", { text: "Everyone gets their own Continue watching and My List. Add a PIN to keep one private." })),
+        el("button", { class: "btn small ghost", onclick: () => window.dispatchEvent(new Event("chillarr:profiles")) }, "Manage profiles"))));
   } else {
     const user = el("input", { type: "text", autocomplete: "username", value: "" });
     const pass = el("input", { type: "password", autocomplete: ms.setup_done ? "current-password" : "new-password" });
@@ -452,24 +467,8 @@ async function account(panel) {
       el("div", { style: "display:grid;gap:14px;max-width:420px;margin-top:14px" },
         el("label", { class: "field" }, el("small", { text: "Name" }), user), el("label", { class: "field" }, el("small", { text: "Password" }), pass), el("div", {}, go), err));
   }
-  if (ms.signed_in) {
-    panel.append(el("div", { class: "box", style: "margin-top:24px" },
-      el("div", { class: "opt" }, el("span", {}, el("b", { text: "Profiles" }),
-        el("small", { text: "Everyone gets their own Continue watching and My List. Each profile is a Jellyfin account too, so it carries over to Jellyfin's TV and phone apps. Add a PIN to keep one private." })),
-        el("button", { class: "btn small ghost", onclick: () => window.dispatchEvent(new Event("chillarr:profiles")) }, "Manage profiles")),
-      el("div", { class: "opt" }, el("span", {}, el("b", { text: "Browsers that know the main profile" }),
-        el("small", { text: "Browsers that know the main profile's password will ask for it again (a lost phone, a lent laptop)." })),
-        el("button", { class: "btn small ghost", onclick: async (e) => {
-          const b = e.currentTarget;
-          b.disabled = true;
-          try { await invoke("profiles_forget_web_devices"); toast("Every browser asks for the main profile's password again."); }
-          catch (err) { toast(String(err), true); }
-          b.disabled = false;
-        } }, "Forget browsers"))));
-    panel.append(appsLoginBlock(ms.user), shelfBlock(), searchBlock(), await subtitleBlock(ms.user));
-  }
   panel.append(el("h2", { text: "Watch on other devices", style: "margin-top:36px;font-size:1.2rem" }),
-    el("p", { class: "note", text: "Install the free Jellyfin app on your phone or TV and connect to this address while on the same Wi-Fi. Jellyfin runs while Chillarr is running, and Chillarr starts with Windows." }),
+    el("p", { class: "note", text: "Install the free Jellyfin app on your phone or TV. On the same Wi-Fi, connect it to this address:" }),
     el("p", { class: "addr", text: ms.address || "http://this-pc:8096" }),
     el("h2", { text: "Watch away from home", style: "margin-top:30px;font-size:1.2rem" }),
     ms.tailscale || ms.tailscale_ip
@@ -479,6 +478,19 @@ async function account(panel) {
         ms.tailscale && ms.tailscale_ip ? el("p", { class: "note", text: `If that name doesn't work in an app, use ${ms.tailscale_ip}` }) : null,
         el("p", { class: "note", text: "It works anywhere with internet, stays private (only your own devices can reach it), and costs nothing. This PC has to be on with Chillarr running." }))
       : el("div", { class: "tip" }, el("span", { text: "Install Tailscale (free, tailscale.com) on this PC and on your phone, and sign in with the same account. Your Tailscale address shows up here, ready for the Jellyfin app, wherever you are." })));
+  if (ms.signed_in) {
+    panel.append(await subtitleBlock(ms.user),
+      more("More options", shelfBlock(), searchBlock(), appsLoginBlock(ms.user),
+        el("div", { class: "box", style: "margin-top:24px" }, el("div", { class: "opt" }, el("span", {}, el("b", { text: "Browsers that know the main profile" }),
+          el("small", { text: "They'll ask for its password again. Useful after a lost phone or a lent laptop." })),
+          el("button", { class: "btn small ghost", onclick: async (e) => {
+            const b = e.currentTarget;
+            b.disabled = true;
+            try { await invoke("profiles_forget_web_devices"); toast("Every browser asks for the main profile's password again."); }
+            catch (err) { toast(String(err), true); }
+            b.disabled = false;
+          } }, "Forget browsers")))));
+  }
 }
 
 /** Smarter search in Jellyfin's own apps (meili.rs). */
@@ -498,7 +510,7 @@ function searchBlock() {
       draw(await invoke("meili_status").catch(() => st));
     });
     box.replaceChildren(el("label", { class: "opt" }, el("span", {}, el("b", { text: "Smarter search" }),
-      el("small", { text: "Search in every Jellyfin app (TV, phone, web) forgives typos and spacing: \"spiderman\", \"ironman\" and \"dune 2\" find the right title. Runs on this PC only." }),
+      el("small", { text: "Lets search on your TV and phone forgive typos, so \"spiderman\" finds Spider-Man." }),
       el("small", { class: "search-state", text: line })), sw));
   };
   invoke("meili_status").then((st) => draw(st)).catch(() => {});
@@ -526,7 +538,7 @@ function shelfBlock() {
       ? `${st.movies} movies and ${st.series} series on the shelf${st.requested.length ? `. On their way: ${st.requested.slice(0, 4).join(", ")}${st.requested.length > 4 ? ` and ${st.requested.length - 4} more` : ""}.` : "."}`
       : "Off.";
     box.replaceChildren(box.firstChild,
-      el("p", { class: "note", text: "Get new movies and series from any Jellyfin app, on a TV, phone or tablet. Open Discover Movies or Discover Series there and press the heart on anything: this PC downloads it, and it moves into Movies or Series when it's ready. On your home network, pressing play starts it and plays it after about a minute. Playing an episode gets that episode only." }),
+      el("p", { class: "note", text: "Get new titles from a TV or phone: open Discover Movies or Discover Series in the Jellyfin app and press the heart on anything. This PC downloads it." }),
       el("div", { class: "box" },
         el("label", { class: "opt" }, el("span", {}, el("b", { text: "Discover shelf" }), el("small", { text: count })), on),
         el("div", { class: "opt" }, el("span", {}, el("b", { text: "When a show is favourited" }), el("small", { text: "Get the first season, or every season. A heart on one episode gets just that episode." })), seg),
@@ -536,30 +548,56 @@ function shelfBlock() {
   return box;
 }
 
-/** Subtitle downloads: a free OpenSubtitles.com login, handed to Jellyfin's plugin.
- *  `name` is the one login from setup: made with the same name, only the password is left to type. */
-async function subtitleBlock(name) {
-  const st = await invoke("subs_status").catch(() => ({ installed: false, ready: false }));
-  const box = el("div", {}, el("h2", { text: "Subtitle downloads", style: "margin-top:36px;font-size:1.2rem" }));
-  if (st.ready) {
-    box.append(el("div", { class: "box" }, el("div", { class: "opt" },
-      el("span", {}, el("b", { text: `On, as ${st.user}` }), el("small", { text: "While watching, open the tracks menu and pick Download subtitles. Jellyfin apps on TVs and phones also get English subtitles fetched for anything missing them." })))));
-    return box;
-  }
+const SUBS_PITCH = "Optional. A free OpenSubtitles account finds subtitles for almost anything, in any language. Without one, Chillarr still finds them from free sources, just fewer.";
+
+/** The OpenSubtitles.com sign-in. `name` is the one login from setup: with the
+ *  same name on both, only the password is left to type. */
+function subtitleForm(name, installed, onDone) {
   const user = el("input", { type: "text", autocomplete: "username", value: name || "" });
   const pass = el("input", { type: "password", autocomplete: "current-password" });
   const err = el("p", { class: "err" });
-  const go = el("button", { class: "btn primary" }, "Turn on");
+  const go = el("button", { class: "btn primary", type: "button" }, "Turn on");
   go.addEventListener("click", async () => {
-    if (!user.value.trim() || !pass.value) { err.textContent = "Enter your OpenSubtitles.com name and password."; return; }
+    if (!user.value.trim() || !pass.value) { err.textContent = "Enter your OpenSubtitles name and password."; return; }
     go.disabled = true; err.textContent = "";
-    go.textContent = st.installed ? "Checking..." : "Setting up (Jellyfin restarts once)...";
-    try { toast(await invoke("subs_setup", { username: user.value.trim(), password: pass.value })); renderSettings($("#view"), "account"); }
+    go.textContent = installed ? "Checking..." : "Setting up, about a minute...";
+    try { toast(await invoke("subs_setup", { username: user.value.trim(), password: pass.value })); onDone(); }
     catch (e) { err.textContent = String(e); go.disabled = false; go.textContent = "Turn on"; }
   });
-  box.append(el("p", { class: "note", text: "Find subtitles for anything in your library, in any language. It uses a free OpenSubtitles.com account (make one on their site, with the same name and password as Chillarr to keep it simple), and your name and password stay inside Jellyfin. Without it, the subtitles you pick on Download still come from free sources, just fewer of them." }),
-    el("div", { style: "display:grid;gap:14px;max-width:420px;margin-top:14px" },
-      el("label", { class: "field" }, el("small", { text: "OpenSubtitles.com name" }), user), el("label", { class: "field" }, el("small", { text: "Password" }), pass), el("div", {}, go), err));
+  const signUp = el("button", { class: "link-btn", type: "button", onclick: () => invoke("open_link", { which: "opensubtitles" }).catch((e) => toast(String(e), true)) }, "No account yet? Make a free one");
+  return el("div", { class: "subs-form" },
+    el("label", { class: "field" }, el("small", { text: "OpenSubtitles name" }), user),
+    el("label", { class: "field" }, el("small", { text: "Password" }), pass),
+    el("div", { class: "subs-acts" }, go, signUp), err);
+}
+
+/** The last setup screen: the same sign-in, as a choice. */
+export async function subtitleOffer(name) {
+  const st = await invoke("subs_status").catch(() => null);
+  if (!st || st.ready) return null;
+  const box = el("div", { class: "done-note" });
+  const yes = el("button", { class: "btn small primary", type: "button", onclick: () => {
+    box.replaceChildren(el("strong", { text: "More subtitles" }), subtitleForm(name, st.installed, () => box.remove()));
+  } }, "Set it up");
+  const no = el("button", { class: "btn small ghost", type: "button", onclick: () => box.remove() }, "Skip");
+  box.append(el("strong", { text: "Want more subtitles?" }),
+    el("p", { class: "note", text: `${SUBS_PITCH} You can also do this later in Settings.` }),
+    el("div", { class: "subs-acts" }, yes, no));
+  return box;
+}
+
+async function subtitleBlock(name) {
+  const st = await invoke("subs_status").catch(() => ({ installed: false, ready: false }));
+  const box = el("div", {}, el("h2", { text: "More subtitles", style: "margin-top:36px;font-size:1.2rem" }));
+  if (st.ready) {
+    box.append(el("div", { class: "box" }, el("div", { class: "opt" },
+      el("span", {}, el("b", { text: `On, as ${st.user}` }), el("small", { text: "While watching, open the tracks menu and pick Download subtitles." })))));
+    return box;
+  }
+  const open = el("button", { class: "btn small ghost", onclick: () => {
+    box.replaceChildren(box.firstChild, subtitleForm(name, st.installed, () => renderSettings($("#view"), "account")));
+  } }, "Set it up");
+  box.append(el("div", { class: "box" }, el("div", { class: "opt" }, el("span", {}, el("small", { text: SUBS_PITCH })), open)));
   return box;
 }
 
@@ -616,19 +654,21 @@ function general(panel) {
     el("button", { class: s.player === "vlc" ? "on" : "", disabled: !vlc, title: vlc ? "" : "VLC isn't installed", onclick: async () => { s.player = "vlc"; drawSeg(); await invoke("set_settings", { s }); } }, "VLC"));
   drawSeg();
   const voices = audioChoice(() => s, (change) => { Object.assign(s, change); invoke("set_settings", { s }).catch((e) => toast(String(e), true)); });
-  panel.append(el("h2", { text: "General" }), el("p", { class: "sub", text: "How Chillarr starts, plays and looks after things." }),
+  panel.append(el("h2", { text: "General" }),
     el("div", { class: "box" },
-      el("div", { class: "opt" }, el("span", {}, el("b", { text: "Anime and movies" }), el("small", { text: "Original voices: dubbed-only copies are skipped. Dubbed: copies with your language are picked first. A title with no such copy still downloads. Applies to new downloads. When a file has several languages, the player starts in this one, and its audio button switches any time." })), voices),
-      el("div", { class: "opt" }, el("span", {}, el("b", { text: "Play with" }), el("small", { text: vlc ? "VLC plays the original file at full quality with every audio track. Chillarr's player converts what it can't play directly." : "Install VLC to play original files at full quality." })), seg),
+      el("div", { class: "opt" }, el("span", {}, el("b", { text: "Original voices or dubbed?" }), el("small", { text: "For new downloads. A title with no dub still downloads, in its original voices. The player's audio button switches when a file has both." })), voices),
+      subSizeRow(),
       sw("start_with_windows", "Start with Windows", "Opens in the tray when you sign in."),
-      sw("auto_fix", "Fix automatically", "Checks every minute and fixes what breaks."),
-      sw("defender_ask", "Defender access", "If Defender's folder protection blocks your media apps, Fix everything asks to let them through."),
-      sw("skip_dubs", "Skip dubbed copies", "Leaves out copies with an extra dubbed language mixed in, like Hindi or Italian, so nothing starts in the wrong language. A film's own language is always fine, and so is anime with Japanese and English."),
-      sw("skip_remux", "Skip full-disc copies", "Remux and Blu-ray disc copies are 25 to 80 GB for one film and look the same on a TV. With this on, every download takes a normal copy of a few GB instead, and movies over about 8 GB (1080p) are skipped. Whole seasons are judged per episode, so they still come."),
-      seedSwitch(),
-      subSizeRow()),
+      seedSwitch()),
     remoteBox(),
-    el("div", { style: "margin-top:24px" }, el("button", { class: "btn ghost", onclick: () => openSetup() }, "Run the setup again")));
+    more("More options",
+      el("div", { class: "box" },
+        el("div", { class: "opt" }, el("span", {}, el("b", { text: "Play with" }), el("small", { text: vlc ? "VLC plays the original file at full quality." : "Install VLC to play original files at full quality." })), seg),
+        sw("auto_fix", "Fix automatically", "Checks every minute and fixes what breaks."),
+        sw("defender_ask", "Defender access", "If Windows Defender blocks your apps, Fix everything asks before letting them through."),
+        sw("skip_dubs", "Skip extra dubs", "Avoids copies that could start in the wrong language, like a Hindi or Italian dub."),
+        sw("skip_remux", "Skip huge copies", "Avoids copies of 25 GB or more, so a 1080p movie stays under about 8 GB.")),
+      el("div", { style: "margin-top:24px" }, el("button", { class: "btn ghost", onclick: () => openSetup() }, "Run the setup again"))));
 }
 
 /** Subtitle size, with a sample that changes as the slider moves. */
@@ -647,7 +687,7 @@ function subSizeRow() {
 /** Seeding: qBittorrent's own setting, read from it and written back to it. */
 function seedSwitch() {
   const box = el("input", { type: "checkbox", class: "switch", disabled: true });
-  const hint = el("small", { text: "Keep sharing finished downloads with others. Off stops each one the moment it's done and clears it from Downloads once it's in your library. While something downloads it always shares a little; that's how torrents work." });
+  const hint = el("small", { text: "Keep sharing finished downloads with others. Off clears each one as soon as it's in your library." });
   invoke("seeding").then((on) => { box.checked = on; box.disabled = false; }).catch(() => { hint.textContent = "Needs qBittorrent running. Press Fix everything first."; });
   box.addEventListener("input", async () => {
     box.disabled = true;
@@ -665,7 +705,7 @@ function remoteBox() {
     sw.checked = st.on;
     sw.addEventListener("input", async () => draw(await invoke("remote_set", { on: sw.checked, newCode: false })));
     const rows = [el("label", { class: "opt" }, el("span", {}, el("b", { text: "Phone remote" }),
-      el("small", { text: "Use your phone as a remote: arrows, OK, back, play and pause, and typing to search. Works on the same Wi-Fi, or anywhere over Tailscale. Every TV has its own code, shown on the TV under Settings > Phone remote." })), sw)];
+      el("small", { text: "Use your phone as a remote, and type on it to search. A TV shows its own code under Settings > Phone remote." })), sw)];
     if (st.on) {
       rows.push(el("div", { class: "opt remote-info" },
         el("span", {}, el("small", { text: "On your phone, open" }), remoteUrls(st.urls),
@@ -678,7 +718,7 @@ function remoteBox() {
       }
     }
     rows.push(el("div", { class: "opt" }, el("span", {}, el("b", { text: "Game controllers" }),
-      el("small", { text: "Xbox, PlayStation and other controllers work wired or over Bluetooth: D-pad or stick to move, A to choose, B to go back, LB and RB to switch tabs. TV remotes and air mice that send arrow keys work too." }))));
+      el("small", { text: "Xbox and PlayStation controllers just work: D-pad or stick to move, A to choose, B to go back." }))));
     box.replaceChildren(...rows);
   };
   invoke("remote_status").then(draw).catch(() => {});
