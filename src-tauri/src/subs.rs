@@ -61,7 +61,7 @@ pub struct Found {
 }
 
 fn signed_in(app: &AppHandle) -> Result<Jf, String> {
-    jf_admin(app).filter(|j| j.user_id.is_some()).ok_or_else(|| "Sign in to Jellyfin first (Settings > Jellyfin & streaming)".to_string())
+    jf_admin(app).filter(|j| j.user_id.is_some()).ok_or_else(|| "Sign in to Jellyfin first (Settings > Account & devices)".to_string())
 }
 
 fn err(e: JfError) -> String {

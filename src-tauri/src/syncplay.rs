@@ -22,7 +22,7 @@ pub struct Info {
 
 /// Where the player's SyncPlay socket connects, as whoever is watching.
 pub fn info(app: &AppHandle) -> Result<Info, String> {
-    let j = jf(app).filter(|j| j.user_id.is_some()).ok_or("Sign in to Jellyfin first (Settings > Jellyfin & streaming).")?;
+    let j = jf(app).filter(|j| j.user_id.is_some()).ok_or("Sign in to Jellyfin first (Settings > Account & devices).")?;
     let (token, device) = j.credentials().ok_or("Sign in to Jellyfin first.")?;
     let ws = j.base.replacen("https://", "wss://", 1).replacen("http://", "ws://", 1);
     let media = app.state::<Media>();

@@ -1353,7 +1353,7 @@ pub async fn search(app: &AppHandle, term: &str) -> Found {
 
 /// What the player needs: a direct file or an HLS stream, tracks, length.
 pub async fn play(app: &AppHandle, jf_id: &str, start: f64, audio_index: Option<i64>, subtitle_index: Option<i64>) -> Result<Value, String> {
-    let j = jf(app).filter(|j| j.user_id.is_some()).ok_or("Sign in to Jellyfin first (Settings > Account)")?;
+    let j = jf(app).filter(|j| j.user_id.is_some()).ok_or("Sign in to Jellyfin first (Settings > Account & devices)")?;
     let token = j.token().ok_or("Sign in to Jellyfin first")?.to_string();
     // A title just added can be listed a moment before it opens.
     let mut asked = j.playback(jf_id, start, audio_index, subtitle_index).await;
@@ -1431,7 +1431,7 @@ pub async fn play(app: &AppHandle, jf_id: &str, start: f64, audio_index: Option<
 /// `watch_key`: a Watch now title, left (download paused, position kept) when VLC closes.
 pub async fn play_vlc(app: &AppHandle, jf_id: &str, start: f64, title: &str, watch_key: Option<String>) -> Result<(), String> {
     let exe = crate::vlc::find().ok_or("VLC isn't installed. Get it from videolan.org, or switch Play with back to Chillarr in Settings.")?;
-    let j = jf(app).filter(|j| j.user_id.is_some()).ok_or("Sign in to Jellyfin first (Settings > Jellyfin & streaming)")?;
+    let j = jf(app).filter(|j| j.user_id.is_some()).ok_or("Sign in to Jellyfin first (Settings > Account & devices)")?;
     let token = j.token().ok_or("Sign in to Jellyfin first")?.to_string();
     let info = j.playback(jf_id, 0.0, None, None).await.map_err(|e| e.to_string())?;
     let source_id = info["MediaSources"][0]["Id"].as_str().unwrap_or_default().to_string();

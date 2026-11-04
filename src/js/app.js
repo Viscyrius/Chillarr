@@ -160,7 +160,7 @@ async function startWeb() {
   startProfilesWeb().catch(() => {});
 }
 
-/** The signed-in Jellyfin user in the top bar; it opens Settings > Account. */
+/** The signed-in Jellyfin user in the top bar; it opens Settings > Account & devices. */
 function drawViewer() {
   const name = viewer.name || "?";
   $("#profile-slot").replaceChildren(el("a", { class: "pf-top", href: "#settings/account", "aria-label": `Signed in as ${name}. Account`, title: name },

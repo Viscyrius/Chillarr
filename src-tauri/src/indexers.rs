@@ -187,7 +187,7 @@ pub async fn fill(app: &AppHandle, force: bool, step: impl Fn(usize, usize, Vec<
     Summary { added: in_place(&mem), total, waiting: waiting_now(&mem) }
 }
 
-/// Every site with where it stands, for Settings > Indexers.
+/// Every site with where it stands, for Settings > Download sites.
 pub async fn status(app: &AppHandle) -> serde_json::Value {
     let have = in_prowlarr(app).await;
     let mem = load(app);

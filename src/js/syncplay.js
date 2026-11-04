@@ -271,7 +271,7 @@ function invite() {
     el("summary", { text: "How friends join" }),
     el("ol", {},
       el("li", { text: "Make them a profile here (the avatar at the top, then Add profile) and give it a password for Jellyfin apps." }),
-      el("li", { text: addr ? `On their phone, TV or computer, open the Jellyfin app (or a browser) and connect to ${addr}.` : "On their phone, TV or computer, open the Jellyfin app and connect to this PC (Settings > Jellyfin & streaming shows the address)." }),
+      el("li", { text: addr ? `On their phone, TV or computer, open the Jellyfin app (or a browser) and connect to ${addr}.` : "On their phone, TV or computer, open the Jellyfin app and connect to this PC (Settings > Account & devices shows the address)." }),
       el("li", { text: "Sign in with the profile's name and that password, open the menu, choose SyncPlay, and join your party." })));
 }
 

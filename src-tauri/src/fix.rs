@@ -238,7 +238,7 @@ pub async fn refresh_cards(app: &AppHandle) -> Vec<CardState> {
     out.into_iter().map(|(_, c)| c).collect()
 }
 
-/// Where Fix everything is, for the bar on Settings > System.
+/// Where Fix everything is, for the bar on Settings > Status.
 fn fix_step(app: &AppHandle, trigger: Trigger, n: u32, line: &str) {
     if trigger == Trigger::Button {
         let _ = app.emit("fix-step", serde_json::json!({ "n": n, "of": 5, "line": line }));
