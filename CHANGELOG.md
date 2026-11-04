@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.11.1 (2026-11-04)
+- Tabs open at once. Each one shows what it had last time, even right after starting Chillarr, and updates what changed a moment later. Every tab is also made ready in the background shortly after starting.
+- Everything loads faster: Chillarr asks your apps for things side by side instead of one after another, shares answers instead of asking for the same list over and over, and only works out what the tab you opened needs. Animations are quicker too, so nothing is held back from view.
+- Fix everything no longer restarts Radarr every time. Radarr kept showing nekoBT and SubsPlease as failing because they're anime sites with no new movies to list, and restarting it for that made it slower each time, until it could stall for 15 seconds and show "Not running" while it was running. A restart now really closes and starts the app, and happens at most once in 6 hours.
+- A log file that grew huge because of that (2 GB on one PC) is cleared by itself when Chillarr starts.
+- Stopping a download clears "Downloading 0%" from its poster. It used to stay there until you restarted Chillarr.
+- A site that's down, like YTS right now, no longer counts as something for you to fix. Its card says the site is down and your other sites still work, and Chillarr stops testing it every 15 minutes in the background. Those tests were keeping your apps busy and making the site's retry wait longer.
+- An app that's busy says "Slow to answer" instead of "Not running".
+
 ## 0.11.0 (2026-11-03)
 - Setting up a new PC is one screen and one press. Pick a folder, a login, Subtitles or Dubbed, and a colour, press Set up Chillarr, and it does the rest: every download, every install, starting the apps and connecting them.
 - One big meter shows all of it: how much has downloaded out of the total, the speed, the time left, and a line for each app. Broken connections pick up where they stopped.

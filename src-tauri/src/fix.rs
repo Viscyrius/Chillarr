@@ -158,6 +158,14 @@ async fn card_for(core: &Core, cfg: &AppConfig) -> CardState {
     let mut card = if let Some(arr) = Arr::new(cfg) {
         match arr.health().await {
             Ok(h) => status::card_from(cfg.id, Ok(()), &h),
+            // It's listening but took too long: busy, not "not running".
+            Err(ArrError::Down) if procs::port_open(&cfg.base_url).await => {
+                let mut c = status::card_from(cfg.id, Err(ArrError::Down), &[]);
+                c.level = Level::Amber;
+                c.line = "Slow to answer".into();
+                c.fixable = false;
+                c
+            }
             Err(e) => status::card_from(cfg.id, Err(e), &[]),
         }
     } else if cfg.id.is_arr() {
@@ -462,11 +470,6 @@ async fn id_names(arr: &Arr, path: &str) -> HashMap<i64, String> {
     arr.names(path).await.unwrap_or_default().into_iter().map(|i| (i.id, i.name)).collect()
 }
 
-/// Radarr's test reads a site's newest uploads, and some sites (The Pirate
-/// Bay, LimeTorrents) list none in the movie categories even though searching
-/// them works (TPB had copies of Hope, 2026-10-19). That's no failure.
-const FEEDLESS_SITES: [&str; 2] = ["The Pirate Bay", "LimeTorrents"];
-
 fn feedless(error: &str) -> bool {
     error.contains("no results in the configured categories")
 }
@@ -551,9 +554,95 @@ async fn arr_tests(app: &AppHandle, id: AppId) {
     let name = id.label();
     // Radarr: sites with no movie feed always fail its test, and each failure
     // benches them for longer (The Pirate Bay, 2026-10-19), so they're left out.
-    let results = if id == AppId::Radarr { arr.test_indexers_skipping(|n| FEEDLESS_SITES.iter().any(|s| n.contains(s))).await } else { arr.test_all_indexers().await };
+    let results = if id == AppId::Radarr { arr.test_indexers_skipping(status::is_feedless).await } else { arr.test_all_indexers().await };
     run_tests(app, name, "indexers", &arr, "indexer", results).await;
     run_tests(app, name, "download clients", &arr, "downloadclient", arr.test_all_download_clients().await).await;
+}
+
+/// Restarting doesn't clear every mark, so pressing again shouldn't keep restarting.
+const RESTART_GAP: Duration = Duration::from_secs(6 * 60 * 60);
+
+fn restart_allowed(id: AppId, now: Instant) -> bool {
+    static LAST: Mutex<Option<HashMap<AppId, Instant>>> = Mutex::new(None);
+    let mut last = LAST.lock().unwrap();
+    let last = last.get_or_insert_with(HashMap::new);
+    if last.get(&id).is_some_and(|at| now.saturating_duration_since(*at) < RESTART_GAP) {
+        return false;
+    }
+    last.insert(id, now);
+    true
+}
+
+/// Closes an app Chillarr starts itself, gently, then for sure. Its own restart
+/// stays in the same process and piles its logging up (arr.rs `restart`).
+async fn close_arr(cfg: &AppConfig, arr: &Arr) {
+    let _ = arr.shutdown().await;
+    let (a, b) = (format!("{}.exe", cfg.id.label()), format!("{}.Console.exe", cfg.id.label()));
+    let _ = tokio::task::spawn_blocking(move || {
+        for _ in 0..60 {
+            if !procs::process_running(&a) && !procs::process_running(&b) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        }
+        procs::force_close(&a);
+        procs::force_close(&b);
+    })
+    .await;
+}
+
+/// A real restart when Chillarr can start the app itself; a Windows service
+/// can only be asked. The caller waits for it to answer.
+async fn restart_app(cfg: &AppConfig, arr: &Arr) -> Result<(), String> {
+    match (&cfg.service, &cfg.exe) {
+        (None, Some(exe)) => {
+            close_arr(cfg, arr).await;
+            procs::start_arr(exe, cfg.id.label())
+        }
+        _ => {
+            arr.restart().await.map_err(|e| describe(&e))?;
+            // A moment to go down before anyone waits for it to come back.
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            Ok(())
+        }
+    }
+}
+
+/// A log database this big is the pile-up above, from before it was fixed.
+const LOG_DB_LIMIT: u64 = 300 * 1024 * 1024;
+
+fn runaway(len: u64) -> bool {
+    len > LOG_DB_LIMIT
+}
+
+/// On launch: an app's log database grown huge makes everything it does slow.
+/// It holds only its Events page and it's made again at the next start (the
+/// log files are separate and stay), so it goes.
+pub async fn shrink_runaway_logs(app: &AppHandle) {
+    let core = app.state::<Core>();
+    let _running = core.fixer.running.lock().await;
+    for id in [AppId::Radarr, AppId::Sonarr, AppId::Prowlarr] {
+        let Some(cfg) = core.config(id) else { continue };
+        let (None, Some(exe), Some(dir)) = (&cfg.service, &cfg.exe, arr_data_dir(id)) else { continue };
+        let len = std::fs::metadata(dir.join("logs.db")).map(|m| m.len()).unwrap_or(0);
+        if !runaway(len) {
+            continue;
+        }
+        let name = id.label();
+        let was_up = procs::port_open(&cfg.base_url).await;
+        if let Some(arr) = Arr::new(&cfg) {
+            close_arr(&cfg, &arr).await;
+        }
+        for file in ["logs.db", "logs.db-shm", "logs.db-wal"] {
+            let _ = std::fs::remove_file(dir.join(file));
+        }
+        log(app, Level::Ok, format!("{name}'s log had grown to {} GB and was slowing it down. Cleared it.", len / (1024 * 1024 * 1024)));
+        if was_up {
+            if let Err(e) = procs::start_arr(exe, name) {
+                log(app, Level::Red, e);
+            }
+        }
+    }
 }
 
 /// The button's fallback when a passing test did not clear a failure mark:
@@ -562,18 +651,20 @@ async fn restart_if_stale(app: &AppHandle, id: AppId, passed: &[String], proxies
     let Some(cfg) = app.state::<Core>().config(id) else { return };
     let Some(arr) = Arr::new(&cfg) else { return };
     let Ok(health) = arr.health().await else { return };
-    let stale = stale_marks(&health, passed, id == AppId::Prowlarr && proxies_ok);
-    if stale.is_empty() {
+    let mut stale = stale_marks(&health, passed, id == AppId::Prowlarr && proxies_ok);
+    // Radarr's false marks on these sites never clear, so they'd restart it on every press.
+    if id == AppId::Radarr {
+        stale.retain(|n| !status::is_feedless(n));
+    }
+    if stale.is_empty() || !restart_allowed(id, Instant::now()) {
         return;
     }
     let name = id.label();
     log(app, Level::Amber, format!("{name} still marks {} failed. Restarting {name} to clear it.", stale.join(", ")));
     busy(app, id, "Restarting...");
-    if let Err(e) = arr.restart().await {
-        return log(app, Level::Red, format!("Couldn't restart {name}: {}.", describe(&e)));
+    if let Err(e) = restart_app(&cfg, &arr).await {
+        return log(app, Level::Red, format!("Couldn't restart {name}: {e}."));
     }
-    // Give it a moment to go down before waiting for it to come back.
-    tokio::time::sleep(Duration::from_secs(5)).await;
     if procs::wait_until(&cfg.base_url, WAIT_ARR_SECS).await {
         // The web host answers before the app has finished starting.
         for _ in 0..30 {
@@ -909,8 +1000,7 @@ async fn allowed_hosts_step(app: &AppHandle, rep: &mut FixReport) {
         match arr.set_allowed_hosts_if_empty(&value).await {
             Ok(true) => {
                 busy(app, id, "Restarting...");
-                if arr.restart().await.is_ok() {
-                    tokio::time::sleep(Duration::from_secs(5)).await;
+                if restart_app(&cfg, &arr).await.is_ok() {
                     procs::wait_until(&cfg.base_url, WAIT_ARR_SECS).await;
                     for _ in 0..30 {
                         if arr.status().await.is_ok() {
@@ -1240,7 +1330,7 @@ pub async fn fix_all(app: &AppHandle, trigger: Trigger) -> FixReport {
     }
     rep.cards = refresh_cards(app).await;
     indexer_table_now(app).await;
-    let bad = rep.cards.iter().filter(|c| matches!(c.level, Level::Red | Level::Amber)).count();
+    let bad = rep.cards.iter().filter(|c| matches!(c.level, Level::Red | Level::Amber) && !status::only_sites_failing(c)).count();
     if trigger == Trigger::Button {
         log(app, if bad == 0 { Level::Ok } else { Level::Amber }, if bad == 0 && !broken && rep.actions.is_empty() {
             "Everything already works. Nothing to fix.".to_string()
@@ -1398,6 +1488,20 @@ pub async fn test_indexers(app: &AppHandle) -> Vec<IndexerRow> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_restart_waits_its_turn() {
+        let t = Instant::now();
+        assert!(restart_allowed(AppId::Jellyfin, t));
+        assert!(!restart_allowed(AppId::Jellyfin, t + Duration::from_secs(60)), "pressing again doesn't restart again");
+        assert!(restart_allowed(AppId::Jellyfin, t + RESTART_GAP + Duration::from_secs(1)));
+    }
+
+    #[test]
+    fn only_a_huge_log_is_runaway() {
+        assert!(!runaway(40 * 1024 * 1024));
+        assert!(runaway(2 * 1024 * 1024 * 1024));
+    }
 
     #[test]
     fn says_what_an_app_logged_when_it_wouldnt_start() {

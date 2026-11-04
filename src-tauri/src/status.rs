@@ -38,6 +38,38 @@ pub struct IndexerRow {
 
 const INDEXER_SOURCES: [&str; 2] = ["IndexerStatusCheck", "IndexerLongTermStatusCheck"];
 
+/// Radarr's test reads a site's newest uploads, and these list none in the
+/// movie categories even though searching them works (The Pirate Bay had
+/// copies of Hope, 2026-10-19; nekoBT and SubsPlease are anime sites). Radarr
+/// marks that a failure, which no restart or retest can clear.
+pub const FEEDLESS_SITES: [&str; 4] = ["The Pirate Bay", "LimeTorrents", "nekoBT", "SubsPlease"];
+
+pub fn is_feedless(name: &str) -> bool {
+    FEEDLESS_SITES.iter().any(|s| name.contains(s))
+}
+
+/// Radarr's health without its false marks on those sites. An "unavailable:
+/// a, b" line naming nothing else goes altogether.
+fn without_false_marks(id: AppId, health: &[Health]) -> Vec<Health> {
+    health
+        .iter()
+        .filter_map(|h| {
+            if id != AppId::Radarr || !INDEXER_SOURCES.contains(&h.source.as_str()) || h.message.starts_with("All ") {
+                return Some(h.clone());
+            }
+            let Some((head, _)) = h.message.rsplit_once(": ") else { return Some(h.clone()) };
+            let left: Vec<String> = listed_names(&h.message).into_iter().filter(|n| !is_feedless(n)).collect();
+            (!left.is_empty()).then(|| Health { message: format!("{head}: {}", left.join(", ")), ..h.clone() })
+        })
+        .collect()
+}
+
+/// Some sites are failing and the others work. That's the site (down, or
+/// blocking): nothing here to repair, and it clears when the site is back.
+pub fn only_sites_failing(card: &CardState) -> bool {
+    card.line.ends_with(" failing") && card.line != "Every indexer failing"
+}
+
 pub fn classify(h: &Health) -> Level {
     let error = h.kind == "error";
     match h.source.as_str() {
@@ -112,6 +144,7 @@ pub fn card_from(id: AppId, reach: Result<(), ArrError>, health: &[Health]) -> C
         };
         return card;
     }
+    let health = &without_false_marks(id, health)[..];
     card.fixable = health.iter().any(|h| classify(h) != Level::Ok && fixable(h));
     let mut items: Vec<(Level, String)> = health.iter().map(|h| (classify(h), plain(h, id))).collect();
     // Worst first; the same plain line from two checks is shown once.
@@ -127,6 +160,9 @@ pub fn card_from(id: AppId, reach: Result<(), ArrError>, health: &[Health]) -> C
         }
     }
     card.notes.extend(it.map(|(_, l)| l));
+    if only_sites_failing(&card) {
+        card.notes.insert(0, "That site is down or blocking right now. Your other sites still work, and this clears when it's back.".into());
+    }
     // Say which folder, so the user knows what to change.
     for h in health.iter().filter(|h| h.source == "RemotePathMappingCheck") {
         if let Some(path) = h.message.split_once(" places downloads in ").and_then(|(_, r)| r.split_once(" but ")).map(|(p, _)| p) {
@@ -205,6 +241,20 @@ pub fn indexer_table(p: &[(String, Cell)], s: &[(String, Cell)], r: &[(String, C
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn radarrs_false_marks_dont_count_and_a_dead_site_says_so() {
+        let h = |m: &str| Health { source: "IndexerLongTermStatusCheck".into(), kind: "warning".into(), message: m.into() };
+        let only_false = [h("Indexers unavailable due to failures for more than 6 hours: nekoBT (Prowlarr), SubsPlease (Prowlarr)")];
+        assert_eq!(card_from(AppId::Radarr, Ok(()), &only_false).level, Level::Ok);
+        let with_real = [h("Indexers unavailable due to failures for more than 6 hours: YTS (Prowlarr), nekoBT (Prowlarr), SubsPlease (Prowlarr)")];
+        let c = card_from(AppId::Radarr, Ok(()), &with_real);
+        assert_eq!(c.line, "YTS failing");
+        assert!(only_sites_failing(&c) && c.notes[0].contains("down or blocking"));
+        // Sonarr has a feed for them: a mark there is real.
+        assert_eq!(card_from(AppId::Sonarr, Ok(()), &only_false).line, "nekoBT, SubsPlease failing");
+        assert!(!only_sites_failing(&card_from(AppId::Radarr, Ok(()), &[h("All indexers are unavailable due to failures")])));
+    }
 
     fn load<T: serde::de::DeserializeOwned>(s: &str) -> T {
         serde_json::from_str(s).unwrap()

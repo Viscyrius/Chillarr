@@ -346,7 +346,7 @@ async fn media_completed(app: AppHandle) -> Vec<tiles::Tile> {
 
 /// What the watching profile has finished ("tmdb:<id>", "tvdb:<id>", "anilist:<id>"), for the Watched mark.
 #[tauri::command]
-fn media_watched_keys(app: AppHandle) -> Vec<String> {
+async fn media_watched_keys(app: AppHandle) -> Vec<String> {
     completed::watched_keys(&history::active(&app))
 }
 
@@ -403,7 +403,7 @@ async fn media_anime_tags() -> Result<Vec<(String, String)>, String> {
 }
 
 #[tauri::command]
-fn media_filter_genres(app: AppHandle, kind: String) -> Vec<String> {
+async fn media_filter_genres(app: AppHandle, kind: String) -> Vec<String> {
     media::filter_genres(&app, &kind)
 }
 
@@ -423,7 +423,7 @@ fn no_autofill(w: &tauri::WebviewWindow) {
 }
 
 #[tauri::command]
-fn media_filter_studios(app: AppHandle, kind: String) -> Vec<String> {
+async fn media_filter_studios(app: AppHandle, kind: String) -> Vec<String> {
     media::filter_studios(&app, &kind)
 }
 

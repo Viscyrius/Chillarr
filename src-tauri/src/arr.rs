@@ -9,6 +9,30 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 /// Indexer tests go out to the real sites (through FlareSolverr for 1337x), which is slow.
 const TEST_TIMEOUT: Duration = Duration::from_secs(90);
+/// How long the whole-library lists are shared. Tabs, the panel and every
+/// background loop ask for these constantly; one trip serves them all.
+const LIST_FRESH: Duration = Duration::from_secs(8);
+/// A failed read is shared for this long, so a queue of callers doesn't wait
+/// out the full timeout one after another.
+const LIST_FAIL_FRESH: Duration = Duration::from_secs(3);
+
+/// One pool for all of them: a new client per call means a new connection per call.
+fn client() -> reqwest::Client {
+    static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    CLIENT.get_or_init(|| reqwest::Client::builder().connect_timeout(CONNECT_TIMEOUT).build().unwrap_or_default()).clone()
+}
+
+type SharedList = (std::time::Instant, Option<std::sync::Arc<Vec<serde_json::Value>>>);
+type ListSlot = std::sync::Arc<tokio::sync::Mutex<Option<SharedList>>>;
+
+fn list_slots() -> &'static std::sync::Mutex<std::collections::HashMap<String, ListSlot>> {
+    static SLOTS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, ListSlot>>> = std::sync::OnceLock::new();
+    SLOTS.get_or_init(Default::default)
+}
+
+fn is_shared_list(path: &str) -> bool {
+    path == "movie" || path == "series"
+}
 
 #[derive(Debug)]
 pub enum ArrError {
@@ -115,8 +139,7 @@ impl Arr {
             AppId::Sonarr | AppId::Radarr => "v3",
             _ => return None,
         };
-        let http = reqwest::Client::builder().connect_timeout(CONNECT_TIMEOUT).build().ok()?;
-        Some(Arr { http, base: cfg.base_url.clone(), key: cfg.api_key.clone()?, ver })
+        Some(Arr { http: client(), base: cfg.base_url.clone(), key: cfg.api_key.clone()?, ver })
     }
 
     fn url(&self, path: &str) -> String {
@@ -251,7 +274,11 @@ impl Arr {
         self.send(self.http.post(self.url("system/shutdown")), REQUEST_TIMEOUT, false).await.map(|_| ())
     }
 
-    /// Asks the app to restart itself. Works for service installs too, no admin needed.
+    /// Asks the app to restart itself. Works for service installs too, no admin
+    /// needed. Radarr does this inside the same process, and on 2026-11-03, after
+    /// seven of these, it wrote each log line up to 27 times and stalled for
+    /// 5-16 s at a time. An app Chillarr can start itself is closed and started
+    /// instead (fix.rs `restart_app`).
     pub async fn restart(&self) -> Result<(), ArrError> {
         self.send(self.http.post(self.url("system/restart")), REQUEST_TIMEOUT, false).await.map(|_| ())
     }
@@ -270,13 +297,41 @@ impl Arr {
 
     /// Any list endpoint as raw JSON (schemas, links, tags).
     pub async fn list(&self, path: &str) -> Result<Vec<serde_json::Value>, ArrError> {
-        self.get(path).await
+        if !is_shared_list(path) {
+            return self.get(path).await;
+        }
+        let slot = list_slots().lock().unwrap().entry(format!("{}|{path}", self.base)).or_default().clone();
+        // Held across the request on purpose: whoever arrives meanwhile gets this answer.
+        let mut held = slot.lock().await;
+        match &*held {
+            Some((at, Some(list))) if at.elapsed() < LIST_FRESH => return Ok((**list).clone()),
+            Some((at, None)) if at.elapsed() < LIST_FAIL_FRESH => return Err(ArrError::Down),
+            _ => {}
+        }
+        match self.get::<Vec<serde_json::Value>>(path).await {
+            Ok(list) => {
+                *held = Some((std::time::Instant::now(), Some(std::sync::Arc::new(list.clone()))));
+                Ok(list)
+            }
+            Err(e) => {
+                *held = Some((std::time::Instant::now(), None));
+                Err(e)
+            }
+        }
+    }
+
+    /// After a change: the next read goes to the app itself. Dropping the slot
+    /// also orphans a read still in flight, which started before the change.
+    fn lists_changed(&self) {
+        let prefix = format!("{}|", self.base);
+        list_slots().lock().unwrap().retain(|k, _| !k.starts_with(&prefix));
     }
 
     /// Adds an item without the app testing it first (the other side may still be starting).
     pub async fn create(&self, path: &str, body: &serde_json::Value) -> Result<serde_json::Value, ArrError> {
         let req = self.http.post(self.url(&format!("{path}?forceSave=true"))).json(body);
         let text = self.send(req, REQUEST_TIMEOUT, false).await?;
+        self.lists_changed();
         Ok(serde_json::from_str(&text).unwrap_or(serde_json::Value::Null))
     }
 
@@ -285,23 +340,30 @@ impl Arr {
     pub async fn create_tested(&self, path: &str, body: &serde_json::Value) -> Result<serde_json::Value, ArrError> {
         let req = self.http.post(self.url(path)).json(body);
         let text = self.send(req, TEST_TIMEOUT, false).await?;
+        self.lists_changed();
         Ok(serde_json::from_str(&text).unwrap_or(serde_json::Value::Null))
     }
 
     /// Saves a changed item back (PUT), e.g. `series/12` or `episode/monitor`.
     pub async fn update(&self, path: &str, body: &serde_json::Value) -> Result<(), ArrError> {
         let req = self.http.put(self.url(path)).json(body);
-        self.send(req, REQUEST_TIMEOUT, false).await.map(|_| ())
+        let done = self.send(req, REQUEST_TIMEOUT, false).await.map(|_| ());
+        self.lists_changed();
+        done
     }
 
     /// Removes several at once, e.g. `queue/bulk` with `{"ids": [...]}`.
     pub async fn delete_with(&self, path: &str, body: &serde_json::Value) -> Result<(), ArrError> {
-        self.send(self.http.delete(self.url(path)).json(body), REQUEST_TIMEOUT, false).await.map(|_| ())
+        let done = self.send(self.http.delete(self.url(path)).json(body), REQUEST_TIMEOUT, false).await.map(|_| ());
+        self.lists_changed();
+        done
     }
 
     /// Removes an item, e.g. `movie/12?deleteFiles=false`.
     pub async fn delete(&self, path: &str) -> Result<(), ArrError> {
-        self.send(self.http.delete(self.url(path)), REQUEST_TIMEOUT, false).await.map(|_| ())
+        let done = self.send(self.http.delete(self.url(path)), REQUEST_TIMEOUT, false).await.map(|_| ());
+        self.lists_changed();
+        done
     }
 
     /// Release titles this app grabbed (sent to the download client), newest first.
@@ -344,6 +406,41 @@ impl Arr {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Answers every request with an empty list and counts them.
+    async fn counting_server() -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let count = hits.clone();
+        tokio::spawn(async move {
+            while let Ok((mut sock, _)) = listener.accept().await {
+                count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let mut buf = [0u8; 2048];
+                let _ = sock.read(&mut buf).await;
+                let _ = sock.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n[]").await;
+            }
+        });
+        (base, hits)
+    }
+
+    #[tokio::test]
+    async fn library_lists_are_shared_until_something_changes() {
+        use std::sync::atomic::Ordering::SeqCst;
+        let (base, hits) = counting_server().await;
+        let a = Arr { http: client(), base, key: "k".into(), ver: "v3" };
+        let (x, y) = tokio::join!(a.list("movie"), a.list("movie"));
+        assert!(x.is_ok() && y.is_ok());
+        a.list("movie").await.unwrap();
+        assert_eq!(hits.load(SeqCst), 1, "together and right after: one trip");
+        a.list("tag").await.unwrap();
+        a.list("tag").await.unwrap();
+        assert_eq!(hits.load(SeqCst), 3, "anything else always asks");
+        a.update("movie/1", &serde_json::json!({})).await.unwrap();
+        a.list("movie").await.unwrap();
+        assert_eq!(hits.load(SeqCst), 5, "a change means the next read asks again");
+    }
     use crate::model::AppConfig;
 
     fn cfg(port: u16) -> AppConfig {
