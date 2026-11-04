@@ -172,6 +172,11 @@ impl Media {
         self.following.lock().unwrap().contains(&(owner, id))
     }
 
+    /// Stop was pressed: its follower clears the posters on its next look, and ends.
+    pub fn stop_following(&self, owner: AppId, id: i64) {
+        self.following.lock().unwrap().remove(&(owner, id));
+    }
+
     fn save_saved(&self) {
         // Locked, the list in memory is empty, not the owner's: don't write it over theirs.
         if self.is_locked() {
@@ -472,7 +477,8 @@ pub async fn ensure_libraries(app: &AppHandle) -> Result<(), String> {
 // ---------- Rows ----------
 
 pub(crate) fn http() -> reqwest::Client {
-    reqwest::Client::builder().user_agent("Chillarr").timeout(Duration::from_secs(15)).build().unwrap_or_default()
+    static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    CLIENT.get_or_init(|| reqwest::Client::builder().user_agent("Chillarr").timeout(Duration::from_secs(15)).build().unwrap_or_default()).clone()
 }
 
 fn now_secs() -> u64 {
@@ -593,8 +599,9 @@ pub async fn grow(app: &AppHandle) {
         let mut c = media.catalog.lock().unwrap();
         let recs: Vec<i64> = mine.iter().flat_map(|id| c.recommendations(*id)).collect();
         c.prioritize(&recs);
-        let _ = c.save(&media.dir.join("catalog.json"));
     }
+    let copy = serde_json::to_string(&*media.catalog.lock().unwrap()).ok();
+    save_outside_lock(media.dir.join("catalog.json"), copy).await;
     // TVmaze allows 20 calls per 10 seconds; 600 ms apart stays well under.
     for _ in 0..5 {
         let page = media.shows.lock().unwrap().next_page;
@@ -632,7 +639,15 @@ pub async fn grow(app: &AppHandle) {
             _ => break,
         }
     }
-    let _ = media.shows.lock().unwrap().save(&media.dir.join("shows.json"));
+    let copy = serde_json::to_string(&*media.shows.lock().unwrap()).ok();
+    save_outside_lock(media.dir.join("shows.json"), copy).await;
+}
+
+/// Writing 12 MB takes a while, and a tab waits on the lock meanwhile: only the
+/// copy is made under it.
+async fn save_outside_lock(path: std::path::PathBuf, text: Option<String>) {
+    let Some(text) = text else { return };
+    let _ = tokio::task::spawn_blocking(move || crate::catalog::save_atomic(&path, &text)).await;
 }
 
 /// Wide fanart for shows that have none, from Sonarr's metadata server, all
@@ -982,20 +997,28 @@ pub async fn rows(app: &AppHandle, tab: &str) -> Result<Vec<Row>, String> {
     let mut out: Vec<Option<Row>> = Vec::new();
     let (mut lib_movies, mut lib_series, mut lib_anime, mut cont, mut latest) = (vec![], vec![], vec![], vec![], vec![]);
     if let Some(j) = &j {
-        let anime_ids = anime_library_ids(j).await;
-        cont = j.resume().await.unwrap_or_default().iter().map(|v| tiles::from_jf(v, &j.base)).collect();
-        let next: Vec<Tile> = j.next_up().await.unwrap_or_default().iter().map(|v| tiles::from_jf(v, &j.base)).collect();
+        // Side by side: the wait is Jellyfin's slowest answer, not all of them added up.
+        let lib = |q: String| async move { j.items(&q).await.map(|v| v.iter().map(|v| tiles::from_jf(v, &j.base)).collect::<Vec<Tile>>()) };
+        let (anime_ids, resume, next, fresh, movies, series) = tokio::join!(
+            anime_library_ids(j),
+            j.resume(),
+            j.next_up(),
+            j.latest(),
+            lib("recursive=true&includeItemTypes=Movie&sortBy=SortName&limit=500".into()),
+            lib("recursive=true&includeItemTypes=Series&sortBy=SortName&limit=500".into()),
+        );
+        cont = resume.unwrap_or_default().iter().map(|v| tiles::from_jf(v, &j.base)).collect();
+        let next: Vec<Tile> = next.unwrap_or_default().iter().map(|v| tiles::from_jf(v, &j.base)).collect();
         for t in next {
             if !cont.iter().any(|c| c.series_id.is_some() && c.series_id == t.series_id) {
                 cont.push(t);
             }
         }
-        latest = j.latest().await.unwrap_or_default().iter().map(|v| tiles::from_jf(v, &j.base)).collect();
-        let lib = |q: String| async move { j.items(&q).await.map(|v| v.iter().map(|v| tiles::from_jf(v, &j.base)).collect::<Vec<Tile>>()) };
+        latest = fresh.unwrap_or_default().iter().map(|v| tiles::from_jf(v, &j.base)).collect();
         let mut failed = None;
         let mut keep = |r: Result<Vec<Tile>, JfError>| r.unwrap_or_else(|e| { failed.get_or_insert(e); vec![] });
-        lib_movies = keep(lib("recursive=true&includeItemTypes=Movie&sortBy=SortName&limit=500".into()).await);
-        lib_series = keep(lib("recursive=true&includeItemTypes=Series&sortBy=SortName&limit=500".into()).await);
+        lib_movies = keep(movies);
+        lib_series = keep(series);
         for id in &anime_ids {
             lib_anime.extend(keep(lib(format!("parentId={id}&recursive=true&includeItemTypes=Series,Movie&sortBy=SortName&limit=500")).await));
         }
@@ -1009,9 +1032,8 @@ pub async fn rows(app: &AppHandle, tab: &str) -> Result<Vec<Row>, String> {
             cont = continue_first(crate::watchnow::list(app).await, cont);
         }
     }
-    let downloading = queue(app).await;
+    let (downloading, tracked) = tokio::join!(queue(app), tracked(app));
     let library: Vec<Tile> = lib_movies.iter().chain(lib_series.iter()).chain(lib_anime.iter()).cloned().collect();
-    let tracked = tracked(app).await;
     let own = |v: Vec<Tile>| mark_tracked(crate::catalog::merge_owned(v, &library), &tracked);
     let year = { use chrono::Datelike; chrono::Local::now().year() as i64 };
 
@@ -1046,17 +1068,23 @@ pub async fn rows(app: &AppHandle, tab: &str) -> Result<Vec<Row>, String> {
         .map(|(i, (title, recs))| row(&format!("because-{i}"), &format!("Because you watched {title}"), own(recs)))
         .collect();
 
-    let (popular, top10, newr, top, genres) = {
+    // Each of these sorts a whole catalog (30,000 movies), so only what this tab shows.
+    let home = !matches!(tab, "movies" | "series" | "anime" | "downloads");
+    let (popular, top10, newr, top, genres): (Vec<Tile>, Vec<Tile>, Vec<Tile>, Vec<Tile>, Vec<(String, Vec<Tile>)>) = if home || tab == "movies" {
         let media = app.state::<Media>();
         let c = media.catalog.lock().unwrap();
-        let genres: Vec<(String, Vec<Tile>)> = c.genres(8).into_iter().take(14).map(|g| { let t = c.by_genre(&g, 30); (g, t) }).collect();
-        (c.popular(40), c.top10(), c.new_releases(year, 30), c.top_rated(30), genres)
+        let genres: Vec<(String, Vec<Tile>)> = c.genres(8).into_iter().take(if home { 4 } else { 14 }).map(|g| { let t = c.by_genre(&g, 30); (g, t) }).collect();
+        (if home { c.popular(40) } else { vec![] }, c.top10(), c.new_releases(year, 30), c.top_rated(30), genres)
+    } else {
+        Default::default()
     };
-    let (mut s_pop, s_top, s_genres) = {
+    let (mut s_pop, s_top, s_genres): (Vec<Tile>, Vec<Tile>, Vec<(String, Vec<Tile>)>) = if home || tab == "series" {
         let media = app.state::<Media>();
         let sh = media.shows.lock().unwrap();
-        let g: Vec<(String, Vec<Tile>)> = sh.genres(5).into_iter().take(12).map(|x| { let t = sh.by_genre(&x, 30); (x, t) }).collect();
-        (sh.popular(30), sh.top_rated(30), g)
+        let g: Vec<(String, Vec<Tile>)> = if home { vec![] } else { sh.genres(5).into_iter().take(12).map(|x| { let t = sh.by_genre(&x, 30); (x, t) }).collect() };
+        (sh.popular(30), if home { vec![] } else { sh.top_rated(30) }, g)
+    } else {
+        Default::default()
     };
     // The hero needs wide pictures, which TVmaze doesn't have: borrow the top shows' fanart.
     if matches!(tab, "series" | "home") {
@@ -1073,6 +1101,13 @@ pub async fn rows(app: &AppHandle, tab: &str) -> Result<Vec<Row>, String> {
         list.into_iter().take(take).map(|(g, t)| row_x(&format!("genre-{g}"), &g, own(t), &format!("{prefix}:genre:{g}"))).collect()
     };
     let kind_is = |t: &Tile, k: &[&str]| k.contains(&t.kind.as_str());
+    // Home and My downloads wait on these together.
+    let lists = home || tab == "downloads";
+    let (on_the_way, saved, anime_top) = tokio::join!(
+        async { if lists { my_list(app).await } else { vec![] } },
+        async { if lists { my_list_row(app, j.as_ref(), &own).await } else { vec![] } },
+        async { if home { anime_row(app, "trending", 1).await } else { vec![] } },
+    );
     match tab {
         "movies" => {
             out.push(row("continue", "Continue watching", cont.iter().filter(|t| kind_is(t, &["movie"])).cloned().collect()));
@@ -1110,8 +1145,8 @@ pub async fn rows(app: &AppHandle, tab: &str) -> Result<Vec<Row>, String> {
             out.push(row("library-anime", "My anime", lib_anime));
         }
         "downloads" => {
-            out.push(row("mylist", "On the way", my_list(app).await));
-            out.push(row("saved", "My List", my_list_row(app, j.as_ref(), &own).await));
+            out.push(row("mylist", "On the way", on_the_way));
+            out.push(row("saved", "My List", saved));
             out.push(row("downloading", "Downloading now", downloading));
             out.push(row("latest", "Recently added", latest));
             out.push(row("library-movies", "My movies", lib_movies));
@@ -1120,8 +1155,8 @@ pub async fn rows(app: &AppHandle, tab: &str) -> Result<Vec<Row>, String> {
         }
         _ => {
             out.push(row("continue", "Continue watching", cont));
-            out.push(row("saved", "My List", my_list_row(app, j.as_ref(), &own).await));
-            out.push(row("mylist", "On the way", my_list(app).await));
+            out.push(row("saved", "My List", saved));
+            out.push(row("mylist", "On the way", on_the_way));
             out.push(top10_row);
             let mut because_iter = because_rows.into_iter();
             out.push(because_iter.next().flatten());
@@ -1130,7 +1165,7 @@ pub async fn rows(app: &AppHandle, tab: &str) -> Result<Vec<Row>, String> {
             out.push(row_x("trending", "Trending now", own(popular_rest), "movie:popular"));
             out.push(row_x("new", "New releases", own(newr), &format!("movie:new:{year}")));
             out.push(row_x("popular-series", "Popular series", own(s_pop), "series:popular"));
-            out.push(row_x("anime-trending", "Trending anime", anime_row(app, "trending", 1).await, "anime:trending"));
+            out.push(row_x("anime-trending", "Trending anime", anime_top, "anime:trending"));
             out.extend(because_iter);
             out.push(row_x("top-rated", "Top rated movies", own(top), "movie:top"));
             out.extend(genre_rows("movie", genres, 4));
@@ -1634,7 +1669,10 @@ pub fn follow(app: AppHandle, owner: AppId, id: i64, key: String, title: String)
         return;
     }
     tauri::async_runtime::spawn(async move {
-        app.state::<Media>().following.lock().unwrap().insert((owner, id));
+        // Already followed (pressed twice): one is enough.
+        if !app.state::<Media>().following.lock().unwrap().insert((owner, id)) {
+            return;
+        }
         follow_until_ready(app.clone(), owner, id, key, title).await;
         app.state::<Media>().following.lock().unwrap().remove(&(owner, id));
     });
@@ -1651,7 +1689,18 @@ async fn follow_until_ready(app: AppHandle, owner: AppId, id: i64, key: String, 
         // Up to 6 hours: long enough for a slow download, short enough not to linger.
         for _ in 0..2160 {
             tokio::time::sleep(Duration::from_secs(10)).await;
-            let Ok(item) = a.get_one(&path).await else { continue };
+            // Stopped, or gone from Radarr/Sonarr: what the posters say stops being true.
+            let stopped = !app.state::<Media>().is_following(owner, id);
+            let item = match a.get_one(&path).await {
+                Err(crate::arr::ArrError::Http(404)) => None,
+                Err(_) if !stopped => continue,
+                Err(_) => None,
+                Ok(item) => Some(item),
+            };
+            let Some(item) = item.filter(|_| !stopped) else {
+                let _ = app.emit("get-progress", json!({ "key": key, "gone": true }));
+                return;
+            };
             if files(&item) > start {
                 if let Some(j) = jf_admin(&app).filter(|j| j.user_id.is_some()) {
                     let _ = j.scan().await;

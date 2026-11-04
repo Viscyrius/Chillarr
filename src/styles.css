@@ -193,7 +193,7 @@ main { min-height: 100dvh; outline: none; }
 
 /* Detail */
 dialog { padding: 0; border: 0; color: var(--text); }
-dialog::backdrop { background: rgba(0, 0, 0, 0.7); backdrop-filter: blur(4px); }
+dialog::backdrop { background: rgba(0, 0, 0, 0.7); }
 .detail { width: min(880px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); background: var(--bg-2); border-radius: 14px; overflow: auto; box-shadow: 0 40px 120px rgba(0,0,0,0.6); }
 .detail-hero { position: relative; min-height: 400px; display: flex; align-items: flex-end; padding: 32px 40px; background: var(--surface) center 25% / cover no-repeat; }
 .detail-hero::before { content: ""; position: absolute; top: 0; right: 0; bottom: 0; left: 0; background: linear-gradient(0deg, var(--bg-2) 2%, rgba(16,18,23,0.2) 60%, rgba(16,18,23,0.35)); }
@@ -390,19 +390,19 @@ img, svg { -webkit-user-drag: none; }
 :root { --spring: cubic-bezier(0.34, 1.4, 0.64, 1); --out: cubic-bezier(0.16, 1, 0.3, 1); }
 
 /* Every page fades up as it arrives */
-.enter { animation: rise 0.6s var(--out) both; }
+.enter { animation: rise 0.32s var(--out) both; }
 @keyframes rise { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: none; } }
 @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
 @keyframes pop { from { opacity: 0; transform: translateY(10px) scale(0.97); } to { opacity: 1; transform: none; } }
 
 /* Rows and tiles cascade in */
-.row { animation: rise 0.7s var(--out) both; animation-delay: calc(var(--i, 0) * 70ms + 120ms); }
-.track .tile, .results .tile, .grid-lib .tile { animation: pop 0.55s var(--out) both; animation-delay: calc(var(--j, 0) * 35ms + var(--i, 0) * 70ms + 160ms); }
+.row { animation: rise 0.34s var(--out) both; animation-delay: min(calc(var(--i, 0) * 25ms), 120ms); }
+.track .tile, .results .tile, .grid-lib .tile { animation: pop 0.3s var(--out) both; animation-delay: min(calc(var(--j, 0) * 12ms + var(--i, 0) * 25ms), 160ms); }
 /* A kept tab put back (browse.js): no entrances, it was already on screen. */
 #view.kept .row, #view.kept .track .tile, #view.kept .grid-lib .tile, #view.kept .enter, #view.kept .hero, #view.kept .hero-copy.first > *, #view.kept .empty-state > * { animation: none !important; }
 
 /* Posters fade in once they have loaded */
-.art img { opacity: 0; transform: scale(1.04); transition: opacity 0.5s ease, transform 0.6s var(--out); }
+.art img { opacity: 0; transform: scale(1.02); transition: opacity 0.22s ease, transform 0.3s var(--out); }
 .art img.loaded { opacity: 1; transform: none; }
 
 /* Tile hover: lift, glow, picture leans in */
@@ -445,7 +445,7 @@ img, svg { -webkit-user-drag: none; }
 .p-btn:active, .close:active { transform: scale(0.9); }
 
 /* Dialogs open and close softly */
-dialog[open] { animation: pop 0.4s var(--out); }
+dialog[open] { animation: pop 0.24s var(--out); }
 dialog[open]::backdrop { animation: fade 0.35s ease; }
 dialog.closing { animation: shut 0.22s ease forwards; }
 @keyframes shut { to { opacity: 0; transform: translateY(8px) scale(0.98); } }

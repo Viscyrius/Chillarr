@@ -187,10 +187,16 @@ pub struct Qbit {
     base: String,
 }
 
+/// One pool for every Qbit, so its answers don't each start with a new connection.
+fn client() -> reqwest::Client {
+    static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    CLIENT.get_or_init(|| reqwest::Client::builder().connect_timeout(Duration::from_secs(2)).timeout(Duration::from_secs(10)).build().unwrap_or_default()).clone()
+}
+
 impl Qbit {
     pub fn new(base: &str) -> Qbit {
         Qbit {
-            http: reqwest::Client::builder().connect_timeout(Duration::from_secs(2)).timeout(Duration::from_secs(10)).build().unwrap_or_default(),
+            http: client(),
             base: base.trim_end_matches('/').to_string(),
         }
     }

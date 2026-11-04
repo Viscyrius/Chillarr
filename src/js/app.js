@@ -1,10 +1,10 @@
 // Routing between tabs, the top bar, search, and the first-run tutorial.
 import { $, el, invoke, screenMode, setPerson, store, viewer, WEB, windowFull } from "./api.js";
-import { renderTab, renderSearch, renderExplore, stopBrowse } from "./browse.js";
+import { renderTab, renderSearch, renderExplore, stopBrowse, warmTabs } from "./browse.js";
 import { renderFilter } from "./filter.js";
 import { renderSettings, stopSettings } from "./settings.js";
 import { openSetup } from "./setup.js";
-import { startProfiles, startProfilesWeb } from "./profiles.js";
+import { knowPerson, startProfiles, startProfilesWeb } from "./profiles.js";
 import * as place from "./place.js";
 import "./nav.js";
 import { recentSearches } from "./recent.js";
@@ -173,8 +173,11 @@ function drawViewer() {
   if (store.settings.theme) applyTheme(store.settings.theme);
   syncIcons();
   invoke("media_status").then((m) => (store.media = m));
+  // Local and instant, and the first page's saved rows are this person's.
+  if (store.settings.setup_done) await knowPerson();
   // The page first; each app's state follows as it answers ("card" events).
   route();
+  warmTabs();
   invoke("refresh").then((cards) => { cards.forEach((c) => store.cards.set(c.id, c)); updateHealth(); store.emit("cards"); }).catch(() => {});
   if (!store.settings.setup_done) openSetup();
   else startProfiles();

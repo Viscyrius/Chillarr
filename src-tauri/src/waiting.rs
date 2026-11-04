@@ -55,10 +55,18 @@ fn sonarr_poster(s: &Value) -> Option<String> {
 
 /// Monitored titles with nothing to watch yet, newest first, with where each stands.
 pub async fn list(app: &AppHandle) -> Vec<Waiting> {
+    // Side by side; movies stay listed first.
+    let (mut out, shows) = tokio::join!(waiting_movies(app), waiting_shows(app));
+    out.extend(shows);
+    out
+}
+
+async fn waiting_movies(app: &AppHandle) -> Vec<Waiting> {
     let mut out = Vec::new();
     if let Some(a) = arr(app, AppId::Radarr) {
-        let q = a.get_one("queue?pageSize=200").await.unwrap_or_default();
-        let mut movies = a.list("movie").await.unwrap_or_default();
+        let (q, movies) = tokio::join!(a.get_one("queue?pageSize=200"), a.list("movie"));
+        let q = q.unwrap_or_default();
+        let mut movies = movies.unwrap_or_default();
         movies.sort_by(|x, y| y["added"].as_str().cmp(&x["added"].as_str()));
         for m in movies.iter().filter(|m| m["monitored"] == true && m["hasFile"] != true) {
             let id = m["id"].as_i64().unwrap_or(0);
@@ -69,6 +77,11 @@ pub async fn list(app: &AppHandle) -> Vec<Waiting> {
             out.push(Waiting { tile: t, app: "radarr", id });
         }
     }
+    out
+}
+
+async fn waiting_shows(app: &AppHandle) -> Vec<Waiting> {
+    let mut out = Vec::new();
     if let Some(a) = arr(app, AppId::Sonarr) {
         let q = a.get_one("queue?pageSize=200").await.unwrap_or_default();
         // Shows with a wanted episode that has aired: "Looking for a copy" even
@@ -127,6 +140,7 @@ pub async fn stop(app: &AppHandle, name: &str, id: i64) -> Result<String, String
 pub async fn stop_item(app: &AppHandle, owner: AppId, id: i64, forget: bool) -> Result<String, String> {
     let (kind, field) = if owner == AppId::Radarr { ("movie", "movieId") } else { ("series", "seriesId") };
     let a = arr(app, owner).ok_or_else(|| format!("{} isn't running", owner.label()))?;
+    app.state::<Media>().stop_following(owner, id);
     let item = a.get_one(&format!("{kind}/{id}")).await.map_err(|e| format!("{} couldn't find it: {e}", owner.label()))?;
     let title = item["title"].as_str().unwrap_or("it").to_string();
     let recs: Vec<Value> = a.get_one("queue?pageSize=2000").await.unwrap_or_default()["records"]
@@ -868,6 +882,7 @@ pub async fn stop_download(app: &AppHandle, name: &str, download_id: &str) -> Re
         log(app, Level::Ok, &msg);
         return Ok(msg);
     };
+    app.state::<Media>().stop_following(owner, id);
     remove_from_queue(&a, &recs).await?;
     // Removing a queue row takes the torrent with it; one that wasn't queued goes here.
     if let Some(q) = qbit(app) {

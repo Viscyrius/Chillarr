@@ -46,7 +46,8 @@ function noArt(t) {
 }
 
 function art(t, wide) {
-  const src = wide ? t.backdrop || t.poster : t.poster || t.backdrop;
+  // Jellyfin's backdrops are asked for at the hero's 1600px; a card is about 300.
+  const src = wide ? (t.backdrop || t.poster || "").replace("fillWidth=1600", "fillWidth=640") : t.poster || t.backdrop;
   const box = el("div", { class: "art" });
   if (src) {
     const img = el("img", { src, alt: "", loading: "lazy", decoding: "async" });
@@ -132,7 +133,7 @@ const TRAILER_START = 1;
 /** The card's picture: a TMDB backdrop at 780px is plenty for a ~400px card. */
 function cardPic(t) {
   const pic = t.backdrop || t.poster;
-  return pic ? pic.replace("/w1280/", "/w780/").replace("/original/", "/w780/") : "";
+  return pic ? pic.replace("/w1280/", "/w780/").replace("/original/", "/w780/").replace("fillWidth=1600", "fillWidth=780") : "";
 }
 
 /** Loads `src` into `img`; resolves once it can be drawn. decode() is Chrome 64: older ones wait for load. */
@@ -905,6 +906,36 @@ function resume(view, tab, entry, seq) {
   startRefresh(view, tab, entry, seq);
 }
 
+/* ---------- Saved rows ---------- */
+// Each tab's last rows, kept across restarts, so a tab paints the moment it's
+// opened; the answer that follows redraws only what changed.
+const savedKey = (tab) => `chillarr-rows:${personKey()}:${tab}`;
+
+function saveRows(tab, rows, text) {
+  try { localStorage.setItem(savedKey(tab), text || JSON.stringify(rows)); } catch (e) { /* full or blocked: it just loads the slow way */ }
+}
+
+function savedRows(tab) {
+  try {
+    const rows = JSON.parse(localStorage.getItem(savedKey(tab)) || "null");
+    return Array.isArray(rows) && hasContent(tab, rows) ? rows : null;
+  } catch (e) { return null; }
+}
+
+/** After starting: every tab's rows, one at a time, so the first visit to each is already current. */
+export function warmTabs() {
+  setTimeout(async () => {
+    const who = personKey();
+    for (const tab of ["home", "movies", "series", "anime", "mylist", "downloads"]) {
+      if (document.hidden) return;
+      const rows = await invoke("media_rows", { tab }).catch(() => null);
+      if (who !== personKey()) return;
+      if (rows && hasContent(tab, rows)) saveRows(tab, rows);
+      await new Promise((r) => setTimeout(r, 400));
+    }
+  }, 2500);
+}
+
 /** What keeps a page current while it's up: the downloads list, and rows with downloads or My List in them. */
 function startRefresh(view, tab, entry, seq) {
   clearInterval(refreshTimer);
@@ -923,7 +954,9 @@ async function refreshPage(view, tab, entry, seq) {
   const fresh = await invoke("media_rows", { tab }).catch(() => null);
   // Gone meanwhile, or the answer failed: the page stays as it is.
   if (seq !== renderSeq || onScreen !== entry || !fresh) return;
-  if (JSON.stringify(fresh) === JSON.stringify(entry.rows)) return;
+  const text = JSON.stringify(fresh);
+  if (text === JSON.stringify(entry.rows)) return;
+  if (hasContent(tab, fresh)) saveRows(tab, fresh, text);
   if (entry.kind === "rows" && hasContent(tab, fresh)) { patchRows(view, tab, entry, fresh, seq); return; }
   // A list page (or one that has nothing now): drawn again, kept where you are.
   pages.delete(tab);
@@ -1074,7 +1107,16 @@ export async function renderTab(view, tab, mode = null) {
     refreshPage(view, tab, kept, seq);
     return;
   }
-  if (!mode) view.replaceChildren(...skeleton());
+  // A redraw was asked for because something changed: the saved rows are older than that.
+  const saved = mode === "redraw" ? null : savedRows(tab);
+  if (saved) {
+    await draw(view, tab, saved, mode, seq);
+    if (seq !== renderSeq) return;
+    const drawn = pages.get(tab);
+    if (drawn) { refreshPage(view, tab, drawn, seq); return; }
+    // Saved rows that couldn't be drawn: the usual way.
+  }
+  if (!mode && !saved) view.replaceChildren(...skeleton());
   let rows;
   try {
     rows = await invoke("media_rows", { tab });
@@ -1093,6 +1135,7 @@ export async function renderTab(view, tab, mode = null) {
   }
   // Something newer (another tab, a search) was drawn while this loaded.
   if (seq !== renderSeq) return;
+  if (hasContent(tab, rows)) saveRows(tab, rows);
   await draw(view, tab, rows, mode, seq);
 }
 
@@ -1402,18 +1445,38 @@ listen("get-progress", (e) => {
     if ($("#player").hidden && !$("#detail").open) window.dispatchEvent(new Event("chillarr:refresh"));
     return;
   }
+  if (p.gone) {
+    // Stopped: back to what the card said, here and on the tabs kept off screen.
+    const selector = `.tile[data-key="${CSS.escape(p.key)}"]`;
+    const kept = [...pages.values()].flatMap((e) => e.nodes.flatMap((n) => [...n.querySelectorAll(selector)]));
+    for (const b of new Set([...document.querySelectorAll(selector), ...kept])) unpaint(b);
+    return;
+  }
   for (const b of document.querySelectorAll(`.tile[data-key="${CSS.escape(p.key)}"]`)) {
     const box = b.querySelector(".art");
     let over = box.querySelector(".over");
-    if (!over) { over = el("div", { class: "over" }); box.append(over); }
+    if (!over) { over = el("div", { class: "over", dataset: { live: "" } }); box.append(over); }
+    else if (over.dataset.live === undefined) over.dataset.live = over.textContent;
     over.textContent = p.status;
     if (p.progress != null) {
       let bar = box.querySelector(".bar");
-      if (!bar) { bar = el("div", { class: "bar" }, el("span")); box.append(bar); }
+      if (!bar) { bar = el("div", { class: "bar", dataset: { live: "" } }, el("span")); box.append(bar); }
       bar.firstChild.style.width = `${Math.round(p.progress * 100)}%`;
     }
+    // Painted over: the next refresh draws this card from what's true, even with no change in the rows.
+    b._tsig = "";
   }
 });
+
+/** Takes a follower's words and bar off a card: what the card said before, or nothing. */
+function unpaint(b) {
+  const over = b.querySelector(".over[data-live]");
+  if (over) {
+    if (over.dataset.live) { over.textContent = over.dataset.live; delete over.dataset.live; }
+    else over.remove();
+  }
+  b.querySelector(".bar[data-live]")?.remove();
+}
 
 // My List changed: redraw so its row is current, once the detail panel or
 // hover card it changed from has closed (a redraw under them would jump).

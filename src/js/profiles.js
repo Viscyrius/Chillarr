@@ -26,6 +26,11 @@ async function load() {
   return list;
 }
 
+/** Who's watching, before the first page is drawn: the tabs saved for them are theirs. */
+export function knowPerson() {
+  return load();
+}
+
 /** Called once the app has started: asks who's watching when there's a choice. */
 export async function startProfiles() {
   await load();

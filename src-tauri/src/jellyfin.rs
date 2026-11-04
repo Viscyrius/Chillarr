@@ -99,10 +99,16 @@ pub struct Jf {
     on_behalf: bool,
 }
 
+/// One pool for every Jf: Jellyfin is asked constantly, and a new client means a new connection.
+fn client() -> reqwest::Client {
+    static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    CLIENT.get_or_init(|| reqwest::Client::builder().connect_timeout(Duration::from_secs(2)).build().unwrap_or_default()).clone()
+}
+
 impl Jf {
     pub fn new(base: &str, device_id: &str, session: Option<&Session>) -> Jf {
         Jf {
-            http: reqwest::Client::builder().connect_timeout(Duration::from_secs(2)).build().unwrap_or_default(),
+            http: client(),
             base: base.trim_end_matches('/').to_string(),
             device_id: device_id.to_string(),
             token: session.map(|s| s.token.clone()).filter(|t| !t.is_empty()),

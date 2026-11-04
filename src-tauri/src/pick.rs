@@ -972,6 +972,39 @@ pub fn restart_range(jf_eps: &[Value], logged: &[(i64, i64)], season: Option<i64
 /// Every episode of a show (Sonarr's list, or skyhook's when Sonarr doesn't
 /// have the show), with what's on this PC, what you've finished, and where
 /// you're at. A handful of requests, never one per episode.
+/// Every series in the library, per user, shared for a minute: opening a show
+/// by its TVDB id otherwise reads the whole list each time.
+async fn library_shows(j: &crate::jellyfin::Jf) -> Result<std::sync::Arc<Vec<Value>>, crate::jellyfin::JfError> {
+    type Shows = (std::time::Instant, std::sync::Arc<Vec<Value>>);
+    static SHOWS: std::sync::Mutex<Option<std::collections::HashMap<String, Shows>>> = std::sync::Mutex::new(None);
+    let user = j.user_id.clone().unwrap_or_default();
+    if let Some((at, list)) = SHOWS.lock().unwrap().get_or_insert_with(Default::default).get(&user) {
+        if at.elapsed() < Duration::from_secs(60) {
+            return Ok(list.clone());
+        }
+    }
+    let list = std::sync::Arc::new(j.items("recursive=true&includeItemTypes=Series&limit=5000").await?);
+    SHOWS.lock().unwrap().get_or_insert_with(Default::default).insert(user, (std::time::Instant::now(), list.clone()));
+    Ok(list)
+}
+
+/// A show from Sonarr's metadata server, remembered for an hour (the 12 newest).
+async fn skyhook_show(tvdb: i64) -> Option<std::sync::Arc<Value>> {
+    type Shows = Vec<(i64, std::time::Instant, std::sync::Arc<Value>)>;
+    static SHOWS: std::sync::Mutex<Shows> = std::sync::Mutex::new(Vec::new());
+    if let Some((_, _, show)) = SHOWS.lock().unwrap().iter().find(|(id, at, _)| *id == tvdb && at.elapsed() < Duration::from_secs(3600)) {
+        return Some(show.clone());
+    }
+    let show = std::sync::Arc::new(http().get(format!("{SKYHOOK}/{tvdb}")).send().await.ok()?.json::<Value>().await.ok()?);
+    let mut kept = SHOWS.lock().unwrap();
+    kept.retain(|(id, _, _)| *id != tvdb);
+    kept.push((tvdb, std::time::Instant::now(), show.clone()));
+    if kept.len() > 12 {
+        kept.remove(0);
+    }
+    Some(show)
+}
+
 pub async fn show_episodes(app: &AppHandle, tile: &Tile) -> Result<ShowEpisodes, String> {
     let j = jf(app).filter(|j| j.user_id.is_some()).ok_or("Sign in to Jellyfin first.")?;
     let mut series_id = if tile.kind == "episode" { tile.series_id.clone() } else { tile.jf_id.clone() };
@@ -988,7 +1021,7 @@ pub async fn show_episodes(app: &AppHandle, tile: &Tile) -> Result<ShowEpisodes,
     // A show known only by its TVDB id (a Watch now episode, a Completed show,
     // an anime matched above): the library's copy if there is one, else the list alone.
     if let (None, Some(t)) = (&series_id, tile_tvdb) {
-        let shows = j.items("recursive=true&includeItemTypes=Series&limit=5000").await.map_err(|e| format!("Jellyfin couldn't be asked: {e}"))?;
+        let shows = library_shows(&j).await.map_err(|e| format!("Jellyfin couldn't be asked: {e}"))?;
         series_item = series_of(&shows, t).cloned();
         series_id = series_item.as_ref().and_then(|v| v["Id"].as_str()).map(String::from);
     }
@@ -1028,11 +1061,9 @@ pub async fn show_episodes(app: &AppHandle, tile: &Tile) -> Result<ShowEpisodes,
     } else if let Some(t) = tvdb {
         // Not in Sonarr (or Sonarr didn't answer): its metadata server. If that's
         // down too, Jellyfin's own episodes still show, and nothing is saved from them.
-        if let Ok(r) = http().get(format!("{SKYHOOK}/{t}")).send().await {
-            if let Ok(show) = r.json::<Value>().await {
-                base = show["episodes"].as_array().into_iter().flatten().filter_map(base_ep).collect();
-                source = if base.is_empty() { Source::Partial } else { Source::Full };
-            }
+        if let Some(show) = skyhook_show(t).await {
+            base = show["episodes"].as_array().into_iter().flatten().filter_map(base_ep).collect();
+            source = if base.is_empty() { Source::Partial } else { Source::Full };
         }
     }
     if source == Source::Full && numbering_disagrees(&base, &jf_eps) {

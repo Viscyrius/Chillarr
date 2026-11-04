@@ -47,7 +47,9 @@ impl Notifier {
 }
 
 pub fn needs_attention(cards: &[CardState]) -> bool {
-    cards.iter().any(|c| c.fixable && matches!(c.level, Level::Red | Level::Amber))
+    // A single dead site isn't worth a run: testing it every 15 minutes kept
+    // every app busy and pushed its next retry further away each time.
+    cards.iter().any(|c| c.fixable && matches!(c.level, Level::Red | Level::Amber) && !crate::status::only_sites_failing(c))
 }
 
 fn notify(app: &AppHandle, body: &str) {
@@ -60,6 +62,7 @@ pub fn spawn(app: AppHandle) {
         let services = app.state::<fix::Core>().configs.read().unwrap().iter().any(|c| c.service.is_some());
         tokio::time::sleep(if services { FIRST_CHECK_SERVICES } else { FIRST_CHECK }).await;
         crate::onboard::one_tray_icon(&app).await;
+        fix::shrink_runaway_logs(&app).await;
         // Start what is down once at launch, even with "Fix automatically" off:
         // Radarr/Sonarr switched to run as the user rely on Chillarr for this.
         fix::fix_all(&app, Trigger::Guard).await;
@@ -128,6 +131,14 @@ mod tests {
         let mut n = Notifier::default();
         assert!(n.should_notify(&card(Level::Red, "Not running"), false));
         assert!(n.should_notify(&card(Level::Amber, "1337x failing"), false));
+    }
+
+    #[test]
+    fn a_dead_site_alone_doesnt_start_a_run() {
+        assert!(!needs_attention(&[card(Level::Amber, "YTS failing")]));
+        assert!(!needs_attention(&[card(Level::Amber, "YTS, 1337x failing")]));
+        assert!(needs_attention(&[card(Level::Red, "Every indexer failing")]));
+        assert!(needs_attention(&[card(Level::Amber, "YTS failing"), card(Level::Red, "Not running")]));
     }
 
     #[test]

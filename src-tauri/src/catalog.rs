@@ -1006,9 +1006,6 @@ impl Shows {
         }
     }
 
-    pub fn save(&self, path: &Path) -> Result<(), String> {
-        save_atomic(path, &serde_json::to_string(self).map_err(|e| e.to_string())?)
-    }
 }
 
 /// The AniList GraphQL query for one anime row ("trending", "season",

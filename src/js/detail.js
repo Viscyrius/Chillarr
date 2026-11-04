@@ -740,6 +740,7 @@ let statusPill = null;
 let openKey = null;
 listen("get-progress", (e) => {
   if (statusPill && dlg.open && e.payload.key === openKey && e.payload.status) statusPill.textContent = e.payload.status;
+  if (statusPill && dlg.open && e.payload.key === openKey && e.payload.gone) statusPill.textContent = "Stopped";
 });
 
 /**
@@ -1044,5 +1045,5 @@ function loadSimilar(t) {
       if (card && document.body.classList.contains("nav-on")) card.focus({ preventScroll: true });
     }
     end();
-  }, back ? 0 : 380);
+  }, back ? 0 : 200);
 }
