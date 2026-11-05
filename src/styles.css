@@ -1397,6 +1397,25 @@ body.app-full #fs-btn .fs-out { display: inline; }
   .p-seek input[type="range"]::-webkit-slider-thumb { width: 20px; height: 20px; }
   .p-menu { position: fixed; left: max(8px, env(safe-area-inset-left)); right: max(8px, env(safe-area-inset-right)); bottom: calc(128px + env(safe-area-inset-bottom)); width: auto; max-height: 54svh; }
   .p-menu button { padding: 12px; }
+  /* The tracks menu on a phone: pages, a list that scrolls, its controls always there. */
+  .p-menu.p-sheet { display: flex; flex-direction: column; padding: 0; overflow: hidden; background: rgb(21,23,29); bottom: calc(112px + env(safe-area-inset-bottom)); max-height: 60svh; }
+  .p-tabs { display: grid; grid-template-columns: repeat(3, 1fr); flex: none; border-bottom: 1px solid var(--line); }
+  .p-menu .p-tab { justify-content: center; padding: 13px 0; border-radius: 0; border-bottom: 2px solid transparent; color: var(--muted); font: 600 14px var(--display); }
+  .p-menu .p-tab.on { color: var(--text); border-bottom-color: var(--accent); }
+  .p-menu .p-tab.on::before { content: none; }
+  .p-sheet-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; padding: 4px 6px; }
+  .p-menu .p-sheet-list button { padding: 10px; font-size: 14px; }
+  .p-sheet-foot { flex: none; border-top: 1px solid var(--line); padding: 4px 6px 8px; }
+  .p-sheet-foot.alone { border-top: 0; padding-top: 8px; }
+  .p-sheet-foot .p-size { padding: 5px 10px; }
+  .p-menu .p-sheet-foot .p-size-btn { min-width: 44px; min-height: 36px; padding: 6px 12px; }
+  .p-sheet-pair { display: flex; gap: 6px; margin-top: 4px; }
+  .p-menu .p-sheet-pair button { flex: 1 1 0; justify-content: center; text-align: center; width: auto; margin: 0; padding: 10px 6px; border: 0; border-radius: 6px; background: rgba(255,255,255,0.07); font-size: 13px; }
+  .p-menu .p-sheet-foot .p-toggle { padding: 10px; }
+}
+/* Sideways: down the side of the picture, using the full height there is. */
+@media (hover: none) and (orientation: landscape) and (max-height: 500px), (max-width: 600px) and (orientation: landscape) {
+  .p-menu.p-sheet { top: max(8px, env(safe-area-inset-top)); bottom: max(8px, env(safe-area-inset-bottom)); left: auto; width: min(360px, 56vw); max-height: none; }
 }
 .pf-pass-hint { margin: 0; max-width: 34ch; font-size: 13px; }
 

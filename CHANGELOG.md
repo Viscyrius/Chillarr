@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.11.3 (2026-11-05)
+
+- Watch now no longer fails with "Jellyfin isn't answering". Jellyfin can't open a title until the start of it has downloaded, and Chillarr gave up after 20 seconds. It now stays on the waiting screen until the title can open, on every device.
+- Jellyfin being slow now says it's busy, instead of saying it isn't answering.
+- Night mode works on iPhone and on TVs. The first time you turn it on for a film, Chillarr makes an evened-out copy of the sound in a few minutes while you keep watching, then switches to it. Files you're still downloading get it once they're done.
+- The subtitles and audio menu on a phone is now three short pages (Subtitles, Audio, Speed). Size and the other controls stay in view, and sideways it sits beside the picture.
+
 ## 0.11.2 (2026-11-04)
 - Settings are much simpler. The everyday options come first, and technical ones are folded under More options or listed under Advanced. Nothing was taken away.
 - System is now Status, and it just tells you if everything is working. The list of apps opens by itself if something breaks.

@@ -48,6 +48,10 @@ let graph = null;
    (watchSilence) moves playback off it if it plays nothing but zeros. */
 const AC = window.AudioContext || window.webkitAudioContext;
 let nativeHls = false; // this title plays as HLS by the browser itself
+// iOS never hands an HLS stream's sound to Web Audio, whichever way it plays it
+// (its own player, or hls.js on the newer ones): the result is silence.
+const IOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+const playsNative = (info) => !!info.hls && (IOS || !(window.Hls && window.Hls.isSupported()));
 const brokenWebAudio = () => { try { return localStorage.getItem("chillarr-webaudio-broken") === "1"; } catch (e) { return false; } };
 /** Why night mode, sound past 100% and sound delay can't work here, or "". */
 function noWebAudio() {
@@ -171,7 +175,7 @@ function offWebAudio() {
   freshVideo();
   // Nothing to say about a video with no sound track; the swap just keeps a TV
   // that decodes its sound in hardware (and reports none) from going silent.
-  if (decoding) toast("Night mode isn't available on this device, so the sound plays as it is.");
+  if (decoding && !s?.info.hls) toast("Night mode isn't available on this device, so the sound plays as it is.");
   if (s && !box.hidden) load(s.tile, s.playlist, at, { audio: s.audio, subtitle: s.burn, watchKey: s.watchKey }).then(() => { if (!playing) video.pause(); });
 }
 
@@ -449,8 +453,85 @@ function setVolume(v) {
   volView();
 }
 
+/* Night mode where the browser can't change the sound (an iPhone, a TV): the
+   server makes an evened-out copy of the track once (night.rs), and from then on
+   it's just another audio track. The film keeps playing while it's made. */
+const nightFromServer = (info, watchKey) => !!info?.hls && !watchKey && !!noWebAudio();
+const trackOf = (info, audio) => {
+  const a = audio != null ? info.audio.find((x) => x.index === audio) : (info.audio.find((x) => x.default) || info.audio[0]);
+  return a?.track ?? null;
+};
+const nightNow = () => !!session && nightFromServer(session.info, session.watchKey);
+let nightJob = null;
+
+function nightNote() {
+  if (nightJob?.s === session && nightJob) return `Getting the sound ready, ${Math.round(nightJob.pct || 0)}%`;
+  return "Quiet talk louder, loud parts softer";
+}
+function drawNightNote() {
+  const n = $("#p-menu .p-night-note");
+  if (n) n.textContent = nightNote();
+}
+
+/** The same title again at the same spot: how a change of audio track plays on any device. */
+function reloadSound(s, track = null) {
+  const paused = video.paused;
+  report("stop");
+  load(s.tile, s.playlist, now(), { audio: s.audio, track, subtitle: s.burn, watchKey: s.watchKey }).then(() => { if (paused && session === s) video.pause(); });
+}
+
+/** Asks for the night copy until it's there, then switches to it. */
+function prepareNight(said) {
+  const s = session;
+  if (!s || nightJob?.s === s) return;
+  const job = nightJob = { s, pct: 0 };
+  const track = trackOf(s.info, s.audio);
+  const stop = () => { if (nightJob === job) nightJob = null; drawNightNote(); };
+  const poll = async () => {
+    if (nightJob !== job || session !== s || !night) return stop();
+    let r;
+    try { r = await invoke("night_prepare", { id: s.tile.jf_id, track }); }
+    catch (e) {
+      // Out of signal for a moment is no reason to stop.
+      if (CUT_OFF.test(String(e))) { setTimeout(poll, 5000); return; }
+      stop();
+      if (session === s && night) { night = false; padRefresh(); drawNightButton(); toast(String(e), true); }
+      return;
+    }
+    if (nightJob !== job || session !== s || !night) return stop();
+    if (r.state === "ready") {
+      stop();
+      osd("Night mode on: quiet talk louder, loud parts softer");
+      reloadSound(s, track);
+      return;
+    }
+    job.pct = r.pct || 0;
+    drawNightNote();
+    setTimeout(poll, 3000);
+  };
+  if (said) osd("Night mode: getting the sound ready, a few minutes. Keep watching.");
+  poll();
+}
+
+function drawNightButton() {
+  $("#p-menu .p-night")?.classList.toggle("on", night);
+}
+
 function setNight(on) {
-  const why = noWebAudio();
+  if (nightNow()) {
+    night = on;
+    setPref("chillarr-night", on ? "1" : "0");
+    if (on) { if (!session.info.nightOn) prepareNight(true); }
+    else {
+      nightJob = null;
+      drawNightNote();
+      osd("Night mode off");
+      if (session.info.nightOn) reloadSound(session);
+    }
+    padRefresh();
+    return;
+  }
+  const why = session?.watchKey && noWebAudio() ? "Works once it's downloaded" : noWebAudio();
   if (on && why) { osd(`Night mode: ${why.toLowerCase()}`); padRefresh(); return; }
   night = on;
   setPref("chillarr-night", on ? "1" : "0");
@@ -482,15 +563,20 @@ function setSoundDelay(v) {
 const volText = () => (video.muted ? "Muted" : `Volume ${Math.round(level * 100)}%`);
 
 async function load(tile, playlist, startAt, opts = {}) {
-  const { audio = null, subtitle = null, preferExternal = null, watchKey = null } = opts;
+  const { subtitle = null, preferExternal = null, watchKey = null } = opts;
+  let audio = opts.audio ?? null;
   const seq = ++loadSeq;
   wakeSound();
   $("#p-spinner").hidden = false;
   let info;
   try {
-    info = await invoke("media_play", { id: tile.jf_id, start: startAt || 0, audio, subtitle });
+    // `track`: Jellyfin's numbers just moved (a night copy arrived), so the old one means nothing.
+    info = await invoke("media_play", { id: tile.jf_id, start: startAt || 0, audio: opts.track != null ? null : audio, subtitle });
+    if (opts.track != null && audio != null) audio = info.audio.find((a) => a.track === opts.track)?.index ?? null;
   } catch (e) {
     if (seq !== loadSeq) return;
+    // Watch now: Jellyfin reads the download again for every ask, and can be slow to.
+    if (wn && CUT_OFF.test(String(e)) && (opts.tries || 0) < 4) return load(tile, playlist, startAt, { ...opts, tries: (opts.tries || 0) + 1 });
     toast(String(e), true);
     close(false);
     return;
@@ -502,14 +588,24 @@ async function load(tile, playlist, startAt, opts = {}) {
     const carried = carriedAudio(tile, info) ?? preferredAudio(info);
     if (carried != null) return load(tile, playlist, startAt, { ...opts, audio: carried });
   }
+  // The browser playing HLS itself (iPhone): its sound can't go through Web Audio.
+  nativeHls = playsNative(info);
+  // Night mode where Web Audio can't do it: the night copy of this track, if it's made.
+  const keptWatch = watchKey || (session?.tile.jf_id === tile.jf_id ? session.watchKey : null);
+  if (getPref("chillarr-night") === "1" && nightFromServer(info, keptWatch)) {
+    const copy = (info.night || []).find((n) => n.track === trackOf(info, audio));
+    if (copy) {
+      const got = await invoke("media_play", { id: tile.jf_id, start: startAt || 0, audio: copy.index, subtitle }).catch(() => null);
+      if (seq !== loadSeq || box.hidden) return;
+      if (got) { info = got; info.nightOn = true; }
+    }
+  }
   teardown();
   // Jellyfin renumbers subtitle tracks when one is added, so nothing carries over.
   subCache.clear();
   // A saved volume past 100%, night mode or this title's sound delay (only ever after a click).
   readPrefs();
   soundDelay = soundDelayOf(tile);
-  // The browser playing HLS itself (iPhone without hls.js): its sound can't go through Web Audio.
-  nativeHls = !!info.hls && !(window.Hls && window.Hls.isSupported());
   route();
   // Jellyfin's HLS playlist covers the whole film, so both kinds of stream are
   // simply played from startAt.
@@ -522,6 +618,7 @@ async function load(tile, playlist, startAt, opts = {}) {
     video.addEventListener("loadeddata", () => endWait(), { once: true });
   }
   if (!same) { dropEarly(session.watchKey); hideSkip(); hideUpnext(); loadSegments(session); findNext(session); }
+  if (night && nightFromServer(info, session.watchKey) && !info.nightOn) prepareNight(false);
   $("#p-title").textContent = tile.title;
   $("#p-sub").textContent = tile.subtitle || (tile.year ? String(tile.year) : "");
   nextButton();
@@ -959,33 +1056,34 @@ $("#p-tracks").addEventListener("click", (e) => {
   e.stopPropagation();
   const menu = $("#p-menu");
   if (!menu.hidden) { menu.hidden = true; return; }
-  const items = [el("h5", { text: "Subtitles" })];
+  menu.classList.remove("p-sheet");
+  const subRows = [];
   const subs = session?.info.subtitles || [];
   const current = currentSub();
   const off = el("button", { text: "Off", class: current == null ? "on" : "" });
   off.addEventListener("click", () => { menu.hidden = true; subOff(); });
-  items.push(off);
+  subRows.push(off);
   subs.forEach((s) => {
     const b = el("button", { text: subLabel(s), class: current === s.index ? "on" : "" });
     b.addEventListener("click", () => { menu.hidden = true; pickSub(s); });
-    items.push(b);
+    subRows.push(b);
   });
   const more = el("button", { class: "p-more", text: "Download subtitles..." });
   more.addEventListener("click", (ev) => { ev.stopPropagation(); subsPanel(menu); });
-  items.push(more);
   // Subtitle size: smaller / bigger, applied at once; the menu stays open.
   const pct = el("span", { class: "p-size-val", text: `${Math.round(subScale() * 100)}%` });
   const step = (d) => (ev) => { ev.stopPropagation(); setSubScale(Math.round((subScale() + d) * 10) / 10); pct.textContent = `${Math.round(subScale() * 100)}%`; };
-  items.push(el("div", { class: "p-size" }, el("span", { text: "Size" }),
+  const sizeRow = el("div", { class: "p-size" }, el("span", { text: "Size" }),
     el("button", { class: "p-size-btn", "aria-label": "Smaller subtitles", onclick: step(-0.1) }, "A-"), pct,
-    el("button", { class: "p-size-btn", "aria-label": "Bigger subtitles", onclick: step(0.1) }, "A+")));
+    el("button", { class: "p-size-btn", "aria-label": "Bigger subtitles", onclick: step(0.1) }, "A+"));
+  let timingRow = null, sync = null;
   if (shownTrack()) {
     const nudge = (d) => (ev) => { ev.stopPropagation(); nudgeSub(d); };
-    items.push(el("div", { class: "p-size" }, el("span", { text: "Timing" }),
+    timingRow = el("div", { class: "p-size" }, el("span", { text: "Timing" }),
       el("button", { class: "p-size-btn", "aria-label": "Subtitles earlier", title: "Earlier (G)", onclick: nudge(-0.5) }, "-"),
       el("span", { class: "p-size-val p-timing-val", text: fmtShift(renderer().shift.offset) }),
-      el("button", { class: "p-size-btn", "aria-label": "Subtitles later", title: "Later (H)", onclick: nudge(0.5) }, "+")));
-    const sync = el("button", { class: "p-more p-sync", text: "Sync to the audio" });
+      el("button", { class: "p-size-btn", "aria-label": "Subtitles later", title: "Later (H)", onclick: nudge(0.5) }, "+"));
+    sync = el("button", { class: "p-more p-sync", text: "Sync to the audio" });
     sync.addEventListener("click", async (ev) => {
       ev.stopPropagation();
       const s = shownTrack();
@@ -999,33 +1097,66 @@ $("#p-tracks").addEventListener("click", (e) => {
       const v = $("#p-menu .p-timing-val");
       if (v) v.textContent = fmtShift(renderer().shift.offset);
     });
-    items.push(sync);
   }
-  items.push(el("h5", { text: "Audio" }));
+  const audioRows = [];
   if (session?.info.audio.length > 1) {
     session.info.audio.forEach((a) => {
       const b = el("button", { text: a.label || `Track ${a.index}`, class: session.audio === a.index ? "on" : "" });
       b.addEventListener("click", () => { menu.hidden = true; pickAudio(a); });
-      items.push(b);
+      audioRows.push(b);
     });
   }
-  const nightWhy = noWebAudio();
-  const nightBtn = el("button", { class: `p-toggle${night && !nightWhy ? " on" : ""}`, title: "Night mode (N)", disabled: !!nightWhy }, el("span", { class: "p-toggle-text" }, el("span", { text: "Night mode" }), el("small", { text: nightWhy || "Quiet talk louder, loud parts softer" })));
+  const serverNight = nightNow();
+  const nightWhy = serverNight ? "" : session?.watchKey && noWebAudio() ? "Works once it's downloaded" : noWebAudio();
+  const nightBtn = el("button", { class: `p-toggle p-night${night && !nightWhy ? " on" : ""}`, title: "Night mode (N)", disabled: !!nightWhy }, el("span", { class: "p-toggle-text" }, el("span", { text: "Night mode" }), el("small", { class: "p-night-note", text: nightWhy || nightNote() })));
   nightBtn.addEventListener("click", (ev) => { ev.stopPropagation(); setNight(!night); nightBtn.classList.toggle("on", night); });
-  items.push(nightBtn);
   const later = (d) => (ev) => { ev.stopPropagation(); setSoundDelay(soundDelay + d); };
-  items.push(el("div", { class: "p-size", title: "When voices come before the lips move" }, el("span", { text: "Sound delay" }),
+  // Sound delay goes through Web Audio too: where that's out, it would do nothing.
+  const delayRow = noWebAudio() ? null : el("div", { class: "p-size", title: "When voices come before the lips move" }, el("span", { text: "Sound delay" }),
     el("button", { class: "p-size-btn", "aria-label": "Sound sooner", onclick: later(-0.1) }, "-"),
     el("span", { class: "p-size-val p-sound-val", text: soundDelay ? `+${soundDelay.toFixed(1)} s` : "0.0 s" }),
-    el("button", { class: "p-size-btn", "aria-label": "Sound later", onclick: later(0.1) }, "+")));
-  items.push(el("h5", { text: "Speed" }));
-  items.push(el("div", { class: "p-speeds" }, SPEEDS.map((r) => el("button", {
+    el("button", { class: "p-size-btn", "aria-label": "Sound later", onclick: later(0.1) }, "+"));
+  const speeds = el("div", { class: "p-speeds" }, SPEEDS.map((r) => el("button", {
     text: `${r}x`, class: video.playbackRate === r ? "on" : "",
     onclick: () => { menu.hidden = true; setSpeed(r); },
-  }))));
-  menu.replaceChildren(...items);
+  })));
+  if (onPhone()) {
+    phoneMenu(menu, {
+      subs: ["Subtitles", subRows, [sizeRow, timingRow, el("div", { class: "p-sheet-pair" }, [sync, more].filter(Boolean))].filter(Boolean)],
+      audio: ["Audio", audioRows, [nightBtn, delayRow].filter(Boolean)],
+      speed: ["Speed", [], [speeds]],
+    });
+  } else {
+    menu.replaceChildren(el("h5", { text: "Subtitles" }), ...subRows, more, sizeRow, ...(timingRow ? [timingRow, sync] : []),
+      el("h5", { text: "Audio" }), ...audioRows, nightBtn, ...(delayRow ? [delayRow] : []), el("h5", { text: "Speed" }), speeds);
+  }
   menu.hidden = false;
 });
+
+// A phone: one page at a time, the list scrolling and its controls always in
+// reach, instead of one long column inside half a screen.
+const onPhone = () => matchMedia("(hover: none), (max-width: 600px)").matches && !document.documentElement.classList.contains("tv");
+let menuTab = "subs";
+function phoneMenu(menu, pages) {
+  const list = el("div", { class: "p-sheet-list" });
+  const foot = el("div", { class: "p-sheet-foot" });
+  const show = (k) => {
+    menuTab = k;
+    tabs.forEach((b) => b.classList.toggle("on", b.dataset.tab === k));
+    list.replaceChildren(...pages[k][1]);
+    foot.replaceChildren(...pages[k][2]);
+    list.hidden = !pages[k][1].length;
+    foot.classList.toggle("alone", !pages[k][1].length);
+  };
+  const tabs = Object.keys(pages).map((k) => {
+    const b = el("button", { class: "p-tab", text: pages[k][0], onclick: (ev) => { ev.stopPropagation(); show(k); } });
+    b.dataset.tab = k;
+    return b;
+  });
+  menu.classList.add("p-sheet");
+  menu.replaceChildren(el("div", { class: "p-tabs" }, tabs), list, foot);
+  show(menuTab);
+}
 document.addEventListener("click", (e) => { if (!e.target.closest(".p-menu-wrap")) $("#p-menu").hidden = true; });
 
 const LANGS = [["eng", "English"], ["spa", "Spanish"], ["por", "Portuguese"], ["fre", "French"], ["ger", "German"], ["ita", "Italian"], ["ara", "Arabic"], ["tur", "Turkish"], ["rus", "Russian"], ["pol", "Polish"], ["dut", "Dutch"], ["jpn", "Japanese"], ["kor", "Korean"], ["chi", "Chinese"], ["hin", "Hindi"], ["ind", "Indonesian"]];
@@ -1050,6 +1181,7 @@ function subsPanel(menu) {
   const s = session;
   if (!s) return;
   const pref = subPref();
+  menu.classList.remove("p-sheet");
   const lang = el("select", { class: "p-lang", "aria-label": "Language" }, LANGS.map(([v, n]) => el("option", { value: v, text: n, selected: v === (pref?.lang || "eng") })));
   const list = el("div", { class: "p-results" });
   const back = el("button", { text: "Back" });
@@ -1231,7 +1363,7 @@ function barItems() {
     { key: "audio", label: "Audio", value: aud ? trackName(aud) : "Default", paths: PATHS.audio, run: audioList },
     { key: "speed", label: "Speed", value: speedName(video.playbackRate), paths: PATHS.speed, run: speedList },
     { key: "subsize", label: "Text size", value: `${Math.round(subScale() * 100)}%`, paths: PATHS.subs, run: sizeList },
-    { key: "night", label: "Night mode", value: noWebAudio() ? "Not available" : night ? "On" : "Off", paths: PATHS.volume, run: () => setNight(!night) },
+    { key: "night", label: "Night mode", value: noWebAudio() && !nightNow() ? "Not available" : night ? "On" : "Off", paths: PATHS.volume, run: () => setNight(!night) },
     { key: "volume", label: "Volume", value: `${Math.round(level * 100)}%`, paths: PATHS.volume, run: volumePanel },
   ];
   const n = nextEpisode();
@@ -1609,6 +1741,7 @@ const WAIT = {
   starting: ["Starting the download...", 0.55],
   buffering: ["Getting the first minutes...", 0.75],
   ready: ["Getting the first minutes...", 1],
+  opening: ["Opening it...", 0.95],
 };
 const waitBox = $("#p-wait");
 /** The Watch now title open in the player: { key, waiting, at, have, timer }. */
@@ -1740,6 +1873,32 @@ function leaveWatch() {
   invoke("watchnow_leave", { key: w.key, position, duration: total() || null, uid: w.uid }).catch((e) => toast(String(e), true));
 }
 
+// What losing the PC for a moment reads as, as opposed to a real answer.
+const CUT_OFF = /Can't reach Chillarr|isn't answering|busy|error 50[234]/;
+const OPEN_EVERY = 2000;
+const OPEN_FOR = 600000;
+
+/* Jellyfin can't say anything about a title until it has read the start of it,
+   and that start is still downloading. So the waiting screen stays up and asks
+   the PC how it's going until it can open, however slow the download is. */
+async function untilOpen(w, key) {
+  const since = Date.now();
+  for (;;) {
+    if (wn !== w || box.hidden) return false;
+    let r = null;
+    try { r = await invoke("watchnow_ready", { key }); }
+    catch (e) {
+      if (wn !== w || box.hidden) return false;
+      if (!CUT_OFF.test(String(e))) { toast(String(e), true); close(); return false; }
+    }
+    if (wn !== w || box.hidden) return false;
+    if (r?.ready) return true;
+    if (r && WAIT[r.stage]) stage(r.stage, r.pct);
+    if (Date.now() - since > OPEN_FOR) { toast("Still getting this ready. Try again in a bit.", true); close(); return false; }
+    await new Promise((res) => setTimeout(res, OPEN_EVERY));
+  }
+}
+
 /**
  * Watch now: plays `tile` while it downloads. `opts.season` and `opts.episode`
  * pick an episode (the tile is then the show); `opts.start` plays from there
@@ -1775,15 +1934,20 @@ export async function watchNow(tile, opts = {}) {
     waitTitle(tile, season, episode);
   }
   let got;
-  try {
-    got = await invoke("watchnow_start", { tile, season, episode });
-  } catch (e) {
-    if (seq !== loadSeq) return;
-    // Nothing found (or a plain no): say so and back out. Nothing plays, so nothing to leave.
-    wn = null;
-    toast(String(e), true);
-    close(false);
-    return;
+  for (let lost = 0; !got;) {
+    try {
+      got = await invoke("watchnow_start", { tile, season, episode });
+    } catch (e) {
+      if (seq !== loadSeq) return;
+      // A phone gives up on a call after a while, or loses signal. The start keeps
+      // going on the PC and asking again joins it, so this isn't a failure yet.
+      if (CUT_OFF.test(String(e)) && ++lost <= 40) { await new Promise((r) => setTimeout(r, 3000)); if (seq !== loadSeq) return; continue; }
+      // Nothing found (or a plain no): say so and back out. Nothing plays, so nothing to leave.
+      wn = null;
+      toast(String(e), true);
+      close(false);
+      return;
+    }
   }
   if (seq !== loadSeq) {
     // Closed while it got ready: nobody is watching it after all. Unless the
@@ -1792,6 +1956,8 @@ export async function watchNow(tile, opts = {}) {
     return;
   }
   const at = opts.start ?? got.resume_seconds ?? 0;
+  Object.assign(wn, { key: got.key, waiting: false, at, uid: got.profile || null, resume: got.resume_seconds ?? null, played: false });
+  if (!(await untilOpen(wn, got.key))) return;
   if (useVlc) {
     wn = null;
     endWait(true);
@@ -1806,7 +1972,6 @@ export async function watchNow(tile, opts = {}) {
     }
     return;
   }
-  Object.assign(wn, { key: got.key, waiting: false, at, uid: got.profile || null, resume: got.resume_seconds ?? null, played: false });
   drawHave();
   pollHave();
   wn.timer = setInterval(pollHave, 5000);

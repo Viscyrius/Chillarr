@@ -21,6 +21,7 @@ mod log;
 mod login;
 mod media;
 mod meili;
+mod night;
 mod search_tap;
 mod procs;
 mod qbit;
@@ -612,6 +613,18 @@ async fn watchnow_list(app: AppHandle) -> Vec<tiles::Tile> {
     watchnow::list(&app).await
 }
 
+/// Asked every couple of seconds on the waiting screen: can it open yet?
+#[tauri::command]
+async fn watchnow_ready(app: AppHandle, key: String) -> Result<serde_json::Value, String> {
+    watchnow::ready(&app, &key).await
+}
+
+/// Night mode for a device whose browser can't change the sound itself.
+#[tauri::command]
+async fn night_prepare(app: AppHandle, id: String, track: Option<i64>) -> Result<serde_json::Value, String> {
+    night::prepare(&app, &id, track).await
+}
+
 #[tauri::command]
 async fn setup_folders(app: AppHandle) -> serde_json::Value {
     media::folders(&app).await
@@ -868,6 +881,8 @@ pub fn run() {
             watchnow_progress,
             watchnow_remove,
             watchnow_list,
+            watchnow_ready,
+            night_prepare,
             library_stats,
             library_scan,
             open_folder,

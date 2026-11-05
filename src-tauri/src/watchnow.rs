@@ -963,7 +963,7 @@ pub fn real_episode(items: &[serde_json::Value], season: i64, episode: i64) -> O
 /// ffmpeg). Unlike the shelf, a read never asks for the title: Watch now
 /// already did when it was pressed.
 pub async fn serve(app: tauri::AppHandle, mut sock: tokio::net::TcpStream, req: crate::discover_shelf::Req, token: &str) -> std::io::Result<()> {
-    use crate::discover_shelf::{find_source_for, plain, stream_range};
+    use crate::discover_shelf::{find_source_for, plain, read_by_prober, stream_range, stream_range_waiting};
     use tauri::Manager;
     let found = app.state::<WatchNow>().by_token(token).and_then(|(_, e)| wanted(&e).map(|w| (w, lookup_for(&e))));
     let Some(((kind, id, want), how)) = found else {
@@ -973,8 +973,18 @@ pub async fn serve(app: tauri::AppHandle, mut sock: tokio::net::TcpStream, req: 
     let Some(src) = find_source_for(&app, kind, id, want, how, deadline).await else {
         return plain(&mut sock, "503 Service Unavailable", "Nothing is downloading for this yet.").await;
     };
+    if read_by_prober(&app, &sock).await {
+        return stream_range_waiting(&mut sock, &req, &src, deadline, PROBE_PATIENCE).await;
+    }
     stream_range(&mut sock, &req, &src, deadline).await
 }
+
+/// How long Jellyfin's ffprobe waits for the next piece before its read ends.
+/// It only needs the start, but goes on reading up to 200 s of film or 1 GB
+/// (its -analyzeduration, -probesize) if a track gives it no details, like picture
+/// subtitles: 5 minutes on The Dark Knight with the start here after 18 s, measured
+/// 2026-11-05. Nothing plays until it stops, so past what's here it stops.
+const PROBE_PATIENCE: std::time::Duration = std::time::Duration::from_secs(3);
 
 /// Keeps a Watch now library off every account's home page and menu
 /// (Jellyfin's "My Media" excludes). Its items still play; it's Chillarr's
@@ -1110,6 +1120,87 @@ pub async fn ensure_item(app: &tauri::AppHandle, uid: &str, e: &Entry) -> Result
         }
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     }
+}
+
+/// Whether this Jellyfin item is a Watch now placeholder, for anyone.
+pub fn is_placeholder(app: &tauri::AppHandle, jf_id: &str) -> bool {
+    use tauri::Manager;
+    app.state::<WatchNow>().all().iter().any(|(_, e)| e.strm_jf_id.as_deref().is_some_and(|id| id.eq_ignore_ascii_case(jf_id)))
+}
+
+/// How much of the start must be here before Jellyfin is asked to read it:
+/// enough for its read to finish, not wait, in the usual case.
+const HEAD_BYTES: u64 = 8 * 1024 * 1024;
+/// How long one read of a placeholder may take.
+const OPEN_WAIT: std::time::Duration = std::time::Duration::from_secs(200);
+/// After a read that found nothing, how long before trying again.
+const OPEN_AGAIN: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Placeholders Jellyfin is reading: id -> when the next read may start.
+static OPENING: std::sync::LazyLock<Mutex<HashMap<String, std::time::Instant>>> = std::sync::LazyLock::new(Default::default);
+/// Placeholders Jellyfin has just finished reading, with the start here.
+static OPENED: std::sync::LazyLock<Mutex<HashSet<String>>> = std::sync::LazyLock::new(Default::default);
+
+fn has_picture(item: &serde_json::Value) -> bool {
+    item["MediaStreams"].as_array().is_some_and(|s| s.iter().any(|x| x["Type"] == "Video"))
+}
+
+/// Takes the next read of `id` if none is under way or just failed.
+fn claim_open(id: &str, now: std::time::Instant) -> bool {
+    let mut m = OPENING.lock().unwrap_or_else(|e| e.into_inner());
+    if m.get(id).is_some_and(|until| now < *until) {
+        return false;
+    }
+    m.insert(id.to_string(), now + OPEN_WAIT);
+    true
+}
+
+/// Whether Watch now's title can be opened yet. The player asks this every
+/// couple of seconds instead of waiting on one long call, because Jellyfin
+/// answers nothing about a placeholder until it has read it, and that read
+/// waits on the download. One call used to stand in for all of that: after 20 s
+/// it read as "Jellyfin isn't answering", on every title that wasn't quick.
+pub async fn ready(app: &tauri::AppHandle, key: &str) -> Result<serde_json::Value, String> {
+    use serde_json::json;
+    use tauri::Manager;
+    let uid = uid(app)?;
+    let e = app.state::<WatchNow>().entry(&uid, key).ok_or("This isn't in Watch now any more.")?;
+    let id = e.strm_jf_id.clone().ok_or("Couldn't set this up to play. Try again.")?;
+    let j = crate::media::jf_admin(app).filter(|j| j.user_id.is_some()).ok_or("Jellyfin isn't signed in.")?;
+    let wait = |stage: &str, pct: f64| json!({ "ready": false, "stage": stage, "pct": pct });
+    // Only a read that finished in this very wait counts. Tracks Jellyfin already
+    // lists say nothing: they can be from an earlier go, and it reads again anyway
+    // (the first version of this trusted them, and said ready at 0.2%).
+    if OPENED.lock().unwrap_or_else(|e| e.into_inner()).remove(&id) {
+        return Ok(json!({ "ready": true, "stage": "opening", "pct": 100.0 }));
+    }
+    let Some((kind, tid, want)) = wanted(&e) else { return Err(format!("Couldn't set up {} to play.", e.title)) };
+    let soon = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    let Some(src) = crate::discover_shelf::find_source_for(app, kind, tid, want, lookup_for(&e), soon).await else {
+        return Ok(wait("buffering", 0.0));
+    };
+    let share = src.head_share(HEAD_BYTES).await;
+    if share < 1.0 {
+        return Ok(wait("buffering", share * 100.0));
+    }
+    if claim_open(&id, std::time::Instant::now()) {
+        let id2 = id.clone();
+        tauri::async_runtime::spawn(async move {
+            let r = j.open_placeholder(&id2, OPEN_WAIT).await;
+            let found = r.as_ref().is_ok_and(|v| has_picture(&v["MediaSources"][0]));
+            if let Err(err) = &r {
+                crate::log::detail(format!("Watch now: Jellyfin couldn't read {id2} yet: {err}"));
+            }
+            let mut m = OPENING.lock().unwrap_or_else(|e| e.into_inner());
+            if found {
+                m.remove(&id2);
+                OPENED.lock().unwrap_or_else(|e| e.into_inner()).insert(id2);
+            } else {
+                m.insert(id2, std::time::Instant::now() + OPEN_AGAIN);
+            }
+        });
+    }
+    Ok(wait("opening", 100.0))
 }
 
 // ---------- Commands ----------
@@ -2099,6 +2190,21 @@ async fn tidy_torrents(app: &tauri::AppHandle) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn opens_only_once_jellyfin_has_read_the_picture() {
+        assert!(has_picture(&serde_json::json!({ "MediaStreams": [{ "Type": "Audio" }, { "Type": "Video" }] })));
+        assert!(!has_picture(&serde_json::json!({ "MediaStreams": [] })));
+        assert!(!has_picture(&serde_json::json!({})));
+    }
+
+    #[test]
+    fn one_read_of_a_placeholder_at_a_time() {
+        let now = std::time::Instant::now();
+        assert!(claim_open("test-one-read", now));
+        assert!(!claim_open("test-one-read", now + std::time::Duration::from_secs(1)));
+        assert!(claim_open("test-one-read", now + OPEN_WAIT + std::time::Duration::from_secs(1)));
+    }
+
     use super::*;
 
     fn entry(key: &str, hash: Option<&str>, owned: bool, watching: bool) -> (String, Entry) {

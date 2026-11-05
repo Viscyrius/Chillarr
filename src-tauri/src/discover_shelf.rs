@@ -2087,6 +2087,24 @@ pub(crate) async fn find_source_for(app: &AppHandle, kind: &str, id: i64, want: 
 }
 
 impl Source {
+    /// How much of the video's first `bytes` is here, 0..1.
+    pub(crate) async fn head_share(&self, bytes: u64) -> f64 {
+        let first = (self.offset / self.piece) as usize;
+        let last = ((self.offset + bytes.min(self.size.saturating_sub(1))) / self.piece) as usize;
+        let Ok(states) = self.q.piece_states(&self.hash).await else { return 0.0 };
+        // Finished torrents may report nothing piece by piece.
+        if states.is_empty() {
+            return match self.q.torrent(&self.hash).await {
+                Ok(Some(t)) if t["progress"].as_f64().unwrap_or(0.0) >= 1.0 => 1.0,
+                _ => 0.0,
+            };
+        }
+        if first > last || last >= states.len() {
+            return 0.0;
+        }
+        states[first..=last].iter().filter(|s| **s == 2).count() as f64 / (last - first + 1) as f64
+    }
+
     /// Waits until the bytes [from, to] of the video are downloaded.
     pub(crate) async fn wait_for(&self, from: u64, to: u64, limit: Duration) -> bool {
         let first = ((self.offset + from) / self.piece) as usize;
@@ -2190,6 +2208,11 @@ async fn reader(app: &AppHandle, peer: Option<std::net::SocketAddr>, local: Opti
         }
         None => Reader::Unknown,
     }
+}
+
+/// Whether Jellyfin's ffprobe is the one reading (not ffmpeg playing it).
+pub(crate) async fn read_by_prober(app: &AppHandle, sock: &tokio::net::TcpStream) -> bool {
+    matches!(reader(app, sock.peer_addr().ok(), sock.local_addr().ok()).await, Reader::Local(name, _, _) if name.to_ascii_lowercase().starts_with("ffprobe"))
 }
 
 /// Whether a read of an episode not asked for yet asks for it. A show's
@@ -2387,6 +2410,11 @@ fn byte_span(range: Option<(u64, Option<u64>)>, size: u64) -> Option<(u64, u64)>
 /// Sends the asked-for bytes of the video as they download: waits (until
 /// `deadline`, at least 20s) for the start, then goes piece by piece.
 pub(crate) async fn stream_range(sock: &mut tokio::net::TcpStream, req: &Req, src: &Source, deadline: std::time::Instant) -> std::io::Result<()> {
+    stream_range_waiting(sock, req, src, deadline, PIECE_WAIT).await
+}
+
+/// `piece_wait`: how long to wait for each next piece before ending the read.
+pub(crate) async fn stream_range_waiting(sock: &mut tokio::net::TcpStream, req: &Req, src: &Source, deadline: std::time::Instant, piece_wait: Duration) -> std::io::Result<()> {
     let size = src.size;
     let Some((start, end)) = byte_span(req.range, size) else {
         let head = format!("HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */{size}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
@@ -2423,7 +2451,7 @@ pub(crate) async fn stream_range(sock: &mut tokio::net::TcpStream, req: &Req, sr
         // Send what's downloaded; wait (a while) for the next piece if it isn't.
         let piece_end = ((src.offset + pos) / src.piece + 1) * src.piece - src.offset - 1;
         let chunk_end = piece_end.min(end);
-        if !src.wait_for(pos, chunk_end, PIECE_WAIT).await {
+        if !src.wait_for(pos, chunk_end, piece_wait).await {
             break;
         }
         f.seek(std::io::SeekFrom::Start(pos)).await?;

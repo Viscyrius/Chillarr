@@ -67,6 +67,7 @@ fn signed_in(app: &AppHandle) -> Result<Jf, String> {
 fn err(e: JfError) -> String {
     match e {
         JfError::Down => "Jellyfin isn't answering. Press Fix everything first.".into(),
+        JfError::Busy => JfError::Busy.to_string(),
         JfError::Rejected => "Jellyfin refused. Your Jellyfin account needs to be an administrator for this.".into(),
         JfError::Other(e) => e,
     }
