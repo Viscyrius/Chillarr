@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.11.4 (2026-11-05)
+- New: Limit downloads, in Settings > General. All downloads together use at most 10% of your internet, up and down, so games on this PC stay smooth. It only shows in the app on this PC, never on a phone or TV.
+- New, with it: Don't limit what I start here. Downloads you start in the app on this PC run at full speed, and ones started anywhere else stay limited.
+- Pressing Watch now on something already downloading now switches that download to start-to-end order, so it plays as it comes instead of stopping at missing pieces.
+- Watch now no longer sits on "Getting the first minutes" with most of the film downloaded. If the opening pieces get stuck on someone slow, Chillarr restarts the download so they come from someone else.
+- Watch now opens faster: Jellyfin no longer spends minutes reading the download before it starts.
+- If your phone loses touch with your PC while waiting, the screen now says so and keeps trying.
+- On iPhones that won't start a video by themselves, the waiting screen now clears so you can press play.
+
 ## 0.11.3 (2026-11-05)
 
 - Watch now no longer fails with "Jellyfin isn't answering". Jellyfin can't open a title until the start of it has downloaded, and Chillarr gave up after 20 seconds. It now stays on the waiting screen until the title can open, on every device.

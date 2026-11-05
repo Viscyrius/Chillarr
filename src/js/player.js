@@ -656,7 +656,11 @@ async function load(tile, playlist, startAt, opts = {}) {
     else if (opts.fromGroup) loadedHere();
     else startedHere(tile, startAt || 0);
   } else {
-    try { await video.play(); } catch (e) { /* the user can press play */ }
+    try { await video.play(); } catch (e) {
+      // The user can press play, but not through the waiting screen: an iPhone
+      // can refuse to start by itself after the long wait for a Watch now title.
+      if (e?.name === "NotAllowedError" && seq === loadSeq) { endWait(); $("#p-spinner").hidden = true; }
+    }
     // Another load (a track, Next) or Back while it started: that one reports.
     if (seq !== loadSeq || box.hidden) return;
   }
@@ -1742,6 +1746,7 @@ const WAIT = {
   buffering: ["Getting the first minutes...", 0.75],
   ready: ["Getting the first minutes...", 1],
   opening: ["Opening it...", 0.95],
+  lost: ["Can't reach your PC. Still trying...", 0.75],
 };
 const waitBox = $("#p-wait");
 /** The Watch now title open in the player: { key, waiting, at, have, timer }. */
@@ -1877,23 +1882,31 @@ function leaveWatch() {
 const CUT_OFF = /Can't reach Chillarr|isn't answering|busy|error 50[234]/;
 const OPEN_EVERY = 2000;
 const OPEN_FOR = 600000;
+// A call lost on mobile data can stay unanswered forever, with nothing on screen moving.
+const OPEN_ASK_FOR = 25000;
+const OPEN_LOST_AFTER = 30000;
 
 /* Jellyfin can't say anything about a title until it has read the start of it,
    and that start is still downloading. So the waiting screen stays up and asks
    the PC how it's going until it can open, however slow the download is. */
 async function untilOpen(w, key) {
   const since = Date.now();
+  let heard = since;
   for (;;) {
     if (wn !== w || box.hidden) return false;
-    let r = null;
-    try { r = await invoke("watchnow_ready", { key }); }
+    let r = null, timer = 0;
+    const gaveUp = new Promise((res) => { timer = setTimeout(() => res(null), OPEN_ASK_FOR); });
+    try { r = await Promise.race([invoke("watchnow_ready", { key }), gaveUp]); }
     catch (e) {
       if (wn !== w || box.hidden) return false;
       if (!CUT_OFF.test(String(e))) { toast(String(e), true); close(); return false; }
     }
+    clearTimeout(timer);
     if (wn !== w || box.hidden) return false;
     if (r?.ready) return true;
+    if (r) heard = Date.now();
     if (r && WAIT[r.stage]) stage(r.stage, r.pct);
+    else if (Date.now() - heard > OPEN_LOST_AFTER) stage("lost", 0);
     if (Date.now() - since > OPEN_FOR) { toast("Still getting this ready. Try again in a bit.", true); close(); return false; }
     await new Promise((res) => setTimeout(res, OPEN_EVERY));
   }

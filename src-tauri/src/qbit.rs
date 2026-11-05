@@ -290,6 +290,19 @@ impl Qbit {
         self.call("torrents/filePrio", Some(&[("hash", hash), ("id", id.as_str()), ("priority", p.as_str())])).await.map(|_| ())
     }
 
+    /// One torrent's limit (`which` is Download or Upload), in bytes a second. 0: none.
+    /// `hash` may be "all".
+    pub async fn set_torrent_limit(&self, which: &str, hash: &str, limit: u64) -> Result<(), QbError> {
+        let l = limit.to_string();
+        self.call(&format!("torrents/set{which}Limit"), Some(&[("hashes", hash), ("limit", l.as_str())])).await.map(|_| ())
+    }
+
+    /// How fast everything is going right now.
+    pub async fn transfer(&self) -> Result<Value, QbError> {
+        let t = self.call("transfer/info", None).await?;
+        serde_json::from_str(&t).map_err(|e| QbError::Other(e.to_string()))
+    }
+
     /// Download in order, first and last pieces first (only flips what's off).
     pub async fn stream_mode(&self, hash: &str, info: &Value) -> Result<(), QbError> {
         if info["seq_dl"] != true {

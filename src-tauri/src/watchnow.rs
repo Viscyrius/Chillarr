@@ -585,11 +585,11 @@ pub fn wanted(e: &Entry) -> Option<(&'static str, i64, crate::discover_shelf::Wa
 }
 
 /// How to find the entry's torrent: the one it already knows, if any, else
-/// Radarr's/Sonarr's queue. It's only changed (in-order download, skipping
-/// the rest of a pack) when Watch now started it; anyone else's download is
-/// just read.
+/// Radarr's/Sonarr's queue. Whoever started it, it now downloads in order, or a
+/// normal Download's scattered pieces would keep the player waiting at every gap.
+/// Skipping the rest of a pack is only for a torrent Watch now started.
 pub fn lookup_for(e: &Entry) -> crate::discover_shelf::Lookup {
-    crate::discover_shelf::Lookup { hash: e.hash.clone().filter(|h| !h.is_empty()), tune: e.owned }
+    crate::discover_shelf::Lookup { hash: e.hash.clone().filter(|h| !h.is_empty()), in_order: true, tune: e.owned }
 }
 
 /// The episodes a torrent file is, by its own name (not the pack folder's).
@@ -974,7 +974,7 @@ pub async fn serve(app: tauri::AppHandle, mut sock: tokio::net::TcpStream, req: 
         return plain(&mut sock, "503 Service Unavailable", "Nothing is downloading for this yet.").await;
     };
     if read_by_prober(&app, &sock).await {
-        return stream_range_waiting(&mut sock, &req, &src, deadline, PROBE_PATIENCE).await;
+        return stream_range_waiting(&mut sock, &req, &src, deadline, PROBE_PATIENCE, PROBE_BYTES).await;
     }
     stream_range(&mut sock, &req, &src, deadline).await
 }
@@ -985,6 +985,10 @@ pub async fn serve(app: tauri::AppHandle, mut sock: tokio::net::TcpStream, req: 
 /// subtitles: 5 minutes on The Dark Knight with the start here after 18 s, measured
 /// 2026-11-05. Nothing plays until it stops, so past what's here it stops.
 const PROBE_PATIENCE: std::time::Duration = std::time::Duration::from_secs(3);
+/// And it stops after this much in one read: on a steady download there is no gap
+/// to stop at, and it read along with it for 2 minutes (an anime episode, measured
+/// 2026-11-05). A file's tracks are listed in its first few MB.
+const PROBE_BYTES: u64 = 64 * 1024 * 1024;
 
 /// Keeps a Watch now library off every account's home page and menu
 /// (Jellyfin's "My Media" excludes). Its items still play; it's Chillarr's
@@ -1141,6 +1145,17 @@ static OPENING: std::sync::LazyLock<Mutex<HashMap<String, std::time::Instant>>> 
 /// Placeholders Jellyfin has just finished reading, with the start here.
 static OPENED: std::sync::LazyLock<Mutex<HashSet<String>>> = std::sync::LazyLock::new(Default::default);
 
+/// The waiting screen's progress in the log, when it changes: a stall on someone's
+/// phone is otherwise impossible to tell apart afterwards.
+fn note_stage(key: &str, what: &str) {
+    static LAST: Mutex<Option<(String, String)>> = Mutex::new(None);
+    let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+    if last.as_ref().is_none_or(|(k, w)| k != key || w != what) {
+        crate::log::detail(format!("Watch now {key}: {what}"));
+        *last = Some((key.to_string(), what.to_string()));
+    }
+}
+
 fn has_picture(item: &serde_json::Value) -> bool {
     item["MediaStreams"].as_array().is_some_and(|s| s.iter().any(|x| x["Type"] == "Video"))
 }
@@ -1172,6 +1187,7 @@ pub async fn ready(app: &tauri::AppHandle, key: &str) -> Result<serde_json::Valu
     // lists say nothing: they can be from an earlier go, and it reads again anyway
     // (the first version of this trusted them, and said ready at 0.2%).
     if OPENED.lock().unwrap_or_else(|e| e.into_inner()).remove(&id) {
+        note_stage(key, "ready to open");
         return Ok(json!({ "ready": true, "stage": "opening", "pct": 100.0 }));
     }
     let Some((kind, tid, want)) = wanted(&e) else { return Err(format!("Couldn't set up {} to play.", e.title)) };
@@ -1181,9 +1197,11 @@ pub async fn ready(app: &tauri::AppHandle, key: &str) -> Result<serde_json::Valu
     };
     let share = src.head_share(HEAD_BYTES).await;
     if share < 1.0 {
+        note_stage(key, &format!("the start is {:.0}% here", share * 100.0));
         return Ok(wait("buffering", share * 100.0));
     }
     if claim_open(&id, std::time::Instant::now()) {
+        note_stage(key, "the start is here, Jellyfin is reading it");
         let id2 = id.clone();
         tauri::async_runtime::spawn(async move {
             let r = j.open_placeholder(&id2, OPEN_WAIT).await;

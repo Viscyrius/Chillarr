@@ -1993,15 +1993,18 @@ fn lone_video(files: &[Value]) -> Option<Value> {
 pub(crate) struct Lookup {
     /// This torrent, instead of looking in Radarr's/Sonarr's queue.
     pub(crate) hash: Option<String>,
-    /// May switch on in-order downloading and, for an episode, skip the rest
-    /// of a pack. Only for torrents that are ours to change.
+    /// Download from the start to the end, so it can play as it comes. Fine on
+    /// anyone's torrent: the same film arrives either way.
+    pub(crate) in_order: bool,
+    /// May, for an episode, skip the rest of a pack. Only for torrents that are
+    /// ours to change: a normal Download still wants the other episodes.
     pub(crate) tune: bool,
 }
 
 /// The shelf's own: the movie, or the first episode of a show's pack.
 async fn find_source(app: &AppHandle, kind: &str, id: i64, deadline: std::time::Instant) -> Option<Source> {
     let want = if kind == "movie" { Want::Movie } else { Want::FirstOfPack };
-    find_source_for(app, kind, id, want, Lookup { hash: None, tune: true }, deadline).await
+    find_source_for(app, kind, id, want, Lookup { hash: None, in_order: true, tune: true }, deadline).await
 }
 
 /// Where a title's video sits in qBittorrent, waiting until `deadline` for it
@@ -2051,16 +2054,23 @@ pub(crate) async fn find_source_for(app: &AppHandle, kind: &str, id: i64, want: 
         };
         for hash in hashes {
             let Ok(Some(info)) = q.torrent(&hash).await else { continue };
-            if !episode && how.tune {
+            if !episode && how.in_order {
                 let _ = q.stream_mode(&hash, &info).await;
             }
             let files = q.files(&hash).await.unwrap_or_default();
             let f = choose(&files, &want).or_else(|| if single.contains(&hash) { lone_video(&files) } else { None });
             let Some(f) = f else { continue };
-            if episode && how.tune {
+            if episode && how.in_order {
                 let _ = q.stream_mode(&hash, &info).await;
+            }
+            if episode && how.tune {
                 // Only this episode's file of a pack downloads (and what others still want), so it starts fast.
                 crate::watchnow::tune_pack(app, &q, &hash, id, &files, &f).await;
+            } else if episode && how.in_order {
+                // A normal Download's pack keeps every file, with this one first.
+                if let (Some(i), true) = (f["index"].as_i64(), f["priority"].as_i64().unwrap_or(1) < 7) {
+                    let _ = q.set_file_prio(&hash, &[i], 7).await;
+                }
             }
             let name = f["name"].as_str().unwrap_or_default();
             let idx = f["index"].as_u64();
@@ -2086,7 +2096,59 @@ pub(crate) async fn find_source_for(app: &AppHandle, kind: &str, id: i64, want: 
     None
 }
 
+/// How long a piece being waited for may sit still while the torrent is moving.
+const STUCK_AFTER: Duration = Duration::from_secs(25);
+/// Moving: not a torrent with nobody sharing, which a restart wouldn't help.
+const MOVING: u64 = 200 * 1024;
+
+/// (how many of the wanted pieces were here, since when) per torrent.
+static WAITING_ON: std::sync::LazyLock<Mutex<HashMap<String, (usize, std::time::Instant)>>> = std::sync::LazyLock::new(Default::default);
+
+/// Whether to restart: what's wanted hasn't moved for `STUCK_AFTER`, though the
+/// torrent is busy with other pieces. Remembers `have`, and starts counting again
+/// when it changes.
+fn stuck_now(seen: &mut HashMap<String, (usize, std::time::Instant)>, hash: &str, have: usize, now: std::time::Instant) -> bool {
+    match seen.get_mut(hash) {
+        Some((was, since)) if *was == have => {
+            if now.duration_since(*since) < STUCK_AFTER {
+                return false;
+            }
+            *since = now;
+            true
+        }
+        _ => {
+            seen.insert(hash.to_string(), (have, now));
+            false
+        }
+    }
+}
+
 impl Source {
+    /// A piece asked of someone slow stays with them while the rest of the film
+    /// flies past: The Dark Knight had the start held up for 25 s at 3% (measured
+    /// 2026-11-05), and a report of 10 minutes at 66%. qBittorrent has no way to ask
+    /// for a piece again, but a stop and start drops those requests, and what's
+    /// downloaded stays. Never on a torrent someone paused.
+    async fn unstick(&self, have: usize) {
+        let due = {
+            let mut seen = WAITING_ON.lock().unwrap_or_else(|e| e.into_inner());
+            stuck_now(&mut seen, &self.hash, have, std::time::Instant::now())
+        };
+        if !due {
+            return;
+        }
+        let Ok(Some(t)) = self.q.torrent(&self.hash).await else { return };
+        let state = t["state"].as_str().unwrap_or_default();
+        let running = state.contains("DL") || state == "downloading";
+        if !running || state.starts_with("paused") || state.starts_with("stopped") || t["dlspeed"].as_u64().unwrap_or(0) < MOVING {
+            return;
+        }
+        crate::log::detail(format!("Start of {} stuck at {:.1}%: restarting it so those pieces are asked of someone else", self.hash, t["progress"].as_f64().unwrap_or(0.0) * 100.0));
+        let _ = self.q.stop(&self.hash).await;
+        tokio::time::sleep(Duration::from_millis(800)).await;
+        let _ = self.q.start(&self.hash).await;
+    }
+
     /// How much of the video's first `bytes` is here, 0..1.
     pub(crate) async fn head_share(&self, bytes: u64) -> f64 {
         let first = (self.offset / self.piece) as usize;
@@ -2102,7 +2164,11 @@ impl Source {
         if first > last || last >= states.len() {
             return 0.0;
         }
-        states[first..=last].iter().filter(|s| **s == 2).count() as f64 / (last - first + 1) as f64
+        let have = states[first..=last].iter().filter(|s| **s == 2).count();
+        if have <= last - first {
+            self.unstick(have).await;
+        }
+        have as f64 / (last - first + 1) as f64
     }
 
     /// Waits until the bytes [from, to] of the video are downloaded.
@@ -2112,8 +2178,12 @@ impl Source {
         let until = std::time::Instant::now() + limit;
         loop {
             if let Ok(states) = self.q.piece_states(&self.hash).await {
-                if first <= last && last < states.len() && states[first..=last].iter().all(|s| *s == 2) {
-                    return true;
+                if first <= last && last < states.len() {
+                    let have = states[first..=last].iter().filter(|s| **s == 2).count();
+                    if have > last - first {
+                        return true;
+                    }
+                    self.unstick(have).await;
                 }
                 // Finished torrents may report nothing piece by piece.
                 if states.is_empty() {
@@ -2387,7 +2457,7 @@ async fn serve(app: AppHandle, mut sock: tokio::net::TcpStream, req: Req) -> std
         return plain(&mut sock, "404 Not Found", &e).await;
     }
     let deadline = std::time::Instant::now() + HEAD_WAIT;
-    let Some(src) = find_source_for(&app, "series", id, Want::Episode(ep.0, ep.1), Lookup { hash: None, tune: true }, deadline).await else {
+    let Some(src) = find_source_for(&app, "series", id, Want::Episode(ep.0, ep.1), Lookup { hash: None, in_order: true, tune: true }, deadline).await else {
         return plain(&mut sock, "503 Service Unavailable", "No copy of this episode is downloading yet. It's been asked for and shows up in your library when it's ready.").await;
     };
     let r = stream_range(&mut sock, &req, &src, deadline).await;
@@ -2410,11 +2480,12 @@ fn byte_span(range: Option<(u64, Option<u64>)>, size: u64) -> Option<(u64, u64)>
 /// Sends the asked-for bytes of the video as they download: waits (until
 /// `deadline`, at least 20s) for the start, then goes piece by piece.
 pub(crate) async fn stream_range(sock: &mut tokio::net::TcpStream, req: &Req, src: &Source, deadline: std::time::Instant) -> std::io::Result<()> {
-    stream_range_waiting(sock, req, src, deadline, PIECE_WAIT).await
+    stream_range_waiting(sock, req, src, deadline, PIECE_WAIT, u64::MAX).await
 }
 
 /// `piece_wait`: how long to wait for each next piece before ending the read.
-pub(crate) async fn stream_range_waiting(sock: &mut tokio::net::TcpStream, req: &Req, src: &Source, deadline: std::time::Instant, piece_wait: Duration) -> std::io::Result<()> {
+/// `at_most`: bytes to send before ending it.
+pub(crate) async fn stream_range_waiting(sock: &mut tokio::net::TcpStream, req: &Req, src: &Source, deadline: std::time::Instant, piece_wait: Duration, at_most: u64) -> std::io::Result<()> {
     let size = src.size;
     let Some((start, end)) = byte_span(req.range, size) else {
         let head = format!("HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */{size}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
@@ -2447,7 +2518,7 @@ pub(crate) async fn stream_range_waiting(sock: &mut tokio::net::TcpStream, req: 
     let mut f = tokio::fs::File::open(&src.file).await?;
     let mut pos = start;
     let mut buf = vec![0u8; 256 * 1024];
-    while pos <= end {
+    while pos <= end && pos - start < at_most {
         // Send what's downloaded; wait (a while) for the next piece if it isn't.
         let piece_end = ((src.offset + pos) / src.piece + 1) * src.piece - src.offset - 1;
         let chunk_end = piece_end.min(end);
@@ -2582,6 +2653,22 @@ pub fn status(app: &AppHandle) -> Status {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_stuck_start_is_restarted_only_after_it_sat_still() {
+        use std::time::Duration;
+        let t = std::time::Instant::now();
+        let mut seen = std::collections::HashMap::new();
+        let stuck_now = super::stuck_now;
+        assert!(!stuck_now(&mut seen, "a", 1, t), "first look");
+        assert!(!stuck_now(&mut seen, "a", 1, t + Duration::from_secs(10)));
+        assert!(!stuck_now(&mut seen, "a", 2, t + Duration::from_secs(24)), "it moved: count again");
+        assert!(!stuck_now(&mut seen, "a", 2, t + Duration::from_secs(40)));
+        assert!(stuck_now(&mut seen, "a", 2, t + Duration::from_secs(50)), "sat still 26 s");
+        assert!(!stuck_now(&mut seen, "a", 2, t + Duration::from_secs(55)), "not again at once");
+        assert!(stuck_now(&mut seen, "a", 2, t + Duration::from_secs(76)), "but again if it stays stuck");
+        assert!(!stuck_now(&mut seen, "b", 2, t + Duration::from_secs(76)), "torrents are counted apart");
+    }
+
     #[test]
     fn only_a_reader_that_plays_asks_again() {
         // Transcode and subtitle lines are from Jellyfin 12.1's log, 2026-10-18;

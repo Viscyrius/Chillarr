@@ -876,7 +876,7 @@ export async function openDetail(t, opts = {}) {
     // Asked for already: say where it is (kept current below), and offer Search again.
     statusPill = el("span", { class: "status-pill", text: t.status });
     actions.append(statusPill, subtitlesControl(t).el);
-    // Already downloading: Watch now plays it as it comes; that download keeps its own rules.
+    // Already downloading: Watch now plays it as it comes, and it goes on downloading in order.
     const now = watchNowButton(t, false);
     if (now) actions.append(now);
     if (!t.status.startsWith("Downloading")) {
