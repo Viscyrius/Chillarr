@@ -660,6 +660,7 @@ function general(panel) {
       subSizeRow(),
       sw("start_with_windows", "Start with Windows", "Opens in the tray when you sign in."),
       seedSwitch()),
+    ...(WEB ? [] : [limitBox()]),
     remoteBox(),
     more("More options",
       el("div", { class: "box" },
@@ -669,6 +670,56 @@ function general(panel) {
         sw("skip_dubs", "Skip extra dubs", "Avoids copies that could start in the wrong language, like a Hindi or Italian dub."),
         sw("skip_remux", "Skip huge copies", "Avoids copies of 25 GB or more, so a 1080p movie stays under about 8 GB.")),
       el("div", { style: "margin-top:24px" }, el("button", { class: "btn ghost", onclick: () => openSetup() }, "Run the setup again"))));
+}
+
+/** Limit downloads. Only ever in this PC's window: the web pages don't draw it and can't reach its commands. */
+function limitBox() {
+  const box = el("div", { class: "box", style: "margin-top:24px" });
+  let st = null;
+  const push = async (change) => {
+    try { st = await invoke("limit_set", { on: st.on, hostFree: st.host_free, downMbps: st.down_mbps, upMbps: st.up_mbps, ...change }); }
+    catch (e) { toast(String(e), true); st = await invoke("limit_status"); }
+    draw();
+  };
+  const draw = () => {
+    const on = el("input", { type: "checkbox", class: "switch" });
+    on.checked = st.on;
+    on.addEventListener("input", async () => {
+      // First time on: nothing to work 10% of yet.
+      if (on.checked && !(st.down_mbps > 0 && st.up_mbps > 0)) { await measure(true); return; }
+      push({ on: on.checked });
+    });
+    const rows = [el("label", { class: "opt" }, el("span", {}, el("b", { text: "Limit downloads" }),
+      el("small", { text: `All downloads together use at most ${st.percent}% of your internet, so games on this PC stay smooth. Only you can see this, here on this PC.` })), on)];
+    if (st.on) {
+      const free = el("input", { type: "checkbox", class: "switch" });
+      free.checked = st.host_free;
+      free.addEventListener("input", () => push({ hostFree: free.checked }));
+      rows.push(el("label", { class: "opt" }, el("span", {}, el("b", { text: "Don't limit what I start here" }),
+        el("small", { text: "Downloads you start in this window run at full speed. Ones started on a phone, TV or browser stay limited." })), free));
+    }
+    const num = (value, label, key) => {
+      const i = el("input", { type: "number", min: "1", step: "1", value: value > 0 ? String(value) : "", "aria-label": label, class: "limit-num" });
+      i.addEventListener("change", () => { const n = Number(i.value); if (n > 0) push({ [key]: n }); else { i.value = value > 0 ? String(value) : ""; toast("Type a speed above 0.", true); } });
+      return i;
+    };
+    const go = el("button", { class: "btn small ghost", onclick: () => measure(false) }, "Measure");
+    measureBtn = go;
+    rows.push(el("div", { class: "opt" }, el("span", {}, el("b", { text: "Your internet speed" }),
+      el("small", { text: st.down_mbps > 0 ? `Downloads can use up to ${st.cap_down_mbps} Mbps down and ${st.cap_up_mbps} Mbps up. Measuring uses your full speed for about 15 seconds.` : "Measuring uses your full speed for about 15 seconds." })),
+      el("div", { class: "limit-speed" }, el("label", {}, el("small", { text: "Down" }), num(st.down_mbps, "Download speed in Mbps", "downMbps")), el("label", {}, el("small", { text: "Up" }), num(st.up_mbps, "Upload speed in Mbps", "upMbps")), el("small", { text: "Mbps" }), go)));
+    box.replaceChildren(...rows);
+  };
+  let measureBtn = null;
+  async function measure(turnOn) {
+    if (measureBtn) { measureBtn.disabled = true; measureBtn.textContent = "Measuring..."; }
+    try {
+      const got = await invoke("limit_measure");
+      await push({ downMbps: got.down_mbps, upMbps: got.up_mbps, ...(turnOn ? { on: true } : {}) });
+    } catch (e) { toast(String(e), true); draw(); }
+  }
+  invoke("limit_status").then((s) => { st = s; draw(); }).catch((e) => box.replaceChildren(el("p", { class: "sub", text: String(e) })));
+  return box;
 }
 
 /** Subtitle size, with a sample that changes as the slider moves. */

@@ -1417,6 +1417,10 @@ body.app-full #fs-btn .fs-out { display: inline; }
 @media (hover: none) and (orientation: landscape) and (max-height: 500px), (max-width: 600px) and (orientation: landscape) {
   .p-menu.p-sheet { top: max(8px, env(safe-area-inset-top)); bottom: max(8px, env(safe-area-inset-bottom)); left: auto; width: min(360px, 56vw); max-height: none; }
 }
+.limit-speed { display: flex; align-items: center; gap: 8px; flex: none; }
+.limit-speed label { display: flex; align-items: center; gap: 6px; }
+.limit-num { width: 76px; padding: 7px 8px; background: var(--bg); border: 1px solid var(--line-2); border-radius: 6px; color: var(--text); font: inherit; }
+.limit-num:focus { outline: none; border-color: var(--muted); }
 .pf-pass-hint { margin: 0; max-width: 34ch; font-size: 13px; }
 
 /* ---------- Browsers without flexbox gap (Chrome before 84: older TVs) ----------

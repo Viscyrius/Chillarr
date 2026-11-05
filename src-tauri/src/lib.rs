@@ -16,6 +16,7 @@ mod install;
 mod jellyfin;
 mod jfweb;
 mod library;
+mod limit;
 mod marker;
 mod log;
 mod login;
@@ -488,6 +489,7 @@ async fn media_forget_resume(app: AppHandle, id: String) -> Result<(), String> {
 
 #[tauri::command]
 async fn media_get(app: AppHandle, tile: tiles::Tile, quality: Option<String>) -> Result<String, String> {
+    limit::mark_host(&app, &tile);
     media::get_it(&app, tile, quality.as_deref().unwrap_or("best")).await
 }
 
@@ -538,6 +540,7 @@ async fn media_seasons(app: AppHandle, tile: tiles::Tile) -> Result<pick::Season
 
 #[tauri::command]
 async fn media_get_picked(app: AppHandle, tile: tiles::Tile, quality: Option<String>, pick: pick::Pick) -> Result<String, String> {
+    limit::mark_host(&app, &tile);
     pick::get_picked(&app, tile, quality.as_deref().unwrap_or("best"), pick).await
 }
 
@@ -578,6 +581,7 @@ async fn media_stop_waiting(app: AppHandle, which: String, id: i64) -> Result<St
 
 #[tauri::command]
 async fn watchnow_start(app: AppHandle, tile: tiles::Tile, season: Option<i64>, episode: Option<i64>) -> Result<tiles::Tile, String> {
+    limit::mark_host(&app, &tile);
     watchnow::start(&app, tile, season, episode).await
 }
 
@@ -611,6 +615,22 @@ async fn watchnow_remove(app: AppHandle, key: String) -> Result<String, String> 
 #[tauri::command]
 async fn watchnow_list(app: AppHandle) -> Vec<tiles::Tile> {
     watchnow::list(&app).await
+}
+
+/// Limit downloads: for this PC's window only, never in bridge.rs's list.
+#[tauri::command]
+fn limit_status(app: AppHandle) -> serde_json::Value {
+    limit::status(&app)
+}
+
+#[tauri::command]
+async fn limit_set(app: AppHandle, on: bool, host_free: bool, down_mbps: f64, up_mbps: f64) -> Result<serde_json::Value, String> {
+    limit::set(&app, on, host_free, down_mbps, up_mbps).await
+}
+
+#[tauri::command]
+async fn limit_measure(app: AppHandle) -> Result<serde_json::Value, String> {
+    limit::measure(&app).await
 }
 
 /// Asked every couple of seconds on the waiting screen: can it open yet?
@@ -882,6 +902,9 @@ pub fn run() {
             watchnow_remove,
             watchnow_list,
             watchnow_ready,
+            limit_status,
+            limit_set,
+            limit_measure,
             night_prepare,
             library_stats,
             library_scan,
@@ -968,6 +991,7 @@ pub fn run() {
             guard::spawn(app.handle().clone());
             waiting::spawn(app.handle().clone());
             watchnow::spawn(app.handle().clone());
+            limit::spawn(app.handle().clone());
             indexers::spawn(app.handle().clone());
             subfetch::spawn(app.handle().clone());
             search_tap::spawn(app.handle().clone());
