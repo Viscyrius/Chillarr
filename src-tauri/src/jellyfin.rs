@@ -8,6 +8,10 @@ use std::time::Duration;
 
 const VERSION: &str = "0.2.0";
 const TIMEOUT: Duration = Duration::from_secs(20);
+/// PlaybackInfo on a placeholder. Jellyfin 12 reads a `.strm` again on every ask,
+/// so even with the start here it isn't instant. Under a minute, as iOS drops
+/// calls that go quiet for that long.
+pub const PLACEHOLDER_ASK: Duration = Duration::from_secs(50);
 
 pub fn auth_header(device_id: &str, token: Option<&str>) -> String {
     let mut h = format!(r#"MediaBrowser Client="Chillarr", Device="Windows", DeviceId="{device_id}", Version="{VERSION}""#);
@@ -71,7 +75,10 @@ pub struct Session {
 
 #[derive(Debug, PartialEq)]
 pub enum JfError {
+    /// Nothing is listening: it can't be reached at all.
     Down,
+    /// It took the request and didn't answer in time. It's up, just working.
+    Busy,
     Rejected,
     Other(String),
 }
@@ -80,6 +87,7 @@ impl std::fmt::Display for JfError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             JfError::Down => write!(f, "Jellyfin isn't answering"),
+            JfError::Busy => write!(f, "Jellyfin is busy right now. Try again in a moment."),
             JfError::Rejected => write!(f, "Jellyfin turned the sign-in down"),
             JfError::Other(m) => write!(f, "{m}"),
         }
@@ -123,6 +131,10 @@ impl Jf {
     }
 
     async fn call(&self, method: reqwest::Method, path: &str, body: Option<&Value>) -> Result<Value, JfError> {
+        self.call_within(method, path, body, TIMEOUT).await
+    }
+
+    async fn call_within(&self, method: reqwest::Method, path: &str, body: Option<&Value>, within: Duration) -> Result<Value, JfError> {
         let method_text = method.to_string();
         let mut req = self
             .http
@@ -131,12 +143,12 @@ impl Jf {
                 (Some(t), true) => format!(r#"MediaBrowser Token="{t}""#),
                 _ => auth_header(&self.device_id, self.token.as_deref()),
             })
-            .timeout(TIMEOUT);
+            .timeout(within);
         if let Some(b) = body {
             req = req.json(b);
         }
         let (shown_method, shown_path) = (method_text, path.to_string());
-        let resp = req.send().await.map_err(|e| if e.is_connect() || e.is_timeout() { JfError::Down } else { JfError::Other(e.to_string()) })?;
+        let resp = req.send().await.map_err(|e| if e.is_connect() { JfError::Down } else if e.is_timeout() { JfError::Busy } else { JfError::Other(e.to_string()) })?;
         match resp.status().as_u16() {
             200..=299 => {
                 let text = resp.text().await.unwrap_or_default();
@@ -395,14 +407,17 @@ impl Jf {
     /// How to play an item: a direct file or an HLS stream, plus its tracks.
     /// `subtitle_index`: a picture-based track (PGS, DVD) to draw into the video;
     /// otherwise none is, and text tracks are shown by the player.
-    pub async fn playback(&self, item_id: &str, start_seconds: f64, audio_index: Option<i64>, subtitle_index: Option<i64>) -> Result<Value, JfError> {
+    /// `direct: false` always gets a stream: a Watch now title can't be handed
+    /// over as a file, because Jellyfin only passes a placeholder's bytes through
+    /// with no way to seek in them, and an iPhone won't play that.
+    pub async fn playback(&self, item_id: &str, start_seconds: f64, audio_index: Option<i64>, subtitle_index: Option<i64>, direct: bool, within: Option<Duration>) -> Result<Value, JfError> {
         let uid = self.uid()?;
         let mut body = json!({
             "DeviceProfile": device_profile(),
             "StartTimeTicks": seconds_to_ticks(start_seconds),
             "AutoOpenLiveStream": true,
             "MaxStreamingBitrate": 120_000_000,
-            "EnableDirectPlay": true,
+            "EnableDirectPlay": direct,
             "EnableDirectStream": true,
             "EnableTranscoding": true
         });
@@ -411,7 +426,18 @@ impl Jf {
         }
         // -1: no track drawn in, or Jellyfin picks the file's default (often the wrong language) and burns it.
         body["SubtitleStreamIndex"] = json!(subtitle_index.unwrap_or(-1));
-        self.post(&format!("/Items/{item_id}/PlaybackInfo?userId={uid}"), &body).await
+        self.call_within(reqwest::Method::POST, &format!("/Items/{item_id}/PlaybackInfo?userId={uid}"), Some(&body), within.unwrap_or(TIMEOUT)).await
+    }
+
+    /// Asks about a placeholder with room to wait. Jellyfin reads a `.strm` every
+    /// time PlaybackInfo asks about it (measured on 12.1, 2026-11-05: streams
+    /// already known or not), and answers once that read is done, however long
+    /// the download takes to give it the start of the film. A client that gives
+    /// up doesn't stop it (172 s measured).
+    pub async fn open_placeholder(&self, item_id: &str, within: Duration) -> Result<Value, JfError> {
+        let uid = self.uid()?;
+        let body = json!({ "DeviceProfile": device_profile(), "EnableDirectPlay": false, "EnableDirectStream": true, "EnableTranscoding": true, "SubtitleStreamIndex": -1 });
+        self.call_within(reqwest::Method::POST, &format!("/Items/{item_id}/PlaybackInfo?userId={uid}"), Some(&body), within).await
     }
 
     /// Start, progress and stop reports, so Continue Watching knows where you are.

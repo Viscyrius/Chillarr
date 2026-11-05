@@ -1355,14 +1355,16 @@ pub async fn search(app: &AppHandle, term: &str) -> Found {
 pub async fn play(app: &AppHandle, jf_id: &str, start: f64, audio_index: Option<i64>, subtitle_index: Option<i64>) -> Result<Value, String> {
     let j = jf(app).filter(|j| j.user_id.is_some()).ok_or("Sign in to Jellyfin first (Settings > Account & devices)")?;
     let token = j.token().ok_or("Sign in to Jellyfin first")?.to_string();
+    let direct = !crate::watchnow::is_placeholder(app, jf_id);
+    let within = (!direct).then_some(crate::jellyfin::PLACEHOLDER_ASK);
     // A title just added can be listed a moment before it opens.
-    let mut asked = j.playback(jf_id, start, audio_index, subtitle_index).await;
+    let mut asked = j.playback(jf_id, start, audio_index, subtitle_index, direct, within).await;
     for _ in 0..3 {
         if !asked.as_ref().is_err_and(|e| e.to_string().contains("404")) {
             break;
         }
         tokio::time::sleep(Duration::from_millis(1500)).await;
-        asked = j.playback(jf_id, start, audio_index, subtitle_index).await;
+        asked = j.playback(jf_id, start, audio_index, subtitle_index, direct, within).await;
     }
     let info = asked.map_err(|e| {
         log(app, Level::Red, format!("Couldn't play {jf_id}: {e}"));
@@ -1405,7 +1407,15 @@ pub async fn play(app: &AppHandle, jf_id: &str, start: f64, audio_index: Option<
             })
         })
         .collect();
-    let audio: Vec<Value> = streams.iter().filter(|s| s["Type"] == "Audio").map(|s| json!({ "index": s["Index"], "label": s["DisplayTitle"], "lang": s["Language"], "default": s["IsDefault"] })).collect();
+    // Night mode's own copies of a track (night.rs) aren't tracks to pick.
+    let night_of = |s: &Value| crate::night::copy_of(s["Path"].as_str().unwrap_or_default()).filter(|_| s["IsExternal"] == true);
+    let own = crate::night::own_tracks(&streams);
+    let audio: Vec<Value> = streams
+        .iter()
+        .filter(|s| s["Type"] == "Audio" && night_of(s).is_none())
+        .map(|s| json!({ "index": s["Index"], "track": s["Index"].as_i64().and_then(|i| own.iter().position(|o| *o == i)), "label": s["DisplayTitle"], "lang": s["Language"], "default": s["IsDefault"] }))
+        .collect();
+    let night: Vec<Value> = streams.iter().filter(|s| s["Type"] == "Audio").filter_map(|s| night_of(s).map(|track| json!({ "index": s["Index"], "track": track }))).collect();
     // Preview pictures for the progress bar, when Jellyfin has made them (trickplay.rs).
     let trickplay = match j.user_id.as_deref() {
         Some(uid) => j.get_json(&format!("/Items?userId={uid}&ids={jf_id}&fields=Trickplay")).await.ok().and_then(|v| crate::trickplay::info(&v["Items"][0], &source_id)).map(|mut t| {
@@ -1423,6 +1433,7 @@ pub async fn play(app: &AppHandle, jf_id: &str, start: f64, audio_index: Option<
         "duration": src["RunTimeTicks"].as_i64().map(crate::jellyfin::ticks_to_seconds),
         "subtitles": subtitles,
         "audio": audio,
+        "night": night,
         "trickplay": trickplay,
     }))
 }
@@ -1433,7 +1444,8 @@ pub async fn play_vlc(app: &AppHandle, jf_id: &str, start: f64, title: &str, wat
     let exe = crate::vlc::find().ok_or("VLC isn't installed. Get it from videolan.org, or switch Play with back to Chillarr in Settings.")?;
     let j = jf(app).filter(|j| j.user_id.is_some()).ok_or("Sign in to Jellyfin first (Settings > Account & devices)")?;
     let token = j.token().ok_or("Sign in to Jellyfin first")?.to_string();
-    let info = j.playback(jf_id, 0.0, None, None).await.map_err(|e| e.to_string())?;
+    let within = crate::watchnow::is_placeholder(app, jf_id).then_some(crate::jellyfin::PLACEHOLDER_ASK);
+    let info = j.playback(jf_id, 0.0, None, None, true, within).await.map_err(|e| e.to_string())?;
     let source_id = info["MediaSources"][0]["Id"].as_str().unwrap_or_default().to_string();
     let session = info["PlaySessionId"].as_str().unwrap_or_default().to_string();
     let url = format!("{}/Videos/{jf_id}/stream?static=true&mediaSourceId={source_id}&api_key={token}", j.base);

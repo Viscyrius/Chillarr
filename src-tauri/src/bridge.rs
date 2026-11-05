@@ -251,7 +251,8 @@ async fn who(app: &AppHandle, c: &Claim, fresh: bool) -> Result<Viewer, AuthErro
                 Known::Ok(Viewer { session, admin, can_delete: admin || me["Policy"]["EnableContentDeletion"] == true, page: c.page.clone() })
             }
         }
-        Err(crate::jellyfin::JfError::Down) => return Err(AuthError::Down),
+        // Up but slow says nothing about the token: never sign someone out for it.
+        Err(crate::jellyfin::JfError::Down | crate::jellyfin::JfError::Busy) => return Err(AuthError::Down),
         Err(_) => Known::Bad,
     };
     let mut cache = auth_cache().lock().unwrap();
@@ -287,7 +288,7 @@ fn need(cmd: &str) -> Option<Need> {
         "web_viewer" | "media_status" | "media_rows" | "media_episodes" | "media_search" | "media_search_live" | "media_play" | "media_report" | "media_forget_resume" | "media_get" | "media_get_picked" | "media_seasons" | "media_trailer"
         | "media_explore" | "media_filter" | "media_filter_genres" | "media_filter_studios" | "media_anime_tags" | "media_details" | "media_similar" | "media_my_list" | "media_my_list_marks" | "media_completed"
         | "media_watched_keys" | "completed_remove" | "media_show_episodes" | "marker_set" | "marker_restart" | "media_set_watched" | "media_segments" | "subs_search" | "subs_download" | "subs_sync" | "subs_choice" | "subs_set"
-        | "media_waiting" | "media_downloads" | "watchnow_start" | "watchnow_leave" | "watchnow_cancel" | "watchnow_progress" | "watchnow_list" | "syncplay_info" | "syncplay_call" | "syncplay_tile"
+        | "media_waiting" | "media_downloads" | "watchnow_start" | "watchnow_leave" | "watchnow_cancel" | "watchnow_progress" | "watchnow_list" | "watchnow_ready" | "night_prepare" | "syncplay_info" | "syncplay_call" | "syncplay_tile"
         // Takes a title off the viewer's own Watch now (watchnow.rs keeps one
         // list per Jellyfin user), and only stops a download Watch now itself
         // started and nobody else wants.
@@ -407,6 +408,8 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
         "watchnow_progress" => res(watchnow::progress_as(app, &me.session.user_id, &arg::<String>(a, "key")?, arg(a, "position")?, arg(a, "duration")?)),
         "watchnow_remove" => res(watchnow::remove(app, &arg::<String>(a, "key")?).await),
         "watchnow_list" => ok(watchnow::list(app).await),
+        "watchnow_ready" => res(watchnow::ready(app, &arg::<String>(a, "key")?).await),
+        "night_prepare" => res(crate::night::prepare(app, &arg::<String>(a, "id")?, arg(a, "track")?).await),
         "syncplay_info" => res(syncplay::info(app)),
         "syncplay_call" => res(syncplay::call(app, &arg::<String>(a, "method")?, &arg::<String>(a, "path")?, arg(a, "body")?).await),
         "syncplay_tile" => ok(syncplay::tile(app, &arg::<String>(a, "id")?).await),
@@ -842,6 +845,9 @@ mod tests {
             assert_eq!(need(c), None, "{c}");
         }
         assert_eq!(need("media_rows"), Some(Need::Viewer));
+        // A phone waits for Watch now and asks for night mode through these.
+        assert_eq!(need("watchnow_ready"), Some(Need::Viewer));
+        assert_eq!(need("night_prepare"), Some(Need::Viewer));
         assert_eq!(need("media_delete"), Some(Need::Delete));
         assert_eq!(need("storage_set_cleanup"), Some(Need::Admin));
     }

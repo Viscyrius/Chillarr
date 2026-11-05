@@ -79,7 +79,7 @@ pub fn speech_track(loud: &[f32]) -> Vec<i32> {
 }
 
 /// Where Jellyfin's ffmpeg is (it's installed beside Jellyfin), else one on PATH.
-fn ffmpeg() -> PathBuf {
+pub(crate) fn ffmpeg() -> PathBuf {
     let pf = std::env::var("ProgramFiles").unwrap_or_else(|_| r"C:\Program Files".into());
     let jf = Path::new(&pf).join(r"Jellyfin\Server\ffmpeg.exe");
     if jf.is_file() { jf } else { PathBuf::from("ffmpeg.exe") }
