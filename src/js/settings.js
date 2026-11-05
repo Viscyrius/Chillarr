@@ -660,7 +660,7 @@ function general(panel) {
       subSizeRow(),
       sw("start_with_windows", "Start with Windows", "Opens in the tray when you sign in."),
       seedSwitch()),
-    ...(WEB ? [] : [limitBox()]),
+    ...(WEB ? [] : [limitBox(), gpuBox()]),
     remoteBox(),
     more("More options",
       el("div", { class: "box" },
@@ -670,6 +670,26 @@ function general(panel) {
         sw("skip_dubs", "Skip extra dubs", "Avoids copies that could start in the wrong language, like a Hindi or Italian dub."),
         sw("skip_remux", "Skip huge copies", "Avoids copies of 25 GB or more, so a 1080p movie stays under about 8 GB.")),
       el("div", { style: "margin-top:24px" }, el("button", { class: "btn ghost", onclick: () => openSetup() }, "Run the setup again"))));
+}
+
+/** The graphics card for converting video. Only ever in this PC's window, like Limit downloads. */
+function gpuBox() {
+  const sw = el("input", { type: "checkbox", class: "switch", disabled: true });
+  const hint = el("small", { text: "Checking your graphics card..." });
+  const draw = (st) => {
+    sw.checked = st.on;
+    sw.disabled = !st.card && !st.on;
+    hint.textContent = st.card
+      ? `Converts video on your ${st.card} instead of the processor. Can help stutter on a TV, and leaves more for your games. Applies to the next video you start.`
+      : "No graphics card here can convert video, so the processor does it.";
+  };
+  invoke("gpu_status").then(draw).catch((e) => { hint.textContent = String(e); });
+  sw.addEventListener("input", async () => {
+    sw.disabled = true;
+    try { draw(await invoke("gpu_set", { on: sw.checked })); }
+    catch (e) { toast(String(e), true); sw.checked = !sw.checked; sw.disabled = false; }
+  });
+  return el("div", { class: "box", style: "margin-top:24px" }, el("label", { class: "opt" }, el("span", {}, el("b", { text: "Use graphics card for video" }), hint), sw));
 }
 
 /** Limit downloads. Only ever in this PC's window: the web pages don't draw it and can't reach its commands. */

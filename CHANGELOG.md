@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.11.5 (2026-11-05)
+- New: Use graphics card for video, in Settings > General. Video that has to be converted, like x265 films on a TV, is converted on your graphics card instead of the processor, which can help stutter on a TV and leaves more for your games. It only shows in the app on this PC.
+
 ## 0.11.4 (2026-11-05)
 - New: Limit downloads, in Settings > General. All downloads together use at most 10% of your internet, up and down, so games on this PC stay smooth. It only shows in the app on this PC, never on a phone or TV.
 - New, with it: Don't limit what I start here. Downloads you start in the app on this PC run at full speed, and ones started anywhere else stay limited.

@@ -6,6 +6,7 @@ mod catalog;
 mod completed;
 mod discover;
 mod fix;
+mod gpu;
 mod guard;
 mod history;
 mod imports;
@@ -617,6 +618,17 @@ async fn watchnow_list(app: AppHandle) -> Vec<tiles::Tile> {
     watchnow::list(&app).await
 }
 
+/// The graphics card for video: for this PC's window only, never in bridge.rs's list.
+#[tauri::command]
+async fn gpu_status(app: AppHandle) -> Result<serde_json::Value, String> {
+    gpu::status(&app).await
+}
+
+#[tauri::command]
+async fn gpu_set(app: AppHandle, on: bool) -> Result<serde_json::Value, String> {
+    gpu::set(&app, on).await
+}
+
 /// Limit downloads: for this PC's window only, never in bridge.rs's list.
 #[tauri::command]
 fn limit_status(app: AppHandle) -> serde_json::Value {
@@ -905,6 +917,8 @@ pub fn run() {
             limit_status,
             limit_set,
             limit_measure,
+            gpu_status,
+            gpu_set,
             night_prepare,
             library_stats,
             library_scan,

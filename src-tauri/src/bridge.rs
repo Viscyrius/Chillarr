@@ -841,7 +841,7 @@ mod tests {
 
     #[test]
     fn only_listed_commands_reach_the_web() {
-        for c in ["fix_everything", "set_settings", "install_apps", "profiles_switch", "profiles_remove", "profiles_update", "profiles_set_password", "profiles_check_pin", "profiles_forget_web_devices", "pick_folder", "open_folder", "open_link", "remote_set", "remote_forget", "remote_status", "limit_status", "limit_set", "limit_measure", "apps_set_login", "setup_set_folders", "set_download_folder", "meili_set", "shelf_set", "media_connect", "media_sign_out", "subs_setup", "get_logs", "media_play_vlc", "window_fullscreen", "defender_answer", "update_app", "a_new_command"] {
+        for c in ["fix_everything", "set_settings", "install_apps", "profiles_switch", "profiles_remove", "profiles_update", "profiles_set_password", "profiles_check_pin", "profiles_forget_web_devices", "pick_folder", "open_folder", "open_link", "remote_set", "remote_forget", "remote_status", "limit_status", "limit_set", "limit_measure", "gpu_status", "gpu_set", "apps_set_login", "setup_set_folders", "set_download_folder", "meili_set", "shelf_set", "media_connect", "media_sign_out", "subs_setup", "get_logs", "media_play_vlc", "window_fullscreen", "defender_answer", "update_app", "a_new_command"] {
             assert_eq!(need(c), None, "{c}");
         }
         assert_eq!(need("media_rows"), Some(Need::Viewer));
