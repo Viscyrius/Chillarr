@@ -1,5 +1,5 @@
 // The detail panel: what a title is, Play / Resume / Download, My List, and episodes.
-import { $, ask, canDelete, closeDialog, el, getPref, icon, ICON, invoke, listen, metaBits, setPref, store, toast } from "./api.js";
+import { $, ask, canDelete, closeDialog, el, genresAZ, getPref, icon, ICON, invoke, listen, metaBits, setPref, store, toast } from "./api.js";
 import { canWatchNow, isWatchNow, movieLike, play, removeWatchNow, watchNow } from "./player.js";
 import { completedActions, confirmRedownload, isWatched, listable, loadWatched, onMyList, removeContinue, resumable, setMyList } from "./mylist.js";
 import { subtitlesControl } from "./subpick.js";
@@ -917,7 +917,7 @@ export async function openDetail(t, opts = {}) {
       if (seq === openSeq && id && !actions.querySelector(".trailer-btn")) actions.append(trailerButton({ ...t, trailer: id }));
     }).catch(() => {});
   }
-  if (t.genres?.length) $("#detail-meta").append(el("span", { class: "sep" }), el("span", { text: t.genres.slice(0, 3).join(", ") }));
+  if (t.genres?.length) $("#detail-meta").append(el("span", { class: "sep" }), el("span", { text: genresAZ(t.genres, 3).join(", ") }));
 }
 
 /* ---------- Similar to this ---------- */
