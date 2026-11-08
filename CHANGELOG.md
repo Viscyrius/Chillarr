@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.13.0 (2026-11-08)
+- New: Reading mode. The book button at the top switches Chillarr to reading, with its own tabs (Home, Manhwa, Manhua, Manga, Novels, Books, Downloads, My List) and its own search. The film button switches back. Each profile remembers which one it was in.
+- New: pick the translation you want, then Best or a copy of your own choosing.
+- New: pick which chapters to get, or get one chapter at a time from the series page. You can also choose whether new chapters come in by themselves.
+- Best now mixes copies: chapters come from the sharpest copy, and the newest ones from whichever site is furthest ahead. You get the good quality without waiting on a site that locks its newest chapters.
+- Manga downloads now stay inside Limit downloads, like everything else.
+- The reader zooms in and out in every mode: the - and + at the top, the + and - keys, Ctrl and the mouse wheel, or a pinch. Each profile keeps its own zoom for each mode. Scroll now starts at the pages' real size instead of blowing them up.
+- The reader is smoother: pages slide in the way the story reads, switching modes or chapters fades across, and the arrow keys scroll smoothly.
+- New: Sharpen pages with your graphics card, in Settings > General. Each chapter you download is redrawn once at twice the detail, in the background, and the reader shows HD on those. It waits while a game is full screen. Turning it off deletes the sharper copies; your chapters stay. It only shows in the app on this PC.
+
 ## 0.12.1 (2026-11-08)
 - Fixed: pressing Find copies while the manga downloader was still being set up could say it "didn't start". It now waits for the setup to finish.
 
