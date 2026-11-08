@@ -141,6 +141,14 @@ impl Procs {
         }
     }
 
+    /// Ends the Suwayomi we started (its folder moved; Fix everything starts it again).
+    pub fn stop_suwayomi(&self) {
+        if let Some(mut c) = self.suwa.lock().unwrap().take() {
+            let _ = c.kill();
+            let _ = c.wait();
+        }
+    }
+
     /// Suwayomi's Java, hidden, in the kill-on-close job like FlareSolverr:
     /// it never outlives Chillarr and never shows a window or tray icon.
     pub fn start_suwayomi(&self, java: &Path, args: &[String]) -> Result<(), String> {

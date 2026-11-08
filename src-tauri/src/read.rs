@@ -67,6 +67,38 @@ pub async fn ensure_root(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
+/// Moves the reading folder: what's in Comics and Books goes along (a rename,
+/// so it must be the same drive), and the downloader restarts on the new one.
+pub async fn move_root(app: &AppHandle, dir: &str) -> Result<String, String> {
+    let to = PathBuf::from(dir.trim().trim_end_matches(['\\', '/']));
+    let Some(from) = root(app) else {
+        set_root(app, &to.to_string_lossy())?;
+        return Ok("Reading goes there from now on.".into());
+    };
+    if from == to {
+        return Ok("That's already the reading folder.".into());
+    }
+    app.state::<crate::fix::Core>().procs.stop_suwayomi();
+    let empty = |p: &Path| std::fs::read_dir(p).map(|mut d| d.next().is_none()).unwrap_or(true);
+    for sub in ["Comics", "Books"] {
+        let (a, b) = (from.join(sub), to.join(sub));
+        if !a.is_dir() {
+            continue;
+        }
+        if b.exists() && !empty(&b) {
+            return Err(format!("{} already has things in it. Pick an empty folder.", b.display()));
+        }
+        let _ = std::fs::remove_dir(&b);
+        std::fs::create_dir_all(&to).map_err(|e| format!("Couldn't make {}: {e}", to.display()))?;
+        std::fs::rename(&a, &b).map_err(|e| format!("Couldn't move {} (it has to be on the same drive): {e}", a.display()))?;
+    }
+    set_root(app, &to.to_string_lossy())?;
+    if !followed(app).is_empty() {
+        let _ = crate::suwayomi::ready(app).await;
+    }
+    Ok("Moved. Reading lives there now.".into())
+}
+
 pub fn set_root(app: &AppHandle, dir: &str) -> Result<(), String> {
     let dir = dir.trim().trim_end_matches(['\\', '/']).to_string();
     for sub in ["Comics", "Books"] {

@@ -687,8 +687,8 @@ fn read_folder(app: AppHandle) -> Option<String> {
 }
 
 #[tauri::command]
-fn read_set_folder(app: AppHandle, path: String) -> Result<(), String> {
-    read::set_root(&app, &path)
+async fn read_set_folder(app: AppHandle, path: String) -> Result<String, String> {
+    read::move_root(&app, &path).await
 }
 
 #[tauri::command]
