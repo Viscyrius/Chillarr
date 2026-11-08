@@ -19,6 +19,11 @@ let offset = 0; // the server's clock minus ours, ms
 let rtt = 0;
 let keepAlive = null, pingTimer = null, driftTimer = null, cmdTimer = null;
 let waitingReady = false;
+let stallTimer = null; // a "waiting" that hasn't lasted long enough to tell the party yet
+// This page asked for a new party (create), so the GroupJoined that follows is its own.
+let creating = false;
+// Catching up by speed: on until it's really in step, so it doesn't flip on and off.
+let easing = false;
 const g = { id: null, name: "", people: [], itemId: null, playlistItemId: null, state: "Idle", cmd: null, startWhenReady: false };
 
 export const inGroup = () => !!g.id;
@@ -86,7 +91,11 @@ function groupUpdate(u) {
       startTimers();
       toast(`You're in ${g.name}.`);
       // Started while watching something: bring the group to it.
-      if (player.currentTile()) startedHere(player.currentTile(), player.now(), !player.paused());
+      // Started a party while watching something: bring the group to it. Only
+      // a party made here: joining a friend's used to switch THEIR party to
+      // whatever was open on this screen.
+      if (creating && player.currentTile()) startedHere(player.currentTile(), player.now(), !player.paused());
+      creating = false;
       break;
     case "UserJoined":
       if (!g.people.includes(u.Data)) g.people.push(u.Data);
@@ -134,12 +143,16 @@ function command(c) {
   const at = parse(c.When) - offset;
   if (c.Command === "Unpause") {
     player.rate(1);
-    const go = () => { player.seek(pos + Math.max(0, Date.now() - at) / 1000); player.play(); };
+    // Only a real gap is jumped: any jump makes the player wait a moment, and a
+    // jump to where it already is used to be reported as buffering, which the
+    // party answered with another Unpause (1,700 a minute, 2026-11-06: the
+    // micro stutters). Smaller gaps are caught up by speed (driftTimer).
+    const go = () => { seekIfOff(pos + Math.max(0, Date.now() - at) / 1000); player.play(); };
     const wait = at - Date.now();
     if (wait > 0) cmdTimer = setTimeout(go, wait); else go();
   } else if (c.Command === "Pause") {
     player.pause();
-    player.seek(pos);
+    seekIfOff(pos);
   } else if (c.Command === "Seek") {
     player.pause();
     player.seek(pos);
@@ -149,10 +162,21 @@ function command(c) {
   }
 }
 
+/** Jumps only when this player is a second or more away from `pos`. */
+function seekIfOff(pos) {
+  if (Math.abs(player.now() - pos) >= 1) player.seek(pos);
+}
+
+// One wait at a time: a second Seek or Pause before the first could play
+// used to leave both listeners, and each sent its own Ready.
+let playable = null;
 function whenPlayable(fn) {
   const v = player.video;
+  if (playable) { playable.v.removeEventListener("canplay", playable.go); playable = null; }
   if (v.readyState >= 3) { fn(); return; }
-  v.addEventListener("canplay", fn, { once: true });
+  const go = () => { playable = null; fn(); };
+  playable = { v, go };
+  v.addEventListener("canplay", go, { once: true });
 }
 
 /** Tells the group this player can play from where it is. */
@@ -166,16 +190,19 @@ function startTimers() {
   clearInterval(pingTimer);
   clearInterval(driftTimer);
   pingTimer = setInterval(() => { if (g.id) call("/SyncPlay/Ping", { Ping: Math.round(rtt) }).catch(() => {}); }, 10000);
-  // Keep in step: a small difference is caught up by playing 5% faster or
-  // slower, a big one by jumping.
+  // Keep in step, gently: it takes its time rather than stutter. Under half a
+  // second off is left alone; more is caught up by playing 3% faster or
+  // slower (not heard), held until it's within 0.15 s so the speed doesn't
+  // flip back and forth; only 3 seconds or more is a jump.
   driftTimer = setInterval(() => {
     const c = g.cmd;
-    if (!g.id || !c || c.Command !== "Unpause" || player.paused() || waitingReady) { player.rate(1); return; }
+    if (!g.id || !c || c.Command !== "Unpause" || player.paused() || waitingReady) { easing = false; player.rate(1); return; }
     const expected = c.PositionTicks / TICKS + (serverNow() - parse(c.When)) / 1000;
     const diff = player.now() - expected;
-    if (Math.abs(diff) > 2) { player.rate(1); player.seek(expected); }
-    else if (Math.abs(diff) > 0.3) player.rate(diff > 0 ? 0.95 : 1.05);
-    else player.rate(1);
+    const off = Math.abs(diff);
+    if (off >= 3) { easing = false; player.rate(1); player.seek(expected); }
+    else if (off > 0.5 || (easing && off > 0.15)) { easing = true; player.rate(diff > 0 ? 0.97 : 1.03); }
+    else { easing = false; player.rate(1); }
   }, 1000);
 }
 
@@ -186,6 +213,10 @@ function leftGroup() {
   clearInterval(pingTimer);
   clearInterval(driftTimer);
   clearTimeout(cmdTimer);
+  clearTimeout(stallTimer);
+  stallTimer = null;
+  waitingReady = false;
+  easing = false;
   player.rate(1);
   if (was) toast(`You left ${was}.`);
   draw();
@@ -208,12 +239,30 @@ export function startedHere(tile, at, playing = true) {
 export function loadedHere() { whenPlayable(() => ready()); }
 
 /** The player stalled or caught up: the party waits for it, then goes on. */
-export function buffering() {
-  if (!g.id || !g.playlistItemId || waitingReady) return;
-  waitingReady = true;
-  call("/SyncPlay/Buffering", { When: isoNow(), PositionTicks: Math.round(player.now() * TICKS), IsPlaying: true, PlaylistItemId: g.playlistItemId }).catch(() => {});
+// Only a wait that lasts is told: the browser says "waiting" for a few
+// milliseconds after every jump, and each Buffering makes the whole party stop.
+const STALL_MS = 600;
+// `now`: a reload for another track, which is paused while it loads and needs
+// the party's Unpause to go on, so it can't wait to see if it lasts.
+export function buffering(now = false) {
+  if (!g.id || !g.playlistItemId || waitingReady || (stallTimer && !now)) return;
+  const tell = () => {
+    clearTimeout(stallTimer);
+    stallTimer = null;
+    waitingReady = true;
+    call("/SyncPlay/Buffering", { When: isoNow(), PositionTicks: Math.round(player.now() * TICKS), IsPlaying: true, PlaylistItemId: g.playlistItemId }).catch(() => {});
+  };
+  if (now) { tell(); return; }
+  stallTimer = setTimeout(() => {
+    stallTimer = null;
+    const v = player.video;
+    if (!g.id || !g.playlistItemId || waitingReady || v.paused || v.readyState >= 3) return;
+    tell();
+  }, STALL_MS);
 }
 export function caughtUp() {
+  clearTimeout(stallTimer);
+  stallTimer = null;
   if (!waitingReady) return;
   waitingReady = false;
   ready();
@@ -223,12 +272,14 @@ export function caughtUp() {
 async function create() {
   try {
     await connect();
+    creating = true;
     await call("/SyncPlay/New", { GroupName: `${me}'s watch party` });
-  } catch (e) { toast(String(e), true); }
+  } catch (e) { creating = false; toast(String(e), true); }
 }
 
 async function join(id) {
   try {
+    creating = false;
     await connect();
     await call("/SyncPlay/Join", { GroupId: id });
   } catch (e) { toast(String(e), true); }
