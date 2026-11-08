@@ -1,6 +1,6 @@
 [package]
 name = "chillarr"
-version = "0.14.0"
+version = "0.15.0"
 description = "Keeps Prowlarr, Sonarr, Radarr, FlareSolverr and qBittorrent running and fixed"
 authors = ["Viscyrius"]
 license = "GPL-3.0-or-later"
