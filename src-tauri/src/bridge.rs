@@ -313,6 +313,7 @@ fn need(cmd: &str) -> Option<Need> {
         // Reading (read.rs): each profile its own progress; following a
         // series downloads it, like Download does for a film.
         | "read_rows" | "read_search" | "read_library" | "read_detail" | "read_sources" | "read_follow" | "read_open" | "read_progress" | "read_mode" | "read_mark"
+        | "readparty_start" | "readparty_join" | "readparty_state" | "readparty_move" | "readparty_leave"
         | "read_book_rows" | "read_book_more" | "read_book_search" | "read_book_copies" | "read_book_get" | "read_books" | "read_book_open"
         | "read_languages" | "read_copy_chapters" | "read_get_chapters" | "read_keep_up" | "read_list" | "read_list_set" | "read_explore" | "read_genres" | "read_filter_info" | "read_similar" | "read_downloads"
         | "read_delete_plan" => Need::Viewer,
@@ -379,6 +380,11 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
         "media_rows" => res(media::rows(app, &arg::<String>(a, "tab")?).await),
         "read_rows" => res(crate::read::rows(app).await),
         "read_book_rows" => ok(crate::books::rows().await),
+        "readparty_start" => res(crate::readparty::start(app, &arg::<String>(a, "key")?, arg(a, "chapter")?, arg(a, "page")?)),
+        "readparty_join" => res(crate::readparty::join(app, &arg::<String>(a, "code")?)),
+        "readparty_state" => res(crate::readparty::state(app, &arg::<String>(a, "code")?)),
+        "readparty_move" => res(crate::readparty::moved(app, &arg::<String>(a, "code")?, arg(a, "chapter")?, arg(a, "page")?)),
+        "readparty_leave" => res(crate::readparty::leave(app, &arg::<String>(a, "code")?)),
         "read_book_more" => res(crate::books::more(&arg::<String>(a, "id")?, arg::<u32>(a, "page")?).await),
         "read_book_search" => res(crate::books::search(&arg::<String>(a, "term")?).await),
         "read_book_copies" => res(crate::books::copies(app, &arg(a, "meta")?).await),

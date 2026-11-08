@@ -19,22 +19,30 @@ pub struct Site {
     pub def: &'static str,
     pub name: &'static str,
     pub why: &'static str,
+    /// Books are searched on it too (books.rs searches Prowlarr directly).
+    pub books: bool,
 }
 
 // Each one passed Prowlarr's test and returned results on 2026-10-18.
 // Anidex (down), Uindex and TorrentsCSV (rate-limited Sonarr and Radarr's sync) were left out.
-pub const SITES: [Site; 11] = [
-    Site { def: "1337x", name: "1337x", why: "Huge catalogue of movies and series. Goes through FlareSolverr." },
-    Site { def: "Knaben", name: "Knaben", why: "Searches many big sites at once. Great for movies and series." },
-    Site { def: "thepiratebay", name: "The Pirate Bay", why: "The biggest general site." },
-    Site { def: "limetorrents", name: "LimeTorrents", why: "Movies and series, a good backup." },
-    Site { def: "yts", name: "YTS", why: "Small, good-quality movie files." },
-    Site { def: "eztv", name: "EZTV", why: "TV episodes, fast after they air." },
-    Site { def: "nyaasi", name: "Nyaa.si", why: "The go-to site for anime." },
-    Site { def: "animetosho-xyz", name: "Anime Tosho", why: "Anime, mirrors Nyaa and more." },
-    Site { def: "SubsPlease", name: "SubsPlease", why: "New anime episodes, out within hours." },
-    Site { def: "nekobt", name: "nekoBT", why: "Anime, well sorted releases." },
-    Site { def: "tokyotosho", name: "Tokyo Toshokan", why: "Older and rarer anime." },
+// Books (2026-11-08): of the 30 public sites Prowlarr lists with book categories,
+// these five returned ebooks for "Percy Jackson epub" and "Brandon Sanderson
+// epub"; TorrentDownload is the one added for it. KickassTorrents, ExtraTorrent
+// and Torrent Downloads passed the test but returned nothing; EBookBay is down;
+// Internet Archive and Magnet Cat wouldn't add.
+pub const SITES: [Site; 12] = [
+    Site { def: "1337x", name: "1337x", why: "Huge catalogue of movies and series. Goes through FlareSolverr.", books: true },
+    Site { def: "Knaben", name: "Knaben", why: "Searches many big sites at once. Great for movies and series.", books: true },
+    Site { def: "thepiratebay", name: "The Pirate Bay", why: "The biggest general site.", books: true },
+    Site { def: "limetorrents", name: "LimeTorrents", why: "Movies and series, a good backup.", books: true },
+    Site { def: "yts", name: "YTS", why: "Small, good-quality movie files.", books: false },
+    Site { def: "eztv", name: "EZTV", why: "TV episodes, fast after they air.", books: false },
+    Site { def: "nyaasi", name: "Nyaa.si", why: "The go-to site for anime.", books: false },
+    Site { def: "animetosho-xyz", name: "Anime Tosho", why: "Anime, mirrors Nyaa and more.", books: false },
+    Site { def: "SubsPlease", name: "SubsPlease", why: "New anime episodes, out within hours.", books: false },
+    Site { def: "nekobt", name: "nekoBT", why: "Anime, well sorted releases.", books: false },
+    Site { def: "tokyotosho", name: "Tokyo Toshokan", why: "Older and rarer anime.", books: false },
+    Site { def: "torrentdownload", name: "TorrentDownload", why: "A big general site with many ebooks the others miss.", books: true },
 ];
 
 #[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
@@ -207,7 +215,7 @@ pub async fn status(app: &AppHandle) -> serde_json::Value {
                 "soon"
             };
             serde_json::json!({
-                "def": s.def, "name": s.name, "why": s.why, "state": state,
+                "def": s.def, "name": s.name, "why": s.why, "state": state, "books": s.books,
                 "next_in": wait.map(|w| w.next.saturating_sub(now())),
                 "note": wait.map(|w| w.why.clone()),
             })

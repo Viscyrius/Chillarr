@@ -183,9 +183,21 @@ export async function suggestions(onAdded) {
     });
     const line = r.state === "waiting" ? `Down right now. Trying again in ${inMinutes(r.next_in || 0)}.` : r.state === "removed" ? "You took this one out, so it stays out." : r.why;
     const note = el("span", { text: line, title: r.note || "" });
-    return el("div", { class: "suggest-card", dataset: { state: r.state } }, el("div", {}, el("strong", { text: r.name }), note), btn);
+    const name = el("strong", { text: r.name }, r.books ? el("small", { class: "site-tag", text: "Books" }) : null);
+    return el("div", { class: "suggest-card", dataset: { state: r.state } }, el("div", {}, name, note), btn);
   });
   return el("div", {}, el("div", { class: "suggest" }, cards));
+}
+
+/** The manga sites the manga downloader has, for Settings (it may not be set up yet). */
+async function mangaSites() {
+  const box = el("div", { class: "manga-sites" }, el("p", { class: "sub", text: "Looking..." }));
+  invoke("manga_sites").then((s) => {
+    const more = s.other ? ` Plus ${s.other} in other languages.` : "";
+    box.replaceChildren(el("p", { class: "sub", text: `${s.en.length} sites in English, all asked at once for every series. The sharpest copy wins.${more}` }),
+      el("div", { class: "chips" }, s.en.map((n) => el("span", { class: "chip static", text: n }))));
+  }).catch(() => box.replaceChildren(el("p", { class: "sub", text: "They're set up the first time you follow a series. Over 25 sites, so one going down never leaves a gap." })));
+  return box;
 }
 
 async function indexers(panel) {
@@ -201,13 +213,25 @@ async function indexers(panel) {
     td.append(el("span", { class: "dot", dataset: { level: c.level } }), c.level === "ok" ? "Working" : c.reason);
     return td;
   };
-  const draw = (rows) => table.replaceChildren(...rows.map((r) => el("tr", {}, el("td", { text: r.name }), cell(r.prowlarr), cell(r.sonarr), cell(r.radarr))));
+  // Books are searched straight through Prowlarr, on the sites marked for books.
+  let bookSites = new Set();
+  const bookCell = (r) => {
+    if (!bookSites.has(r.name)) return el("td", { class: "none", text: "Not used" });
+    const c = r.prowlarr;
+    if (!c) return el("td", { class: "none", text: "Not added" });
+    return el("td", { title: c.reason }, el("span", { class: "dot", dataset: { level: c.level } }), c.level === "ok" ? "Searched" : c.reason);
+  };
+  const draw = (rows) => table.replaceChildren(...rows.map((r) => el("tr", {}, el("td", { text: r.name }), cell(r.prowlarr), cell(r.sonarr), cell(r.radarr), bookCell(r))));
+  const sites = await invoke("setup_indexers").catch(() => ({ sites: [] }));
+  bookSites = new Set((sites.sites || []).filter((s) => s.books).map((s) => s.name));
   panel.append(
-    el("div", { class: "panel-head" }, el("div", {}, el("h2", { text: "Download sites" }), el("p", { class: "sub", text: "Where Chillarr looks for movies and shows. It adds and checks these by itself." })), test),
-    el("table", { class: "grid" }, el("thead", {}, el("tr", {}, ["Site", "Prowlarr", "Sonarr", "Radarr"].map((h) => el("th", { text: h })))), table),
+    el("div", { class: "panel-head" }, el("div", {}, el("h2", { text: "Download sites" }), el("p", { class: "sub", text: "Where Chillarr looks for movies, shows and books. It adds and checks these by itself." })), test),
+    el("table", { class: "grid" }, el("thead", {}, el("tr", {}, ["Site", "Prowlarr", "Sonarr", "Radarr", "Books"].map((h) => el("th", { text: h })))), table),
     el("h2", { text: "Sites Chillarr adds for you", style: "margin-top:36px;font-size:1.2rem" }),
     el("p", { class: "sub", text: "Each one is added by itself. A site that's down is tried again later until it works." }),
-    await suggestions(async () => draw(await invoke("indexer_table")))
+    await suggestions(async () => draw(await invoke("indexer_table"))),
+    el("h2", { text: "Manga, manhwa and manhua sites", style: "margin-top:36px;font-size:1.2rem" }),
+    await mangaSites()
   );
   draw(await invoke("indexer_table"));
 }

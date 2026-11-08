@@ -226,8 +226,9 @@ function topTen(c, rank) {
 function bookCard(x) {
   const box = cover(x.cover, x.title);
   box.append(el("span", { class: "badge", text: "Book" }));
-  if (x.read > 0 && x.read < 1) box.append(el("div", { class: "bar" }, el("span", { style: `width:${Math.round(x.read * 100)}%` })));
-  const sub = x.problem ? "Needs a look" : !x.ready ? (x.progress != null ? `Downloading ${Math.round(x.progress * 100)}%` : "Starting") : x.read >= 1 ? "Finished" : x.read > 0 ? `${Math.round(x.read * 100)}% read` : x.author || "";
+  const done = x.finished || x.read >= 1;
+  if (x.read > 0 && !done) box.append(el("div", { class: "bar" }, el("span", { style: `width:${Math.round(x.read * 100)}%` })));
+  const sub = x.problem ? "Needs a look" : !x.ready ? (x.progress != null ? `Downloading ${Math.round(x.progress * 100)}%` : "Starting") : done ? "Finished" : x.read > 0 ? `${Math.round(x.read * 100)}% read` : x.author || "";
   const b = el("button", { class: "tile", "aria-label": x.title }, box, el("div", { class: "cap" }, el("strong", { text: x.title }), sub ? ` · ${sub}` : ""));
   b.addEventListener("click", () => openBookPanel({ kind: "book", title: x.title, author: x.author, cover: x.cover, description: x.description, olid: x.olid, anilist: x.anilist }, x));
   return b;
@@ -356,7 +357,7 @@ function readHero(picks) {
   if (!picks.length) return null;
   let at = 0;
   const bg = (c) => (c.banner || c.cover ? `url("${String(c.banner || c.cover).replace(/"/g, "%22")}")` : "none");
-  // A banner is a wide strip and only needs softening; a cover alone is blown up, so it's blurred more.
+  // A banner is a wide strip and only needs softening; a cover alone is shown as it is (no blur).
   const kindBg = (n, c) => n.classList.toggle("is-cover", !c.banner);
   const bgA = el("div", { class: "hero-bg read-hero-bg", style: `background-image:${bg(picks[0])}` });
   kindBg(bgA, picks[0]);
@@ -637,7 +638,8 @@ async function homePage(view, my) {
   const fresh = freshSection(series);
   if (fresh) out.push(fresh);
   if (reading.length) out.push(row("reading", "Continue reading", reading.map((s) => card(asCard(s), s))));
-  if (books.filter((b) => b.ready && b.read < 1).length) out.push(row("books", "Your books", books.filter((b) => b.read < 1).map(bookCard)));
+  const unread = (b) => !b.finished && b.read < 1;
+  if (books.filter((b) => b.ready && unread(b)).length) out.push(row("books", "Your books", books.filter(unread).map(bookCard)));
   if (done.length) out.push(row("finished", "Finished", done.map((s) => card(asCard(s), s))));
   lib.replaceChildren(...out);
   try {
@@ -1459,8 +1461,12 @@ export async function openBookPanel(c, mine = null) {
   if (c.author) actions.parentElement.querySelector(".meta").prepend(el("span", { text: c.author }), el("span", { class: "sep" }));
   if (mine) {
     if (mine.ready) {
-      actions.append(el("button", { class: "btn play", onclick: () => { if (dlg) dlg.close(); openBook(mine.key, () => openBookPanel(c)); } }, icon(ICON.play),
-        mine.read > 0 && mine.read < 1 ? `Resume (${Math.round(mine.read * 100)}%)` : mine.read >= 1 ? "Read again" : "Read"));
+      const go = (fromStart) => () => { if (dlg) dlg.close(); openBook(mine.key, () => openBookPanel(c), fromStart); };
+      const done = mine.finished || mine.read >= 1;
+      // Finished (90% in): Read again starts over; Resume still goes on from where you stopped.
+      actions.append(el("button", { class: "btn play", onclick: go(done) }, icon(ICON.play),
+        done ? "Read again" : mine.read > 0 ? `Resume (${Math.round(mine.read * 100)}%)` : "Read"));
+      if (done && mine.read < 0.995) actions.append(el("button", { class: "btn soft", onclick: go(false) }, `Resume (${Math.round(mine.read * 100)}%)`));
       if (canDelete()) actions.append(el("button", { class: "btn soft", onclick: async () => { if (await deleteBookFile(mine)) { window.dispatchEvent(new Event("chillarr:refresh")); openBookPanel(c); } } }, icon(TRASH), "Delete file"));
     } else if (mine.not_downloaded) {
       // Its file was deleted: still in the list, downloaded again from here.

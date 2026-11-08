@@ -156,6 +156,8 @@ function drawAppFull() {
   $("#fs-btn").setAttribute("aria-label", screenMode.app ? "Exit full screen" : "Full screen");
 }
 $("#fs-btn").addEventListener("click", () => setAppFull(!screenMode.app));
+// The reader's own Full screen button.
+window.addEventListener("chillarr:full", drawAppFull);
 window.addEventListener("keydown", (e) => {
   if (e.key === "F11" && $("#player").hidden) { e.preventDefault(); setAppFull(!screenMode.app); }
 });
