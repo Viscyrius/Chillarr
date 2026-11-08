@@ -743,7 +743,7 @@ async function explorePage(view, tab, my) {
           field("Years", el("div", { class: "read-years" }, yearBox("year_from", "From"), el("span", { text: "to" }), yearBox("year_to", "To")))));
       if (info.adult) {
         parts.push(field("18+", oneOf([["hide", "Hidden"], ["include", "Include"], ["only", "Only 18+"]], (o) => f.adult === o[0], (x, o) => (x.adult = o[0])),
-          el("small", { class: "read-fl-hint", text: "Only on your own profile. Other profiles never see 18+ titles." })));
+          el("small", { class: "read-fl-hint", text: "Off until you pick Include or Only 18+." })));
       }
     }
     if (n) parts.push(el("button", { class: "linkish read-fl-clear", onclick: () => change((x) => Object.assign(x, { ...BLANK_FILTER, sort: x.sort })) }, "Clear filters"));
