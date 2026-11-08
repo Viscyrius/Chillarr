@@ -102,10 +102,98 @@ export async function renderRead(view, tab) {
 
 export const stopRead = () => { seq++; };
 
+/* ---------- the big picture at the top ---------- */
+
+let heroTimer = 0;
+/**
+ * The featured series, like Movies' hero: the banner behind, softened, the cover
+ * large on the right, the title, a few lines and the buttons; it moves on every
+ * 9 seconds, or with the dots, arrows or a swipe. AniList banners are short
+ * strips, so the cover carries the picture.
+ */
+function readHero(picks) {
+  clearInterval(heroTimer);
+  if (!picks.length) return null;
+  let at = 0;
+  const bg = (c) => (c.banner || c.cover ? `url("${String(c.banner || c.cover).replace(/"/g, "%22")}")` : "none");
+  const bgA = el("div", { class: "hero-bg read-hero-bg", style: `background-image:${bg(picks[0])}` });
+  const bgB = el("div", { class: "hero-bg read-hero-bg out" });
+  const art = el("div", { class: "read-hero-art" });
+  const section = el("section", { class: "hero read-hero-top" }, bgA, bgB, copy(picks[0]), art);
+  drawArt(picks[0]);
+  let front = bgA, back = bgB;
+  section.addEventListener("click", (e) => { if (!e.target.closest("button, a")) open(picks[at]); });
+  function open(c) { const key = followedByAnilist.get(c.anilist); openSeries(key ? { key, card: c } : { card: c }); }
+  function copy(c) {
+    const key = c.anilist && followedByAnilist.get(c.anilist);
+    const desc = String(c.description || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+    return el("div", { class: "hero-copy" },
+      el("p", { class: "hero-kicker", text: key ? "Continue reading" : `Popular ${kindOf(c).toLowerCase()}` }),
+      el("h1", { text: c.title }),
+      el("p", { class: "meta" }, ...[kindOf(c), STATUS[c.status], c.chapters ? `${c.chapters} chapters` : null, c.score ? `${c.score}%` : null, ...(c.genres || []).slice(0, 2)]
+        .filter(Boolean).flatMap((x, i) => (i ? [el("span", { class: "sep" }), el("span", { text: x })] : [el("span", { text: x })]))),
+      desc ? el("p", { class: "overview", text: desc }) : null,
+      el("div", { class: "actions" },
+        el("button", { class: "btn play", onclick: () => open(c) }, icon(key ? ICON.play : ICON.info), key ? "Continue reading" : "See chapters"),
+        listButton(c)));
+  }
+  function drawArt(c) {
+    const img = c.cover ? el("img", { src: c.cover, alt: "", decoding: "async" }) : null;
+    if (img) img.addEventListener("load", () => img.classList.add("loaded"), { once: true });
+    art.replaceChildren(...(img ? [img] : []));
+  }
+  if (picks.length < 2) return section;
+  const dots = el("div", { class: "hero-dots" }, picks.map((_, i) => el("button", { class: i === 0 ? "on" : "", "aria-label": `Show featured series ${i + 1}`, onclick: () => show(i) })));
+  const side = (cls, label, path, step) => el("button", { class: `hero-arrow ${cls}`, "aria-label": label, onclick: () => show(at + step) }, icon(path));
+  section.append(dots, side("prev", "Previous series", ICON.left, -1), side("next", "Next series", ICON.right, 1));
+  let downX = null;
+  section.addEventListener("pointerdown", (e) => { if (!e.target.closest("button, a")) downX = e.clientX; });
+  section.addEventListener("pointerup", (e) => {
+    if (downX == null) return;
+    const dx = e.clientX - downX;
+    downX = null;
+    if (Math.abs(dx) > 60) show(at + (dx < 0 ? 1 : -1));
+  });
+  function show(i) {
+    at = (i + picks.length) % picks.length;
+    back.style.backgroundImage = bg(picks[at]);
+    back.classList.remove("out");
+    front.classList.add("out");
+    [front, back] = [back, front];
+    section.querySelector(".hero-copy").replaceWith(copy(picks[at]));
+    drawArt(picks[at]);
+    [...dots.children].forEach((d, j) => d.classList.toggle("on", j === at));
+    restart();
+  }
+  function restart() {
+    clearInterval(heroTimer);
+    heroTimer = setInterval(() => {
+      if (!document.body.contains(section)) { clearInterval(heroTimer); return; }
+      if (!document.hidden && !(dlg && dlg.open) && !document.querySelector(".reader")) show(at + 1);
+    }, 9000);
+  }
+  restart();
+  return section;
+}
+
+/** Up to six to feature: ones with a picture, the series you're reading first. */
+function heroPicks(cards) {
+  const seen = new Set();
+  const out = [];
+  for (const c of cards) {
+    if (!c || !c.anilist || seen.has(c.anilist) || !(c.banner || c.cover) || !c.description) continue;
+    seen.add(c.anilist);
+    out.push(c);
+  }
+  const mine = out.filter((c) => followedByAnilist.has(c.anilist));
+  return [...mine, ...out.filter((c) => !followedByAnilist.has(c.anilist))].slice(0, 6);
+}
+
 async function homePage(view, my) {
   const lib = el("div");
   const rows = el("div", {}, ...skel());
-  view.replaceChildren(page(head("Reading"), lib, rows));
+  const top = el("div", { class: "read-hero-slot" });
+  view.replaceChildren(top, page(head("Reading"), lib, rows));
   const [{ lib: series }, books] = await Promise.all([know(), invoke("read_books").catch(() => [])]);
   if (my !== seq) return;
   myBooks = books;
@@ -119,6 +207,8 @@ async function homePage(view, my) {
   try {
     const got = await invoke("read_rows");
     if (my !== seq) return;
+    const h = readHero(heroPicks(got.flatMap((r) => r.items)));
+    if (h) { top.replaceWith(h); view.querySelector(".read-page").classList.add("under-hero"); }
     rows.replaceChildren(...got.filter((r) => r.items.length).map((r) => row(r.id, r.title, r.items.map((c) => card(c)))));
     invoke("read_book_rows").then((bk) => {
       if (my !== seq) return;
@@ -132,6 +222,7 @@ async function homePage(view, my) {
 
 /** Manga, Manhwa, Manhua, Light novels: a grid with filters, more as you scroll. */
 async function explorePage(view, tab, my) {
+  clearInterval(heroTimer);
   const kind = tab.slice(2);
   const saved = (() => { try { return JSON.parse(getPref(`read-filter-${kind}`) || "{}"); } catch (e) { return {}; } })();
   const f = { genres: saved.genres || [], status: saved.status || null, sort: saved.sort || "popular" };
@@ -292,7 +383,13 @@ function shell(c) {
     el("div", { class: "read-head-row" }, poster, el("div", { class: "detail-head" }, el("h2", { text: c.title }), meta, options, actions)));
   const body = el("div", { class: "detail-body" }, c.description ? el("p", { class: "overview read-overview", text: c.description }) : null);
   d.replaceChildren(hero, body);
-  if (!d.open) d.showModal();
+  if (!d.open) {
+    // The entrance plays when it opens, not on every refresh while chapters come in.
+    d.classList.add("fresh");
+    clearTimeout(d.freshT);
+    d.freshT = setTimeout(() => d.classList.remove("fresh"), 1200);
+    d.showModal();
+  }
   return { actions, body, options };
 }
 
@@ -343,38 +440,55 @@ export async function openSeries({ key = null, card: c = null }) {
   if (!key && c && c.anilist && followedByAnilist.has(c.anilist)) key = followedByAnilist.get(c.anilist);
   if (key) return showFollowed(key, mine, c);
   const { actions, body, options } = shell(c);
-  const state = { lang: getPref("read-lang") || "en", copy: getPref("read-copy") || "best", onChange: () => { list.replaceChildren(); go.disabled = false; } };
+  // The chapters show by themselves: the copies are looked up as the panel opens,
+  // and again when the translation or copy choice changes.
+  const state = { lang: getPref("read-lang") || "en", copy: getPref("read-copy") || "best", onChange: () => getCopies(c, state, list, mine) };
   pickers(options, state);
-  const go = el("button", { class: "btn primary" }, icon(ICON.download), "Download");
-  actions.append(go, listButton(c));
+  // Follow: new chapters come in from now on, nothing older is downloaded unless picked below.
+  const followBtn = el("button", { class: "btn primary", disabled: true, title: "Finding the chapters first" }, icon(ICON.plus), "Follow");
+  followBtn.addEventListener("click", () => state.follow && state.follow([], followBtn));
+  state.followBtn = followBtn;
+  actions.append(followBtn, listButton(c));
   const list = el("section", { class: "read-sources" });
-  body.prepend(list);
-  go.addEventListener("click", () => getCopies(c, state, list, go, mine));
+  body.append(list);
+  getCopies(c, state, list, mine);
 }
 
+/** Copies found lately, so opening a series again doesn't ask every site again. */
+const copiesSeen = new Map();
+const COPIES_LIFE = 20 * 60 * 1000;
+
 /** Finds the copies in the chosen translation; Best goes straight to its chapters. */
-async function getCopies(c, state, list, btn, mine) {
-  btn.disabled = true;
-  list.replaceChildren(el("p", { class: "note read-wait", text: "Checking every source for the sharpest complete copy. About 20 seconds." }));
+async function getCopies(c, state, list, mine) {
+  // A newer ask (the translation changed) wins over one still out.
+  state.asks = (state.asks || 0) + 1;
+  const ask = state.asks;
+  list.replaceChildren(el("p", { class: "note read-wait", text: "Finding the chapters on every site, sharpest first. About 20 seconds." }));
+  const seenKey = `${c.anilist || c.title}|${state.lang}`;
+  const seen = copiesSeen.get(seenKey);
   let got;
-  try {
-    got = await invoke("read_sources", { meta: meta(c), lang: state.lang });
-  } catch (e) {
-    if (mine !== panelSeq) return;
-    list.replaceChildren(note(String(e)));
-    btn.disabled = false;
-    return;
+  if (seen && Date.now() - seen.at < COPIES_LIFE) got = seen.got;
+  else {
+    try {
+      got = await invoke("read_sources", { meta: meta(c), lang: state.lang });
+      copiesSeen.set(seenKey, { at: Date.now(), got });
+    } catch (e) {
+      if (mine !== panelSeq || ask !== state.asks) return;
+      list.replaceChildren(note(String(e)), el("button", { class: "btn soft", onclick: () => getCopies(c, state, list, mine) }, "Try again"));
+      return;
+    }
   }
-  if (mine !== panelSeq) return;
+  if (mine !== panelSeq || ask !== state.asks) return;
   const found = got.list;
   if (!found.length) {
+    copiesSeen.delete(seenKey);
     list.replaceChildren(note(state.lang === "en" ? "No source has this one yet." : "No copy in that language yet. Try English."));
-    btn.disabled = false;
     return;
   }
   // Best: the sharpest copy, and the one furthest ahead filling in what it lacks.
   const best = found[got.best ?? 0];
   const fill = got.fill != null ? found[got.fill] : null;
+  if (got.kept != null) state.kept = found[got.kept];
   if (state.copy === "best") return pickChapters(c, best, state, list, mine, found, fill);
   chooseCopy(c, state, list, mine, found);
 }
@@ -407,14 +521,15 @@ async function pickChapters(c, x, state, list, mine, found, fill) {
   let chs;
   try { chs = await invoke("read_copy_chapters", { mangaId: x.manga_id, fillId: fill ? fill.manga_id : null }); } catch (e) { if (mine === panelSeq) list.replaceChildren(note(String(e))); return; }
   if (mine !== panelSeq) return;
-  const picked = new Set(chs.map((ch) => ch.id));
+  // Nothing ticked to start with: tick what you want, or get them all.
+  const picked = new Set();
   let last = null;
   const count = el("strong");
   const goBtn = el("button", { class: "btn primary" }, icon(ICON.download), "");
   const newToo = el("input", { type: "checkbox", class: "switch", checked: true, "aria-label": "Also get new chapters" });
   const from = el("input", { class: "read-from", type: "number", min: "0", step: "1", placeholder: "1", "aria-label": "From chapter" });
   const rows = chs.map((ch, i) => {
-    const box = el("input", { type: "checkbox", checked: true, "aria-label": chLabel(ch) });
+    const box = el("input", { type: "checkbox", "aria-label": chLabel(ch) });
     box.addEventListener("click", (e) => {
       // Shift-click ticks or unticks the whole stretch since the last one.
       if (e.shiftKey && last != null) {
@@ -433,38 +548,46 @@ async function pickChapters(c, x, state, list, mine, found, fill) {
   function set(i, on) { rows[i].box.checked = on; if (on) picked.add(chs[i].id); else picked.delete(chs[i].id); }
   function paint() {
     const n = picked.size;
-    count.textContent = `${n} of ${chs.length} chapters`;
-    goBtn.lastChild.textContent = n === chs.length ? "Download all" : n ? `Download ${n}` : "Just follow";
+    count.textContent = n ? `${n} of ${chs.length} picked` : `${chs.length} chapters`;
+    goBtn.lastChild.textContent = n === 0 || n === chs.length ? "Download all" : `Download ${n}`;
   }
   from.addEventListener("input", () => {
     const f = from.value === "" ? null : Number(from.value);
     chs.forEach((ch, i) => set(i, f == null || (ch.number ?? Infinity) >= f));
     paint();
   });
-  goBtn.addEventListener("click", async () => {
+  const follow = async (ids) => {
     goBtn.disabled = true;
-    const all = picked.size === chs.length;
-    const sel = { ids: all ? null : [...picked], from: null, new_too: newToo.checked };
+    justFollow.disabled = true;
+    if (state.followBtn) state.followBtn.disabled = true;
+    const sel = { ids, from: null, new_too: newToo.checked };
     try {
       toast(await invoke("read_follow", { meta: meta(c), pick: x, fill, sel, lang: state.lang }));
       await know();
       if (mine === panelSeq) openSeries({ key: `m${x.manga_id}`, card: c });
       window.dispatchEvent(new Event("chillarr:refresh"));
-    } catch (e) { toast(String(e), true); goBtn.disabled = false; }
-  });
+    } catch (e) { toast(String(e), true); goBtn.disabled = false; justFollow.disabled = false; if (state.followBtn) state.followBtn.disabled = false; }
+  };
+  state.follow = follow;
+  if (state.followBtn) { state.followBtn.disabled = false; state.followBtn.title = ""; }
+  // None ticked or all ticked: everything.
+  goBtn.addEventListener("click", () => follow(picked.size === 0 || picked.size === chs.length ? null : [...picked]));
+  const justFollow = el("button", { class: "btn soft", title: "Follow it without downloading anything yet", onclick: () => follow([]) }, "Just follow");
   const others = found.length > 1 ? el("button", { class: "linkish", onclick: () => chooseCopy(c, state, list, mine, found) }, "Other copies") : null;
   const filled = fill ? chs.filter((ch) => ch.fill).length : 0;
-  list.replaceChildren(
+  // The notes that don't apply are null: left out, not drawn as "null".
+  list.replaceChildren(...[
     el("div", { class: "read-sources-head" },
       el("h3", {}, `From ${srcName(x.source)}`, x.width ? el("small", { class: "read-px", text: ` ${x.width} px` }) : null), others),
     filled ? note(`${srcName(x.source)} is sharpest but stops early, so ${filled} chapter${filled === 1 ? " comes" : "s come"} from ${srcName(fill.source)}, which is further ahead.`) : null,
+    state.kept === x && chs.some((ch) => ch.downloaded) ? note(`The ${chs.filter((ch) => ch.downloaded).length} chapters you kept are still here, so this copy is picked. Follow to read them again.`) : null,
     el("div", { class: "read-pick-bar" },
       el("label", { class: "read-from-wrap" }, "From chapter ", from),
       el("button", { class: "linkish", onclick: () => { chs.forEach((_, i) => set(i, true)); paint(); } }, "All"),
       el("button", { class: "linkish", onclick: () => { chs.forEach((_, i) => set(i, false)); paint(); } }, "None"),
       count),
     el("div", { class: "read-pick-list" }, rows.slice().reverse()),
-    el("div", { class: "read-pick-go" }, el("label", { class: "read-newtoo" }, newToo, "Also get new chapters"), goBtn));
+    el("div", { class: "read-pick-go" }, el("label", { class: "read-newtoo" }, newToo, "Also get new chapters"), justFollow, goBtn)].filter(Boolean));
   paint();
 }
 
@@ -494,7 +617,17 @@ async function showFollowed(key, mine, c0) {
     e.currentTarget.disabled = true;
     try { toast(await invoke("read_get_chapters", { key, ids: missing.map((r) => r.id) })); showFollowed(key, ++panelSeq, c0); } catch (err) { toast(String(err), true); }
   } }, icon(ICON.download), `Get the other ${missing.length}`));
-  actions.append(el("button", { class: "btn soft", onclick: () => unfollow(f) }, "Stop following"));
+  const live = el("button", { class: "btn soft read-live" + (f.live ? " on" : ""), "aria-pressed": f.live ? "true" : "false",
+    title: "Checks the site for new chapters every few minutes instead of every few hours" }, icon(f.live ? ICON.check : "M12 7v5l3 2M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z"), f.live ? "Keeping up to date" : "Keep up to date");
+  live.addEventListener("click", async () => {
+    live.disabled = true;
+    try {
+      const on = await invoke("read_keep_up", { key, on: !f.live });
+      toast(on ? "Checking for new chapters every few minutes. You get a notification when one is ready." : "Back to checking every few hours.");
+      showFollowed(key, ++panelSeq, c0);
+    } catch (e) { toast(String(e), true); live.disabled = false; }
+  });
+  actions.append(live, el("button", { class: "btn soft", onclick: () => unfollow(f) }, "Stop following"));
   const where = el("p", { class: "note read-from-source" },
     `From ${srcName(f.source)}`, f.width ? ` · ${f.width} px wide` : "",
     f.fill && f.fill.length ? ` · the rest from ${f.fill.map((x) => srcName(x.source)).join(", ")}` : "",
@@ -502,10 +635,41 @@ async function showFollowed(key, mine, c0) {
     f.new_too === false ? " · new chapters off" : "",
     " · ", el("button", { class: "linkish", onclick: () => changeCopy(c, f, body) }, "Change copy"));
   const list = el("ol", { class: "read-chapters" }, ...d.chapters.slice().reverse().map((r) => chapterRow(key, r, c0)));
-  body.append(where, list);
+  body.append(...[where, markBar(key, d.chapters, c0), list].filter(Boolean));
   if (scroll) dlg.scrollTop = scroll;
   // Chapters still coming: the list keeps itself current.
   if (d.downloading) poll = setTimeout(() => { if (mine === panelSeq && dlg && dlg.open) showFollowed(key, ++panelSeq, c0); }, 5000);
+}
+
+/** Marks a stretch of chapters read (read somewhere else, or skipped), or the whole series. */
+function markBar(key, chs, c0) {
+  if (!chs.length) return null;
+  const nums = chs.map((r) => r.number).filter((n) => n != null);
+  const lo = nums.length ? Math.min(...nums) : null;
+  const hi = nums.length ? Math.max(...nums) : null;
+  const box = (label, ph) => el("input", { class: "read-from", type: "number", step: "any", placeholder: ph != null ? String(ph) : "", "aria-label": label });
+  const from = box("From chapter", lo);
+  const to = box("To chapter", hi);
+  const all = chs.every((r) => r.read);
+  const send = async (ids, read, btn) => {
+    if (!ids.length) { toast("No chapters in that stretch."); return; }
+    btn.disabled = true;
+    try {
+      await invoke("read_mark", { key, chapters: ids, read });
+      toast(read ? `Marked ${ids.length} chapter${ids.length === 1 ? "" : "s"} read.` : "Marked unread.");
+      refreshIfOpen(key, c0);
+    } catch (e) { toast(String(e), true); btn.disabled = false; }
+  };
+  const go = el("button", { class: "btn soft", onclick: (e) => {
+    const a = from.value === "" ? -Infinity : Number(from.value);
+    const b = to.value === "" ? Infinity : Number(to.value);
+    const [x, y] = a <= b ? [a, b] : [b, a];
+    send(chs.filter((r) => r.number != null && r.number >= x && r.number <= y && !r.read).map((r) => r.id), true, e.currentTarget);
+  } }, "Mark read");
+  const whole = el("button", { class: "btn soft", onclick: (e) => send(all ? chs.map((r) => r.id) : chs.filter((r) => !r.read).map((r) => r.id), !all, e.currentTarget) },
+    all ? "Mark all unread" : "Mark all read");
+  return el("div", { class: "read-markbar" },
+    el("span", { text: "Chapters" }), from, el("span", { text: "to" }), to, go, el("span", { class: "read-markbar-gap" }), whole);
 }
 
 function chapterRow(key, r, c0) {
@@ -524,7 +688,7 @@ function chapterRow(key, r, c0) {
   return el("li", { class: "read-ch" + (r.read ? " is-read" : "") + (r.downloaded ? "" : " not-here") },
     el("button", { class: "read-ch-open", disabled: !r.downloaded, onclick: () => read(key, r.id, c0) },
       el("strong", { text: chLabel(r) }), name ? el("span", { class: "read-ch-name", text: name }) : null,
-      r.scanlator ? el("small", { text: r.scanlator }) : null),
+      r.scanlator && !/^unknown$/i.test(r.scanlator) ? el("small", { text: r.scanlator }) : null),
     el("span", { class: "read-ch-state", text: state }), get || mark);
 }
 
@@ -545,11 +709,11 @@ function changeCopy(c, f, body) {
   const mine = panelSeq;
   const list = el("section", { class: "read-sources" });
   const options = el("div", { class: "read-options" });
-  const state = { lang: f.lang || getPref("read-lang") || "en", copy: "choose", onChange: () => getCopies(c, state, list, el("button"), mine) };
+  const state = { lang: f.lang || getPref("read-lang") || "en", copy: "choose", onChange: () => getCopies(c, state, list, mine) };
   pickers(options, state);
   body.prepend(options, list);
   list.scrollIntoView({ behavior: "smooth", block: "start" });
-  getCopies(c, state, list, el("button"), mine);
+  getCopies(c, state, list, mine);
 }
 
 async function unfollow(f) {

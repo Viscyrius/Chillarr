@@ -268,7 +268,7 @@ async fn test_page() -> Result<(), String> {
     let dir = tool_dir();
     let out = std::env::temp_dir().join(format!("chillarr-sharpen-test-{}.png", std::process::id()));
     let _ = std::fs::remove_file(&out);
-    let ran = draw(&dir.join("input.jpg"), &out).await;
+    let ran = draw(&dir.join("input.jpg"), &out, false).await;
     let made = std::fs::metadata(&out).map(|m| m.len()).unwrap_or(0);
     let _ = std::fs::remove_file(&out);
     match ran {
@@ -277,10 +277,15 @@ async fn test_page() -> Result<(), String> {
     }
 }
 
+/// Why a chapter stopped part way: something went full screen. Not a failure.
+const PAUSED: &str = "stopped for something full screen";
+
 /// Real-ESRGAN on one file or a whole folder (`input` and `output` both folders).
-async fn draw(input: &Path, output: &Path) -> Result<(), String> {
+/// With `watch`, it's stopped the moment something goes full screen: a long chapter
+/// keeps the card busy for most of a minute, too long to finish over a game.
+async fn draw(input: &Path, output: &Path, watch: bool) -> Result<(), String> {
     let dir = tool_dir();
-    let run = tokio::process::Command::new(dir.join(EXE))
+    let child = tokio::process::Command::new(dir.join(EXE))
         .current_dir(&dir)
         .arg("-i")
         .arg(input)
@@ -292,12 +297,29 @@ async fn draw(input: &Path, output: &Path) -> Result<(), String> {
         .stderr(Stdio::null())
         .creation_flags(CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS)
         .kill_on_drop(true)
-        .status();
-    match tokio::time::timeout(Duration::from_secs(15 * 60), run).await {
-        Ok(Ok(s)) if s.success() => Ok(()),
-        Ok(Ok(s)) => Err(format!("the sharpener stopped ({s})")),
-        Ok(Err(e)) => Err(format!("couldn't start the sharpener: {e}")),
-        Err(_) => Err("the sharpener took too long".into()),
+        .spawn();
+    let mut child = child.map_err(|e| format!("couldn't start the sharpener: {e}"))?;
+    let started = std::time::Instant::now();
+    loop {
+        tokio::select! {
+            s = child.wait() => {
+                return match s {
+                    Ok(s) if s.success() => Ok(()),
+                    Ok(s) => Err(format!("the sharpener stopped ({s})")),
+                    Err(e) => Err(format!("the sharpener stopped ({e})")),
+                };
+            }
+            _ = tokio::time::sleep(Duration::from_secs(1)) => {
+                if watch && full_screen_busy() {
+                    let _ = child.kill().await;
+                    return Err(PAUSED.into());
+                }
+                if started.elapsed() > Duration::from_secs(15 * 60) {
+                    let _ = child.kill().await;
+                    return Err("the sharpener took too long".into());
+                }
+            }
+        }
     }
 }
 
@@ -394,6 +416,11 @@ async fn round(app: &AppHandle) {
         match chapter(&next, &target).await {
             Ok(Done::Made(pages)) => crate::log::detail(format!("Sharpened {} ({pages} pages, {:.1} s)", next.display(), started.elapsed().as_secs_f64())),
             Ok(Done::AsIs) => with(app, |s| s.as_is.push(key)),
+            // Something went full screen part way: it's done first once that's gone.
+            Err(e) if e == PAUSED => live(|l| {
+                l.paused = true;
+                l.wanted.push_front(next.clone());
+            }),
             Err(e) => {
                 crate::log::detail(format!("Couldn't sharpen {}: {e}", next.display()));
                 with(app, |s| s.failed.push(key));
@@ -451,7 +478,7 @@ async fn chapter_in(file: &Path, target: &Path, work: &Path, inp: &Path, drawn: 
     if drawing == 0 {
         return Ok(Done::AsIs);
     }
-    draw(inp, drawn).await?;
+    draw(inp, drawn, true).await?;
     pack_jpeg(work, &pages).await?;
     let (pages, work, target) = (pages, work.to_path_buf(), target.to_path_buf());
     tokio::task::spawn_blocking(move || store(&pages, &work, &target)).await.map_err(|e| e.to_string())?

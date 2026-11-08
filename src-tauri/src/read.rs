@@ -195,6 +195,15 @@ pub struct Followed {
     /// Other copies filling in what this one lacks (a site further ahead).
     #[serde(default)]
     pub fill: Vec<Fill>,
+    /// Keep up to date: its sites are asked for new chapters every few minutes (keepup.rs).
+    #[serde(default)]
+    pub live: bool,
+    /// The newest chapter a "ready to read" notification has covered.
+    #[serde(default)]
+    pub told: Option<f64>,
+    /// The chapter another site was ahead to when that was last said.
+    #[serde(default)]
+    pub ahead_told: Option<f64>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -256,6 +265,29 @@ pub async fn chapters_of(f: &Followed) -> Result<Vec<(crate::suwayomi::Chapter, 
 
 async fn chapter_list(f: &Followed) -> Result<Vec<crate::suwayomi::Chapter>, String> {
     Ok(chapters_of(f).await?.into_iter().map(|x| x.0).collect())
+}
+
+pub async fn chapter_list_of(f: &Followed) -> Result<Vec<crate::suwayomi::Chapter>, String> {
+    chapter_list(f).await
+}
+
+/// Changes one followed series in place (a no-op when it's gone).
+pub fn update_followed(app: &AppHandle, key: &str, change: impl FnOnce(&mut Followed)) {
+    let mut all = followed(app);
+    if let Some(f) = all.iter_mut().find(|f| f.key == key) {
+        change(f);
+        let _ = save_followed(app, &all);
+    }
+}
+
+/// Keep up to date on or off, for everyone (what's followed is shared).
+pub fn set_live(app: &AppHandle, key: &str, on: bool) -> Result<bool, String> {
+    find(app, key)?;
+    update_followed(app, key, |f| f.live = on);
+    if on {
+        crate::keepup::wake(key);
+    }
+    Ok(on)
 }
 
 fn yes() -> bool {
@@ -738,10 +770,19 @@ pub async fn detail(app: &AppHandle, key: &str) -> Result<Detail, String> {
     Ok(Detail { downloading: rows.iter().filter(|r| r.queued.is_some()).count(), followed: Some(f), chapters: rows, spot, mode })
 }
 
-/// Marks chapters read or unread for the watching profile.
-pub fn mark(app: &AppHandle, key: &str, chapters: &[i64], read: bool) -> Result<(), String> {
+/// Marks chapters read or unread for the watching profile. Marked read past where
+/// you are, your place moves on to them: Resume and the clean-up go by it.
+pub async fn mark(app: &AppHandle, key: &str, chapters: &[i64], read: bool) -> Result<(), String> {
     let uid = uid(app)?;
     known(app, key)?;
+    let order: Vec<i64> = if read && key.starts_with('m') {
+        match find(app, key) {
+            Ok(f) => chapter_list(&f).await.map(|chs| chs.iter().map(|c| c.id).collect()).unwrap_or_default(),
+            Err(_) => vec![],
+        }
+    } else {
+        vec![]
+    };
     let mut all = spots(app, &uid);
     let s = all.entry(key.to_string()).or_default();
     for c in chapters {
@@ -751,7 +792,22 @@ pub fn mark(app: &AppHandle, key: &str, chapters: &[i64], read: bool) -> Result<
             s.read.remove(c);
         }
     }
+    if read {
+        move_on(s, &order);
+    }
     save_spots(app, &uid, &all)
+}
+
+/// Moves a place to the furthest chapter marked read, when that's past it.
+fn move_on(s: &mut Spot, order: &[i64]) {
+    let pos = |id: i64| order.iter().position(|&c| c == id);
+    let Some(far) = s.read.keys().filter_map(|&id| pos(id)).max() else { return };
+    if s.chapter == 0 || pos(s.chapter).is_none_or(|at| at < far) {
+        s.chapter = order[far];
+        s.page = 0;
+        s.pages = 0;
+        s.at = now();
+    }
 }
 
 // ---------- following ----------
@@ -791,6 +847,8 @@ pub struct Copies {
     /// Best's main copy and its fill, as indexes into `list`.
     pub best: Option<usize>,
     pub fill: Option<usize>,
+    /// A copy with chapters already on disk (kept when it was unfollowed): picked first.
+    pub kept: Option<usize>,
 }
 
 pub async fn sources(app: &AppHandle, meta: &Meta, lang: &str) -> Result<Copies, String> {
@@ -801,7 +859,16 @@ pub async fn sources(app: &AppHandle, meta: &Meta, lang: &str) -> Result<Copies,
     crate::suwayomi::ready(app).await?;
     let list = crate::suwayomi::candidates(&meta.all_names(), lang).await?;
     let pair = crate::suwayomi::best_pair(&list);
-    Ok(Copies { best: pair.map(|p| p.0), fill: pair.and_then(|p| p.1), list })
+    let has_files = |c: &crate::suwayomi::Candidate| {
+        series_dir(app, &c.source, &c.title).and_then(|d| std::fs::read_dir(d).ok()).is_some_and(|mut it| it.next().is_some())
+    };
+    let kept = list.iter().position(has_files);
+    // Following again: the chapters you kept are read from where they are.
+    let (best, fill) = match kept {
+        Some(k) => (Some(k), None),
+        None => (pair.map(|p| p.0), pair.and_then(|p| p.1)),
+    };
+    Ok(Copies { best, fill, kept, list })
 }
 
 /// A language code as sources name them: "en", "pt-BR", "zh-Hans".
@@ -936,6 +1003,7 @@ pub async fn follow(app: &AppHandle, meta: Meta, pick: crate::suwayomi::Candidat
             }
         }
     }
+    let was_live = all.iter().any(|f| f.live && (f.key == key || old.iter().any(|o| o.key == f.key)));
     all.retain(|f| f.key != key && !old.iter().any(|o| o.key == f.key));
     all.push(Followed {
         key,
@@ -959,6 +1027,10 @@ pub async fn follow(app: &AppHandle, meta: Meta, pick: crate::suwayomi::Candidat
         lang,
         new_too: sel.new_too,
         fill: fill.clone(),
+        // A changed copy stays kept up to date; what's been told starts over quietly.
+        live: was_live,
+        told: None,
+        ahead_told: None,
     });
     save_followed(app, &all)?;
     let msg = match queued {
@@ -992,13 +1064,21 @@ pub async fn unfollow(app: &AppHandle, key: &str, delete: bool) -> Result<String
 
 /// Chapters to delete: read by someone at least `days` ago, and behind every
 /// profile that is reading the series (a profile further back keeps them).
-pub fn cleanup_pick(chs: &[crate::suwayomi::Chapter], spots: &[&Spot], days: u32, now: i64) -> Vec<i64> {
+pub fn cleanup_pick(chs: &[crate::suwayomi::Chapter], spots: &[&Spot], days: u32, now: i64, whole: bool) -> Vec<i64> {
     if days == 0 || spots.is_empty() {
         return vec![];
     }
     let pos = |id: i64| chs.iter().position(|c| c.id == id);
     // Each reader's furthest point: the chapter they're on, unless it's read.
     let behind_all = spots.iter().map(|s| pos(s.chapter).map(|p| if s.read.contains_key(&s.chapter) { p + 1 } else { p }).unwrap_or(0)).min().unwrap_or(0);
+    if whole {
+        // The whole series, once everyone has read all of it, `days` after the last read.
+        let last_read = spots.iter().flat_map(|s| chs.iter().filter_map(|c| s.read.get(&c.id))).max().copied().unwrap_or(now);
+        if behind_all < chs.len() || now - last_read < days as i64 * 86_400 {
+            return vec![];
+        }
+        return chs.iter().filter(|c| c.downloaded).map(|c| c.id).collect();
+    }
     chs.iter()
         .take(behind_all)
         .filter(|c| c.downloaded)
@@ -1051,24 +1131,33 @@ pub async fn fetch_new(app: &AppHandle) {
     let queued: std::collections::HashSet<i64> = crate::suwayomi::queue().await.into_iter().map(|q| q.1).collect();
     for f in list.into_iter().filter(|f| f.new_too) {
         let Ok(chs) = chapter_list(&f).await else { continue };
-        // Only chapters newer than everything here: older ones left out were left out on purpose.
-        let newest_here = chs.iter().filter(|c| c.downloaded).filter_map(|c| c.number).fold(f64::MIN, f64::max);
         let read_by_someone = |id: i64| profiles.iter().filter_map(|p| p.get(&f.key)).any(|s| s.read.contains_key(&id));
-        let want: Vec<i64> = chs
-            .iter()
-            .filter(|c| !c.downloaded && !queued.contains(&c.id) && !read_by_someone(c.id))
-            .filter(|c| f.from.is_none_or(|from| c.number.unwrap_or(f64::MAX) >= from))
-            .filter(|c| newest_here == f64::MIN || c.number.is_some_and(|n| n > newest_here))
-            .map(|c| c.id)
-            .collect();
+        let want = new_wanted(&chs, &queued, &read_by_someone, f.from);
         if !want.is_empty() && crate::suwayomi::enqueue(&want).await.is_ok() {
             crate::log::log(app, crate::model::Level::Ok, format!("Getting {} new chapter(s) of {}.", want.len(), f.title));
         }
     }
 }
 
+/// The chapters to fetch as new: only ones newer than everything here or already
+/// read (older ones left out were left out on purpose, and read ones the clean-up
+/// deleted must not come back).
+pub fn new_wanted(chs: &[crate::suwayomi::Chapter], queued: &std::collections::HashSet<i64>, read_by_someone: &dyn Fn(i64) -> bool, from: Option<f64>) -> Vec<i64> {
+    let newest_here = chs.iter().filter(|c| c.downloaded || read_by_someone(c.id)).filter_map(|c| c.number).fold(f64::MIN, f64::max);
+    chs.iter()
+        .filter(|c| !c.downloaded && !queued.contains(&c.id) && !read_by_someone(c.id))
+        .filter(|c| from.is_none_or(|from| c.number.unwrap_or(f64::MAX) >= from))
+        .filter(|c| newest_here == f64::MIN || c.number.is_some_and(|n| n > newest_here))
+        .map(|c| c.id)
+        .collect()
+}
+
 pub async fn clean_up(app: &AppHandle) {
-    let days = app.state::<crate::SettingsState>().current.lock().unwrap().read_cleanup_days;
+    let (days, whole) = {
+        let st = app.state::<crate::SettingsState>();
+        let s = st.current.lock().unwrap();
+        (s.read_cleanup_days, s.read_cleanup_whole)
+    };
     if days == 0 {
         return;
     }
@@ -1076,7 +1165,7 @@ pub async fn clean_up(app: &AppHandle) {
     for f in followed(app) {
         let readers: Vec<&Spot> = profiles.iter().filter_map(|p| p.get(&f.key)).collect();
         let Ok(chs) = chapter_list(&f).await else { continue };
-        let doomed = cleanup_pick(&chs, &readers, days, now());
+        let doomed = cleanup_pick(&chs, &readers, days, now(), whole);
         if !doomed.is_empty() && crate::suwayomi::delete_chapters(&doomed).await.is_ok() {
             crate::log::log(app, crate::model::Level::Ok, format!("Deleted {} read chapter(s) of {}.", doomed.len(), f.title));
         }
@@ -1390,10 +1479,51 @@ mod tests {
             ahead.read.insert(i, now - 5 * day);
         }
         let behind = Spot { chapter: 2, ..Default::default() };
-        assert_eq!(cleanup_pick(&chs, &[&ahead], 3, now), vec![1, 2, 3, 4]);
-        assert_eq!(cleanup_pick(&chs, &[&ahead, &behind], 3, now), vec![1], "the other profile is on chapter 2");
-        assert!(cleanup_pick(&chs, &[&ahead], 0, now).is_empty(), "off");
-        assert!(cleanup_pick(&chs, &[&ahead], 7, now).is_empty(), "read 5 days ago, keep for 7");
+        assert_eq!(cleanup_pick(&chs, &[&ahead], 3, now, false), vec![1, 2, 3, 4]);
+        assert_eq!(cleanup_pick(&chs, &[&ahead, &behind], 3, now, false), vec![1], "the other profile is on chapter 2");
+        assert!(cleanup_pick(&chs, &[&ahead], 0, now, false).is_empty(), "off");
+        assert!(cleanup_pick(&chs, &[&ahead], 7, now, false).is_empty(), "read 5 days ago, keep for 7");
+        let whole = |s: &[&Spot]| cleanup_pick(&chs, s, 3, now, true);
+        // `ahead` is on chapter 5 and hasn't read it: the series isn't finished yet.
+        assert!(whole(&[&ahead]).is_empty(), "not finished: everything stays");
+        let mut done = ahead.clone();
+        done.read.insert(5, now - 4 * day);
+        assert_eq!(whole(&[&done]), vec![1, 2, 3, 4, 5], "finished 4 days ago, 3 to keep: all of it goes");
+        let mut fresh = done.clone();
+        fresh.read.insert(5, now - day);
+        assert!(whole(&[&fresh]).is_empty(), "finished yesterday: kept for 3 days");
+        assert!(whole(&[&done, &behind]).is_empty(), "someone else is still reading it");
+    }
+
+    #[test]
+    fn deleted_read_chapters_dont_come_back() {
+        let mut chs: Vec<Chapter> = (1..=6).map(|i| ch(i, i as f64, false)).collect();
+        chs[5].downloaded = true; // only chapter 6 is here
+        let none = std::collections::HashSet::new();
+        // Chapters 3 to 5 were picked, read and cleaned up; 1 and 2 were never wanted.
+        let read = |id: i64| (3..=5).contains(&id);
+        assert!(new_wanted(&chs, &none, &read, None).is_empty(), "nothing newer than what was read or is here");
+        chs[5].downloaded = false;
+        chs.push(ch(7, 7.0, false));
+        assert_eq!(new_wanted(&chs, &none, &read, None), vec![6, 7], "after the last read one: new");
+        assert_eq!(new_wanted(&chs, &none, &|_| false, None), (1..=7).collect::<Vec<i64>>(), "nothing here or read: everything");
+    }
+
+    #[test]
+    fn marking_read_moves_the_place_on() {
+        let order = vec![10, 11, 12, 13];
+        let mut s = Spot { chapter: 11, page: 4, pages: 20, ..Default::default() };
+        s.read.insert(12, 0);
+        move_on(&mut s, &order);
+        assert_eq!((s.chapter, s.page), (12, 0));
+        let mut back = Spot { chapter: 13, page: 3, pages: 20, ..Default::default() };
+        back.read.insert(10, 0);
+        move_on(&mut back, &order);
+        assert_eq!((back.chapter, back.page), (13, 3), "marking behind you keeps your place");
+        let mut new = Spot::default();
+        new.read.insert(11, 0);
+        move_on(&mut new, &order);
+        assert_eq!(new.chapter, 11, "never opened: placed at the furthest marked");
     }
 
     #[test]

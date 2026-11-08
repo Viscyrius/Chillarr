@@ -308,7 +308,7 @@ fn need(cmd: &str) -> Option<Need> {
         // series downloads it, like Download does for a film.
         | "read_rows" | "read_search" | "read_library" | "read_detail" | "read_sources" | "read_follow" | "read_open" | "read_progress" | "read_mode" | "read_mark"
         | "read_book_rows" | "read_book_search" | "read_book_copies" | "read_book_get" | "read_books" | "read_book_open"
-        | "read_languages" | "read_copy_chapters" | "read_get_chapters" | "read_list" | "read_list_set" | "read_explore" | "read_genres" | "read_downloads" => Need::Viewer,
+        | "read_languages" | "read_copy_chapters" | "read_get_chapters" | "read_keep_up" | "read_list" | "read_list_set" | "read_explore" | "read_genres" | "read_downloads" => Need::Viewer,
         "read_unfollow" | "read_book_remove" | "read_stop_chapters" => Need::Delete,
         "media_delete" | "media_delete_episodes" | "media_stop_download" | "media_stop_waiting" => Need::Delete,
         "storage_overview" | "storage_set_cleanup" | "library_scan" | "library_stats" | "seeding" | "set_seeding" | "get_settings" | "shelf_status" | "meili_status" | "subs_status" => Need::Admin,
@@ -384,6 +384,7 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
         "read_languages" => res(crate::read::languages(app).await),
         "read_copy_chapters" => res(crate::read::copy_chapters(app, arg(a, "mangaId")?, arg(a, "fillId")?).await),
         "read_get_chapters" => res(crate::read::get_chapters(app, &arg::<String>(a, "key")?, &arg::<Vec<i64>>(a, "ids")?).await),
+        "read_keep_up" => res(crate::read::set_live(app, &arg::<String>(a, "key")?, arg(a, "on")?)),
         "read_stop_chapters" => res(crate::read::stop_chapters(app, &arg::<String>(a, "key")?).await),
         "read_list" => res(crate::read::my_list(app)),
         "read_list_set" => res(crate::read::toggle_list(app, &arg::<Value>(a, "card")?, arg(a, "on")?)),
@@ -394,7 +395,7 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
         "read_open" => res(crate::read::open(app, &arg::<String>(a, "key")?, arg(a, "chapter")?).await),
         "read_progress" => res(crate::read::set_spot(app, &arg::<String>(a, "key")?, arg(a, "chapter")?, arg(a, "page")?, arg(a, "pages")?)),
         "read_mode" => res(crate::read::set_mode(app, &arg::<String>(a, "key")?, &arg::<String>(a, "mode")?)),
-        "read_mark" => res(crate::read::mark(app, &arg::<String>(a, "key")?, &arg::<Vec<i64>>(a, "chapters")?, arg(a, "read")?)),
+        "read_mark" => res(crate::read::mark(app, &arg::<String>(a, "key")?, &arg::<Vec<i64>>(a, "chapters")?, arg(a, "read")?).await),
         "media_episodes" => ok(media::episodes(app, &arg::<String>(a, "seriesId")?).await),
         "media_search" => ok(media::search(app, &arg::<String>(a, "term")?).await),
         "media_search_live" => ok(crate::search::live(app.clone(), arg(a, "term")?, arg(a, "seq")?).await),
