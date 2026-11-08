@@ -314,7 +314,7 @@ async function bookCopies(c, list, btn, my) {
       const go = el("button", { class: i === 0 ? "btn primary" : "btn soft" }, icon(ICON.download), "Download");
       go.addEventListener("click", async () => {
         go.disabled = true;
-        try { toast(await invoke("read_book_get", { meta: bookMeta(c), pick: x })); openBookPanel(c); window.dispatchEvent(new Event("chillarr:refresh")); }
+        try { toast(await invoke("read_book_get", { meta: bookMeta(c), id: x.id })); openBookPanel(c); window.dispatchEvent(new Event("chillarr:refresh")); }
         catch (e) { toast(String(e), true); go.disabled = false; }
       });
       return el("div", { class: "read-source" + (i === 0 ? " best" : "") },

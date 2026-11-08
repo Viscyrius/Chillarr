@@ -698,8 +698,8 @@ async fn read_book_copies(app: AppHandle, meta: books::BookMeta) -> Result<Vec<b
 }
 
 #[tauri::command]
-async fn read_book_get(app: AppHandle, meta: books::BookMeta, pick: books::Release) -> Result<String, String> {
-    books::get(&app, meta, pick).await
+async fn read_book_get(app: AppHandle, meta: books::BookMeta, id: String) -> Result<String, String> {
+    books::get(&app, meta, &id).await
 }
 
 #[tauri::command]
@@ -864,6 +864,14 @@ async fn set_settings(app: AppHandle, mut s: settings::Settings) -> Result<Vec<A
         s.defender_allowed = st.current.lock().unwrap().defender_allowed.clone();
         // Theme has its own command; the window's copy may be older.
         s.theme = st.current.lock().unwrap().theme.clone();
+        // So do the reading folder and its clean-up (read.rs): a copy of the
+        // page from before a change must not put the old values back.
+        {
+            let cur = st.current.lock().unwrap();
+            s.reading_dir = cur.reading_dir.clone();
+            s.read_cleanup_days = cur.read_cleanup_days;
+            s.reading_ready = cur.reading_ready;
+        }
         settings::save(&st.path, &s)?;
         let remux_changed = st.current.lock().unwrap().skip_remux != s.skip_remux;
         let dubs_changed = st.current.lock().unwrap().skip_dubs != s.skip_dubs || st.current.lock().unwrap().audio_pref != s.audio_pref || st.current.lock().unwrap().audio_lang != s.audio_lang;

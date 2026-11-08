@@ -145,6 +145,20 @@ pub async fn clear_orphans(app: &AppHandle) {
             }
         }
     }
+    // Only a download whose files exist nowhere else: an imported one is a
+    // hardlink (2 links), so after a Radarr reset or a title removed while
+    // still sharing, its torrent stays.
+    let mut lonely = Vec::new();
+    for h in doomed {
+        let Some(t) = all.iter().find(|t| t["hash"].as_str() == Some(h.as_str())) else { continue };
+        let save = t["save_path"].as_str().unwrap_or_default().to_string();
+        let Ok(files) = q.files(&h).await else { continue };
+        let paths: Vec<PathBuf> = files.iter().filter_map(|f| f["name"].as_str()).map(|n| Path::new(&save).join(n.replace('/', "\\"))).collect();
+        if !paths.is_empty() && paths.iter().all(|p| link_count(p) == Some(1)) {
+            lonely.push(h);
+        }
+    }
+    let doomed = lonely;
     if doomed.is_empty() {
         return;
     }
@@ -154,6 +168,18 @@ pub async fn clear_orphans(app: &AppHandle) {
     }
     let gone: Vec<&String> = doomed.iter().zip(&names).filter(|(h, _)| safe.contains(h)).map(|(_, n)| n).collect();
     log(app, Level::Ok, format!("Removed {} finished download(s) nothing wanted any more: {}.", gone.len(), gone.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")));
+}
+
+/// How many names a file has (2 or more: hardlinked into the library). None
+/// when it can't be read, which never counts as "only here".
+pub fn link_count(p: &Path) -> Option<u32> {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::Storage::FileSystem::{GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION};
+    let f = std::fs::File::open(p).ok()?;
+    let mut info = BY_HANDLE_FILE_INFORMATION::default();
+    unsafe { GetFileInformationByHandle(HANDLE(f.as_raw_handle()), &mut info) }.ok()?;
+    Some(info.nNumberOfLinks)
 }
 
 #[cfg(test)]
@@ -188,5 +214,16 @@ mod tests {
         let wn: HashSet<String> = ["ff".to_string()].into();
         let got: Vec<(String, AppId)> = orphan_candidates(&all, &wn, now).into_iter().map(|(h, o, _)| (h, o)).collect();
         assert_eq!(got, vec![("aa".to_string(), AppId::Radarr), ("ee".to_string(), AppId::Sonarr)]);
+    }
+
+    #[test]
+    fn hardlinks_are_counted() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.mkv");
+        std::fs::write(&a, b"x").unwrap();
+        assert_eq!(link_count(&a), Some(1));
+        std::fs::hard_link(&a, dir.path().join("b.mkv")).unwrap();
+        assert_eq!(link_count(&a), Some(2), "imported into the library");
+        assert_eq!(link_count(&dir.path().join("none")), None);
     }
 }

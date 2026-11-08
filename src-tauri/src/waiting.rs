@@ -157,7 +157,9 @@ pub async fn stop_item(app: &AppHandle, owner: AppId, id: i64, forget: bool) -> 
         a.delete(&format!("{kind}/{id}?deleteFiles=false&addImportExclusion=false")).await.map_err(|e| format!("Couldn't stop {title}: {e}"))?;
         // A finished torrent that never made it in would seed on with nothing
         // owning it (Meet Joe Black, 2026-11-08): it goes too, outside the library only.
-        let left: Vec<String> = grabbed.iter().filter(|h| !deleted.contains(h)).cloned().collect();
+        // Never a torrent Watch now is playing from for someone.
+        let watch_now = app.state::<crate::watchnow::WatchNow>().owned_set();
+        let left: Vec<String> = grabbed.iter().filter(|h| !deleted.contains(h) && !watch_now.contains(*h)).cloned().collect();
         if let (Some(q), false) = (qbit(app), left.is_empty()) {
             let safe = crate::storage::safe_to_delete_files(app, &q, &left).await;
             let _ = q.delete(&safe, true).await;
@@ -1025,6 +1027,7 @@ pub fn spawn(app: AppHandle) {
                 let mut rep = crate::fix::FixReport::default();
                 crate::fix::import_finished_step(&app, &mut rep).await;
                 crate::downloads_home::clear_orphans(&app).await;
+                crate::read::fetch_new(&app).await;
                 crate::read::clean_up(&app).await;
             }
             check(&app, &mut seen).await;

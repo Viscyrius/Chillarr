@@ -25,6 +25,10 @@ const EBOOK_EXT: [&str; 4] = ["epub", "pdf", "azw3", "mobi"];
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Release {
+    /// What the page sends back to pick it: the link itself stays on the PC,
+    /// so a page can only pick something Chillarr offered.
+    #[serde(default)]
+    pub id: String,
     pub title: String,
     pub indexer: String,
     pub size: u64,
@@ -67,6 +71,7 @@ pub fn rank(results: &[Value], title: &str) -> Vec<Release> {
             let url = x["magnetUrl"].as_str().filter(|u| !u.is_empty()).or(x["downloadUrl"].as_str())?.to_string();
             let size = x["size"].as_u64().unwrap_or(0);
             (matches(t, title) && size > 0 && size <= MAX_BOOK && x["protocol"].as_str().is_none_or(|p| p == "torrent")).then(|| Release {
+                id: String::new(),
                 title: t.to_string(),
                 indexer: x["indexer"].as_str().unwrap_or_default().to_string(),
                 size,
@@ -166,6 +171,29 @@ pub struct BookMeta {
     pub anilist: Option<i64>,
 }
 
+/// Copies offered to a page, by id, for an hour: `get` takes only these.
+static OFFERED: std::sync::Mutex<Vec<(std::time::Instant, Release)>> = std::sync::Mutex::new(Vec::new());
+
+fn offer(mut list: Vec<Release>) -> Vec<Release> {
+    let mut o = OFFERED.lock().unwrap();
+    o.retain(|(at, _)| at.elapsed() < std::time::Duration::from_secs(3600));
+    for r in list.iter_mut() {
+        let mut b = [0u8; 12];
+        getrandom::getrandom(&mut b).expect("random");
+        r.id = b.iter().map(|x| format!("{x:02x}")).collect();
+        o.push((std::time::Instant::now(), r.clone()));
+    }
+    while o.len() > 500 {
+        o.remove(0);
+    }
+    // The page sees what it shows, never the link.
+    list.into_iter().map(|r| Release { url: String::new(), ..r }).collect()
+}
+
+fn offered(id: &str) -> Option<Release> {
+    OFFERED.lock().unwrap().iter().find(|(at, r)| r.id == id && at.elapsed() < std::time::Duration::from_secs(3600)).map(|(_, r)| r.clone())
+}
+
 /// Every usable copy on the download sites, best first.
 pub async fn copies(app: &AppHandle, meta: &BookMeta) -> Result<Vec<Release>, String> {
     let p = crate::media::arr(app, crate::model::AppId::Prowlarr).ok_or("Prowlarr isn't set up.")?;
@@ -180,18 +208,33 @@ pub async fn copies(app: &AppHandle, meta: &BookMeta) -> Result<Vec<Release>, St
             break;
         }
     }
-    Ok(rank(&found, &meta.title))
+    Ok(offer(rank(&found, &meta.title)))
 }
 
 fn enc(s: &str) -> String {
     s.bytes().map(|b| if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") }).collect()
 }
 
-/// Downloads `pick` and adds the book to the list.
-pub async fn get(app: &AppHandle, meta: BookMeta, pick: Release) -> Result<String, String> {
+/// Downloads the copy offered as `id` and adds the book to the list.
+pub async fn get(app: &AppHandle, meta: BookMeta, id: &str) -> Result<String, String> {
+    let pick = offered(id).ok_or("That list of copies is old. Look for copies again.")?;
+    if pick.size > MAX_BOOK {
+        return Err("That copy is too big to be one book.".into());
+    }
     crate::read::ensure_root(app).await?;
     let q = crate::waiting::qbit(app).ok_or("qBittorrent isn't set up.")?;
+    let before: std::collections::HashSet<String> = q.list().await.unwrap_or_default().iter().filter_map(|t| t["hash"].as_str().map(str::to_ascii_lowercase)).collect();
     q.add_url(&pick.url, CATEGORY).await.map_err(|e| format!("qBittorrent didn't take it: {e:?}"))?;
+    // Its hash now, so it's never confused with another book's torrent: from
+    // the magnet, else the new torrent that appears in the books category.
+    let mut hash = magnet_hash(&pick.url);
+    for _ in 0..20 {
+        if hash.is_some() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        hash = q.list().await.unwrap_or_default().iter().filter(|t| t["category"] == CATEGORY).filter_map(|t| t["hash"].as_str().map(str::to_ascii_lowercase)).find(|h| !before.contains(h));
+    }
     let mut key = [0u8; 8];
     getrandom::getrandom(&mut key).map_err(|e| e.to_string())?;
     let mut list = all(app);
@@ -203,7 +246,7 @@ pub async fn get(app: &AppHandle, meta: BookMeta, pick: Release) -> Result<Strin
         description: meta.description,
         olid: meta.olid,
         anilist: meta.anilist,
-        hash: magnet_hash(&pick.url),
+        hash,
         release: pick.title,
         file: None,
         added: chrono::Utc::now().timestamp(),
@@ -228,11 +271,14 @@ pub async fn tick(app: &AppHandle) {
     let seeding = matches!(crate::waiting::seeding(app).await, Ok(true));
     let mut changed = false;
     for b in list.iter_mut().filter(|b| b.file.is_none()) {
-        // Matched by hash (a magnet), else by its name in the books category.
-        let t = torrents.iter().find(|t| match &b.hash {
-            Some(h) => t["hash"].as_str().is_some_and(|x| x.eq_ignore_ascii_case(h)),
-            None => t["category"] == CATEGORY && t["name"].as_str().is_some_and(|n| matches(n, &b.title)),
-        });
+        // Matched by its hash, in the books category: never by name, which let
+        // "Dune" take "Dune Messiah"'s torrent.
+        let Some(h) = b.hash.clone() else {
+            b.problem = Some("Couldn't find its download. Remove it and pick a copy again.".into());
+            changed = true;
+            continue;
+        };
+        let t = torrents.iter().find(|t| t["category"] == CATEGORY && t["hash"].as_str().is_some_and(|x| x.eq_ignore_ascii_case(&h)));
         let Some(t) = t else { continue };
         let Some(hash) = t["hash"].as_str().map(str::to_ascii_lowercase) else { continue };
         if b.hash.as_deref() != Some(hash.as_str()) {
@@ -245,7 +291,10 @@ pub async fn tick(app: &AppHandle) {
         }
         let named: Vec<(String, u64)> = files.iter().map(|f| (f["name"].as_str().unwrap_or_default().to_string(), f["size"].as_u64().unwrap_or(0))).collect();
         let Some(keep) = pick_file(&named, &b.title) else {
-            b.problem = Some("That download has no ebook in it. Try another copy.".into());
+            // Nothing to read in it: it goes, rather than download and share for ever.
+            let _ = q.delete(&[hash.clone()], true).await;
+            b.problem = Some("That download had no ebook in it. Pick another copy.".into());
+            b.hash = None;
             changed = true;
             continue;
         };
@@ -430,6 +479,14 @@ mod tests {
         json!({ "title": title, "size": size_mb * 1024 * 1024, "seeders": seeders, "indexer": "x", "protocol": "torrent",
             "magnetUrl": if magnet { json!("magnet:?xt=urn:btih:0123456789ABCDEF0123456789ABCDEF01234567&dn=x") } else { Value::Null },
             "downloadUrl": "http://localhost:9696/1/download?link=abc" })
+    }
+
+    #[test]
+    fn offered_copies_hide_their_links() {
+        let shown = offer(vec![Release { id: String::new(), title: "A".into(), indexer: "x".into(), size: 1, seeders: 1, format: None, url: "magnet:?xt=urn:btih:00".into() }]);
+        assert!(shown[0].url.is_empty() && !shown[0].id.is_empty());
+        assert_eq!(offered(&shown[0].id).unwrap().url, "magnet:?xt=urn:btih:00");
+        assert!(offered("made-up").is_none());
     }
 
     #[test]

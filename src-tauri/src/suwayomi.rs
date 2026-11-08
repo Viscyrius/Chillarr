@@ -33,14 +33,61 @@ const STORE: &str = "https://raw.githubusercontent.com/keiyoushi/extensions/repo
 /// MangaDex (scanlator uploads, many languages), Weeb Central (manga),
 /// Asura Scans and Flame Comics (high-resolution manhwa), MangaFire (reach),
 /// Webtoons.com (official).
-const DEFAULT_SOURCES: [&str; 6] = [
+/// Kun Manga and Mangago for manhua: on 2026-11-08 they had all four big
+/// manhua tried (Tales of Demons and Gods, Martial Peak, Battle Through the
+/// Heavens, Soul Land), where the first six missed most of Battle Through the
+/// Heavens; Kun Manga had Soul Land at 3200 px.
+const DEFAULT_SOURCES: [&str; 8] = [
     "eu.kanade.tachiyomi.extension.all.mangadex",
     "eu.kanade.tachiyomi.extension.en.weebcentral",
     "eu.kanade.tachiyomi.extension.en.asurascans",
     "eu.kanade.tachiyomi.extension.en.flamecomics",
     "eu.kanade.tachiyomi.extension.all.mangafire",
     "eu.kanade.tachiyomi.extension.all.webtoons",
+    "eu.kanade.tachiyomi.extension.en.kunmangaonline",
+    "eu.kanade.tachiyomi.extension.en.mangago",
 ];
+
+/// The password Suwayomi was started with this time. Chillarr starts it, so a
+/// fresh random one each start: no other program on the PC can drive it
+/// (installing an extension runs code).
+static PASSWORD: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+const USER: &str = "chillarr";
+
+fn new_password() -> String {
+    let mut b = [0u8; 24];
+    getrandom::getrandom(&mut b).expect("random");
+    b.iter().map(|x| format!("{x:02x}")).collect()
+}
+
+fn authed(r: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+    match PASSWORD.lock().unwrap().clone() {
+        Some(p) => r.basic_auth(USER, Some(p)),
+        None => r,
+    }
+}
+
+/// A folder name Suwayomi made: no separators, no "..", not a drive.
+pub fn plain_name(s: &str) -> bool {
+    !s.is_empty() && !s.contains(['/', '\\', ':']) && s != "." && s != ".." && !s.starts_with("..")
+}
+
+/// (source folder, series folder) for a manga, as Suwayomi names them.
+pub async fn folder_names(manga_id: i64) -> Result<(String, String), String> {
+    let v = gql("query($id:Int!){manga(id:$id){title source{displayName}}}", json!({ "id": manga_id })).await?;
+    let title = v["manga"]["title"].as_str().unwrap_or_default().to_string();
+    let source = v["manga"]["source"]["displayName"].as_str().unwrap_or_default().to_string();
+    if !plain_name(&source) || title.trim().is_empty() {
+        return Err("The manga downloader gave an odd name for that copy. Pick another one.".into());
+    }
+    Ok((source, title))
+}
+
+/// Queues chapters and makes sure the downloader is running.
+pub async fn enqueue(ids: &[i64]) -> Result<(), String> {
+    gql("mutation($ids:[Int!]!){enqueueChapterDownloads(input:{ids:$ids}){clientMutationId}}", json!({ "ids": ids })).await?;
+    gql("mutation{startDownloader(input:{}){clientMutationId}}", json!({})).await.map(|_| ())
+}
 
 pub fn base() -> String {
     #[cfg(test)]
@@ -100,10 +147,12 @@ pub fn launch_args(app: &AppHandle, java: &Path) -> Result<Vec<String>, String> 
     let data = data_dir();
     std::fs::create_dir_all(&data).map_err(|e| format!("Couldn't make {}: {e}", data.display()))?;
     let flare = app.state::<crate::fix::Core>().config(AppId::FlareSolverr).map(|c| c.base_url).unwrap_or_else(|| "http://localhost:8191".into());
-    Ok(args(&jar, &data, &comics, &flare))
+    let password = new_password();
+    *PASSWORD.lock().unwrap() = Some(password.clone());
+    Ok(args(&jar, &data, &comics, &flare, &password))
 }
 
-fn args(jar: &Path, data: &Path, comics: &Path, flare: &str) -> Vec<String> {
+fn args(jar: &Path, data: &Path, comics: &Path, flare: &str, password: &str) -> Vec<String> {
     let p = |k: &str, v: &str| format!("-Dsuwayomi.tachidesk.config.server.{k}={v}");
     let mut a = vec!["-Xmx768m".to_string(), "-Dfile.encoding=UTF-8".to_string()];
     for (k, v) in [
@@ -118,8 +167,12 @@ fn args(jar: &Path, data: &Path, comics: &Path, flare: &str) -> Vec<String> {
         ("flareSolverrUrl", flare.to_string()),
         ("downloadsPath", comics.to_string_lossy().to_string()),
         ("downloadAsCbz", "true".into()),
-        // New chapters of a followed series come in by themselves, read or not.
-        ("autoDownloadNewChapters", "true".into()),
+        // Chillarr queues new chapters itself (read::fetch_new), one copy each:
+        // Suwayomi's own would take every group's copy of each chapter.
+        ("autoDownloadNewChapters", "false".into()),
+        ("authMode", "BASIC_AUTH".into()),
+        ("authUsername", USER.into()),
+        ("authPassword", password.to_string()),
         ("excludeEntryWithUnreadChapters", "false".into()),
         ("autoDownloadNewChaptersLimit", "0".into()),
         ("excludeUnreadChapters", "false".into()),
@@ -142,8 +195,7 @@ fn http() -> reqwest::Client {
 
 /// One GraphQL call. An error list from the server is an error here.
 pub async fn gql(query: &str, vars: Value) -> Result<Value, String> {
-    let r = http()
-        .post(format!("{}/api/graphql", base()))
+    let r = authed(http().post(format!("{}/api/graphql", base())))
         .json(&json!({ "query": query, "variables": vars }))
         .send()
         .await
@@ -346,7 +398,7 @@ async fn sample_pages(chs: &[(i64, f64)]) -> Vec<Sample> {
     let urls: Vec<String> = p["fetchChapterPages"]["pages"].as_array().map(|a| a.iter().filter_map(|u| u.as_str().map(String::from)).collect()).unwrap_or_default();
     let mut out = Vec::new();
     for u in urls.iter().skip(1).take(3) {
-        let Ok(r) = http().get(format!("{}{u}", base())).timeout(Duration::from_secs(30)).send().await else { continue };
+        let Ok(r) = authed(http().get(format!("{}{u}", base()))).timeout(Duration::from_secs(30)).send().await else { continue };
         let webp = r.headers().get(reqwest::header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).is_some_and(|t| t.contains("webp"));
         let Ok(b) = r.bytes().await else { continue };
         if let Some((w, h)) = read_core::dims(&b) {
@@ -363,8 +415,7 @@ pub async fn follow(manga_id: i64, from: Option<f64>) -> Result<usize, String> {
     let chs = chapters(manga_id).await?;
     let ids: Vec<i64> = chs.iter().filter(|c| !c.downloaded && from.is_none_or(|f| c.number.unwrap_or(f64::MAX) >= f)).map(|c| c.id).collect();
     if !ids.is_empty() {
-        gql("mutation($ids:[Int!]!){enqueueChapterDownloads(input:{ids:$ids}){clientMutationId}}", json!({ "ids": ids })).await?;
-        gql("mutation{startDownloader(input:{}){clientMutationId}}", json!({})).await?;
+        enqueue(&ids).await?;
     }
     Ok(ids.len())
 }
@@ -441,7 +492,7 @@ mod tests {
 
     #[test]
     fn launch_args_keep_it_hidden_and_local() {
-        let a = args(Path::new(r"C:\s\bin\Suwayomi-Server.jar"), Path::new(r"C:\d"), Path::new(r"D:\Reading\Comics"), "http://localhost:8191");
+        let a = args(Path::new(r"C:\s\bin\Suwayomi-Server.jar"), Path::new(r"C:\d"), Path::new(r"D:\Reading\Comics"), "http://localhost:8191", "pw");
         let has = |s: &str| a.iter().any(|x| x == s);
         for want in [
             "-Dsuwayomi.tachidesk.config.server.ip=127.0.0.1",
@@ -451,10 +502,21 @@ mod tests {
             "-Dsuwayomi.tachidesk.config.server.kcefEnabled=false",
             "-Dsuwayomi.tachidesk.config.server.downloadAsCbz=true",
             r"-Dsuwayomi.tachidesk.config.server.downloadsPath=D:\Reading\Comics",
+            "-Dsuwayomi.tachidesk.config.server.authMode=BASIC_AUTH",
+            "-Dsuwayomi.tachidesk.config.server.authPassword=pw",
+            "-Dsuwayomi.tachidesk.config.server.autoDownloadNewChapters=false",
         ] {
             assert!(has(want), "{want} missing from {a:?}");
         }
         assert_eq!(a[a.len() - 2], "-jar");
+    }
+
+    #[test]
+    fn folder_names_are_plain() {
+        assert!(plain_name("Weeb Central (EN)"));
+        for bad in ["", "..", "../x", "C:", r"a\b", "a/b"] {
+            assert!(!plain_name(bad), "{bad}");
+        }
     }
 
     #[test]
@@ -486,8 +548,11 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn live_candidates() {
+        if let Ok(pw) = std::env::var("CHILLARR_SUWA_PW") {
+            *PASSWORD.lock().unwrap() = Some(pw);
+        }
         let t = std::time::Instant::now();
-        let names = vec!["Solo Leveling".to_string(), "Na Honjaman Level Up".to_string(), "Only I Level Up".to_string()];
+        let names: Vec<String> = std::env::var("CHILLARR_TITLES").map(|t| t.split('|').map(String::from).collect()).unwrap_or_else(|_| vec!["Solo Leveling".to_string(), "Na Honjaman Level Up".to_string(), "Only I Level Up".to_string()]);
         let c = candidates(&names).await.unwrap();
         for x in &c {
             println!("{:24} {:30} ch={:4} latest={:?} width={} q={:.0}", x.source, x.title, x.chapters, x.latest, x.width, x.quality);

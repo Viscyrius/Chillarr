@@ -78,19 +78,39 @@ pub async fn move_root(app: &AppHandle, dir: &str) -> Result<String, String> {
     if from == to {
         return Ok("That's already the reading folder.".into());
     }
-    app.state::<crate::fix::Core>().procs.stop_suwayomi();
     let empty = |p: &Path| std::fs::read_dir(p).map(|mut d| d.next().is_none()).unwrap_or(true);
-    for sub in ["Comics", "Books"] {
-        let (a, b) = (from.join(sub), to.join(sub));
-        if !a.is_dir() {
-            continue;
-        }
+    let subs: Vec<&str> = ["Comics", "Books"].into_iter().filter(|s| from.join(s).is_dir()).collect();
+    // Every target checked before anything moves, so a move never stops half way.
+    for sub in &subs {
+        let b = to.join(sub);
         if b.exists() && !empty(&b) {
             return Err(format!("{} already has things in it. Pick an empty folder.", b.display()));
         }
+    }
+    std::fs::create_dir_all(&to).map_err(|e| format!("Couldn't make {}: {e}", to.display()))?;
+    app.state::<crate::fix::Core>().procs.stop_suwayomi();
+    let mut moved: Vec<&str> = Vec::new();
+    let mut failed = None;
+    for sub in &subs {
+        let (a, b) = (from.join(sub), to.join(sub));
         let _ = std::fs::remove_dir(&b);
-        std::fs::create_dir_all(&to).map_err(|e| format!("Couldn't make {}: {e}", to.display()))?;
-        std::fs::rename(&a, &b).map_err(|e| format!("Couldn't move {} (it has to be on the same drive): {e}", a.display()))?;
+        match std::fs::rename(&a, &b) {
+            Ok(()) => moved.push(sub),
+            Err(e) => {
+                failed = Some(format!("Couldn't move {} (it has to be on the same drive): {e}", a.display()));
+                break;
+            }
+        }
+    }
+    if let Some(e) = failed {
+        // Put back what did move: the old folder stays the reading folder.
+        for sub in moved {
+            let _ = std::fs::rename(to.join(sub), from.join(sub));
+        }
+        if !followed(app).is_empty() {
+            let _ = crate::suwayomi::ready(app).await;
+        }
+        return Err(e);
     }
     set_root(app, &to.to_string_lossy())?;
     if !followed(app).is_empty() {
@@ -163,6 +183,9 @@ pub struct Followed {
     pub source_title: String,
     pub width: u32,
     pub added: i64,
+    /// Chapters from this number on are wanted (None: all of them).
+    #[serde(default)]
+    pub from: Option<f64>,
 }
 
 fn followed_file(app: &AppHandle) -> Result<PathBuf, String> {
@@ -232,6 +255,9 @@ fn all_spots(app: &AppHandle) -> Vec<HashMap<String, Spot>> {
 /// The series' download folder: `<Comics>/mangas/<source>/<title>`, the title
 /// as Suwayomi wrote it (compared loosely: it strips characters Windows refuses).
 fn series_dir(app: &AppHandle, f: &Followed) -> Option<PathBuf> {
+    if !crate::suwayomi::plain_name(&f.source) {
+        return None;
+    }
     let src = comics_dir(app)?.join("mangas").join(&f.source);
     let want = read_core::norm_title(&f.source_title);
     std::fs::read_dir(&src).ok()?.filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.is_dir()).find(|p| p.file_name().is_some_and(|n| read_core::norm_title(&n.to_string_lossy()) == want))
@@ -689,6 +715,9 @@ pub async fn sources(app: &AppHandle, meta: &Meta) -> Result<Vec<crate::suwayomi
 pub async fn follow(app: &AppHandle, meta: Meta, pick: crate::suwayomi::Candidate, from: Option<f64>) -> Result<String, String> {
     ensure_root(app).await?;
     crate::suwayomi::ready(app).await?;
+    // Where its chapters land is Suwayomi's say, never the page's: the folder
+    // names come from the downloader itself and are checked to be plain names.
+    let (source, source_title) = crate::suwayomi::folder_names(pick.manga_id).await?;
     let queued = crate::suwayomi::follow(pick.manga_id, from).await?;
     let mut all = followed(app);
     let mode = read_core::default_mode(meta.country.as_deref(), meta.format.as_deref()).to_string();
@@ -713,16 +742,17 @@ pub async fn follow(app: &AppHandle, meta: Meta, pick: crate::suwayomi::Candidat
         description: meta.description.clone(),
         genres: meta.genres.clone(),
         mode,
-        source: pick.source.clone(),
-        source_title: pick.title.clone(),
+        source: source.clone(),
+        source_title,
         width: pick.width,
         added: now(),
+        from,
     });
     save_followed(app, &all)?;
     let msg = match queued {
         0 => format!("Following {}. New chapters download by themselves.", meta.title),
-        1 => format!("Getting 1 chapter of {} from {}.", meta.title, pick.source),
-        n => format!("Getting {n} chapters of {} from {}.", meta.title, pick.source),
+        1 => format!("Getting 1 chapter of {} from {}.", meta.title, source),
+        n => format!("Getting {n} chapters of {} from {}.", meta.title, source),
     };
     crate::log::log(app, crate::model::Level::Ok, &msg);
     Ok(msg)
@@ -791,6 +821,31 @@ pub async fn set_up_once(app: &AppHandle) {
             crate::log::log(app, crate::model::Level::Ok, "Reading is set up: manga, manhwa, manhua and books are in the Read tab.");
         }
         Err(e) => crate::log::log(app, crate::model::Level::Amber, format!("Reading isn't set up yet: {e}. Chillarr tries again next start.")),
+    }
+}
+
+/// New chapters of what's followed, one copy each (Suwayomi's own auto
+/// download takes every group's copy). A chapter someone has read isn't
+/// fetched again: the clean-up may have deleted it on purpose.
+pub async fn fetch_new(app: &AppHandle) {
+    let list = followed(app);
+    if list.is_empty() {
+        return;
+    }
+    let profiles = all_spots(app);
+    let queued: std::collections::HashSet<i64> = crate::suwayomi::queue().await.into_iter().map(|q| q.1).collect();
+    for f in list {
+        let Ok(chs) = crate::suwayomi::chapters(f.manga_id).await else { continue };
+        let read_by_someone = |id: i64| profiles.iter().filter_map(|p| p.get(&f.key)).any(|s| s.read.contains_key(&id));
+        let want: Vec<i64> = chs
+            .iter()
+            .filter(|c| !c.downloaded && !queued.contains(&c.id) && !read_by_someone(c.id))
+            .filter(|c| f.from.is_none_or(|from| c.number.unwrap_or(f64::MAX) >= from))
+            .map(|c| c.id)
+            .collect();
+        if !want.is_empty() && crate::suwayomi::enqueue(&want).await.is_ok() {
+            crate::log::log(app, crate::model::Level::Ok, format!("Getting {} new chapter(s) of {}.", want.len(), f.title));
+        }
     }
 }
 

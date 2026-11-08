@@ -364,7 +364,7 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
         "read_book_rows" => ok(crate::books::rows().await),
         "read_book_search" => res(crate::books::search(&arg::<String>(a, "term")?).await),
         "read_book_copies" => res(crate::books::copies(app, &arg(a, "meta")?).await),
-        "read_book_get" => res(crate::books::get(app, arg(a, "meta")?, arg(a, "pick")?).await),
+        "read_book_get" => res(crate::books::get(app, arg(a, "meta")?, &arg::<String>(a, "id")?).await),
         "read_book_remove" => res(crate::books::remove(app, &arg::<String>(a, "key")?).await),
         "read_books" => res(crate::read::books(app).await),
         "read_book_open" => res(crate::read::open_book(app, &arg::<String>(a, "key")?).await),
@@ -676,28 +676,16 @@ async fn reply(sock: &mut TcpStream, origin: Option<&str>, status: &str, kind: &
 /// A reading page: the ticket in its address never changes, so it may be cached.
 async fn reply_page(sock: &mut TcpStream, origin: Option<&str>, status: &str, kind: &str, body: &[u8]) -> std::io::Result<()> {
     let cache = if status.starts_with("200") { "private, max-age=21600, immutable" } else { "no-store" };
-    let head = format!(
-        "HTTP/1.1 {status}
-
-Content-Type: {kind}
-
-Content-Length: {}
-
-Cache-Control: {cache}
-
-X-Content-Type-Options: nosniff
-
-{}Connection: close
-
-
-
-",
-        body.len(),
-        cors(origin)
-    );
+    let head = page_head(status, kind, body.len(), cache, &cors(origin));
     sock.write_all(head.as_bytes()).await?;
     sock.write_all(body).await?;
     sock.shutdown().await
+}
+
+/// The head of a reading page's reply. Kept apart so a test can check it is
+/// one well-formed HTTP head (a stray line break once ended it after the status).
+fn page_head(status: &str, kind: &str, len: usize, cache: &str, cors: &str) -> String {
+    format!("HTTP/1.1 {status}\r\nContent-Type: {kind}\r\nContent-Length: {len}\r\nCache-Control: {cache}\r\nX-Content-Type-Options: nosniff\r\n{cors}Connection: close\r\n\r\n")
 }
 
 /// This PC's own address for the bridge, for the window's reader.
@@ -935,6 +923,16 @@ mod tests {
         for c in need_body.split('"').skip(1).step_by(2) {
             assert!(run_body.contains(&format!("\"{c}\" =>")), "{c} is allowed but not run");
         }
+    }
+
+    #[test]
+    fn reading_pages_have_one_well_formed_head() {
+        let h = page_head("200 OK", "image/jpeg", 42, "private", &cors(Some("http://tv:8096")));
+        let (head, rest) = h.split_once("\r\n\r\n").unwrap();
+        assert!(rest.is_empty(), "the head ends once, at the end");
+        assert!(!head.contains('\n') || head.split("\r\n").all(|l| !l.contains('\n')), "no bare line breaks");
+        assert!(head.starts_with("HTTP/1.1 200 OK\r\nContent-Type: image/jpeg\r\nContent-Length: 42\r\n"));
+        assert!(head.contains("Access-Control-Allow-Origin: http://tv:8096"));
     }
 
     #[test]
