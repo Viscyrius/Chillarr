@@ -1,6 +1,8 @@
 # Changelog
 
 ## 0.13.3 (2026-11-08)
+- Manhwa, Manhua, Manga and Novels now open with the big featured picture too, showing that tab's trending series, with your filters and the grid under it.
+- The Style picker shows on every reading tab, not only after visiting Home.
 - The top bar's buttons move now: the film and book switch wiggles, Watch together's people hop, Full screen's corners spread, the Settings gear turns, and every one lifts on hover and gives a little when pressed. The People button no longer tips sideways on hover.
 
 ## 0.13.2 (2026-11-08)

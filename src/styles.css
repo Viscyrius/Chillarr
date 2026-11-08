@@ -1900,6 +1900,8 @@ html.no-grid .pf-fields > * + *, html.no-grid .skel-copy > * + * { margin-top: 1
 /* ---------- Read tab (read.js) ---------- */
 .read-page { padding-top: 84px; }
 .read-page.under-hero { padding-top: 0; }
+.read-page.after-hero { padding-top: 6px; }
+.read-page.after-hero .read-head { animation: rise 0.5s var(--out) both; }
 .read-page.under-hero .read-head { display: none; }
 /* Reading's hero: the banner softened behind, the cover large on the right, tilted toward you. */
 .hero.read-hero-top { min-height: min(68vh, 680px); }

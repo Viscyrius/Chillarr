@@ -253,6 +253,7 @@ export async function renderRead(view, tab) {
   currentTab = tab;
   document.body.dataset.rstyle = styleNow();
   pvHide(true);
+  drawPickers(); // the top bar's Style picker, on every reading tab
   if (TAB_TITLE[tab]) return explorePage(view, tab, my);
   if (tab === "r-books") return booksPage(view, my);
   if (tab === "r-mylist") return listPage(view, my);
@@ -677,7 +678,15 @@ async function explorePage(view, tab, my) {
     panel.replaceChildren(...parts);
   }
   drawPanel();
-  view.replaceChildren(page(head(TAB_TITLE[tab], el("div", { class: "read-filters" }, toggle, order)), panel, grid, more));
+  // The big picture on top, like Home: this tab's trending series, whatever the filters say.
+  const top = el("div", { class: "read-hero-slot" });
+  const body = page(head(TAB_TITLE[tab], el("div", { class: "read-filters" }, toggle, order)), panel, grid, more);
+  view.replaceChildren(top, body);
+  invoke("read_explore", { e: { kind, sort: "trending", page: 1 } }).then((g) => {
+    if (my !== seq) return;
+    const h = readHero(heroPicks(g.items || []));
+    if (h) { top.replaceWith(h); body.classList.add("after-hero"); }
+  }).catch(() => {});
   await know();
   let pageNo = 0, done = false, busy = false, run = 0;
   async function next() {
