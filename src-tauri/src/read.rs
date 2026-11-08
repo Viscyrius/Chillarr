@@ -358,6 +358,10 @@ pub struct Spot {
     /// This profile's own mode for the series, over the series' default.
     #[serde(default)]
     pub mode: Option<String>,
+    /// Kept out of Your week and Latest updates for this profile (someone else
+    /// may be looking at the screen). Still in the list, and opens as usual.
+    #[serde(default)]
+    pub hide_week: bool,
 }
 
 fn spots_file(dir: &Path, uid: &str) -> PathBuf {
@@ -611,6 +615,16 @@ pub fn set_mode(app: &AppHandle, key: &str, mode: &str) -> Result<(), String> {
     save_spots(app, &uid, &all)
 }
 
+/// Hides a series from Your week and Latest updates for the watching profile, or shows it again.
+pub fn set_hide_week(app: &AppHandle, key: &str, hide: bool) -> Result<bool, String> {
+    let uid = uid(app)?;
+    find(app, key)?;
+    let mut all = spots(app, &uid);
+    all.entry(key.to_string()).or_default().hide_week = hide;
+    save_spots(app, &uid, &all)?;
+    Ok(hide)
+}
+
 // ---------- books ----------
 
 #[derive(Serialize)]
@@ -724,6 +738,8 @@ pub struct Shelf {
     pub fresh: usize,
     pub fresh_label: Option<String>,
     pub fresh_at: i64,
+    /// Kept out of Your week and Latest updates (Spot.hide_week).
+    pub hide_week: bool,
 }
 
 /// Every followed series, as the watching profile sees it.
@@ -791,6 +807,7 @@ pub fn shelf_of(f: &Followed, chs: &[crate::suwayomi::Chapter], spot: Option<&Sp
         fresh: fresh.len(),
         fresh_label,
         fresh_at: fresh.iter().map(|c| uploaded_secs(c)).max().unwrap_or(0),
+        hide_week: spot.is_some_and(|s| s.hide_week),
     }
 }
 

@@ -312,7 +312,9 @@ fn need(cmd: &str) -> Option<Need> {
         | "remote_device"
         // Reading (read.rs): each profile its own progress; following a
         // series downloads it, like Download does for a film.
-        | "read_rows" | "read_search" | "read_library" | "read_detail" | "read_sources" | "read_follow" | "read_open" | "read_progress" | "read_mode" | "read_mark"
+        | "read_rows" | "read_search" | "read_library" | "read_detail" | "read_sources" | "read_follow" | "read_open" | "read_progress" | "read_mode" | "read_hide_week" | "read_mark"
+        // Each profile's own hidden list and password (hidden.rs).
+        | "hidden_status" | "hidden_set_password" | "hidden_unlock" | "hidden_lock" | "hidden_set" | "hidden_list"
         | "readparty_start" | "readparty_join" | "readparty_state" | "readparty_move" | "readparty_leave"
         | "read_book_rows" | "read_book_more" | "read_book_search" | "read_book_copies" | "read_book_get" | "read_books" | "read_book_open"
         | "read_languages" | "read_copy_chapters" | "read_get_chapters" | "read_keep_up" | "read_list" | "read_list_set" | "read_explore" | "read_genres" | "read_filter_info" | "read_similar" | "read_downloads"
@@ -417,6 +419,13 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
         "read_open" => res(crate::read::open(app, &arg::<String>(a, "key")?, arg(a, "chapter")?).await),
         "read_progress" => res(crate::read::set_spot(app, &arg::<String>(a, "key")?, arg(a, "chapter")?, arg(a, "page")?, arg(a, "pages")?)),
         "read_mode" => res(crate::read::set_mode(app, &arg::<String>(a, "key")?, &arg::<String>(a, "mode")?)),
+        "read_hide_week" => res(crate::read::set_hide_week(app, &arg::<String>(a, "key")?, arg(a, "hide")?)),
+        "hidden_status" => res(crate::hidden::status(app)),
+        "hidden_set_password" => res(crate::hidden::set_password(app, &arg::<String>(a, "password")?, arg::<Option<String>>(a, "old")?.as_deref())),
+        "hidden_unlock" => res(crate::hidden::unlock(app, &arg::<String>(a, "password")?)),
+        "hidden_lock" => res(crate::hidden::lock(app)),
+        "hidden_set" => res(crate::hidden::set(app, &arg::<Vec<String>>(a, "keys")?, arg(a, "hide")?, arg::<Option<String>>(a, "label")?.as_deref())),
+        "hidden_list" => res(crate::hidden::list(app)),
         "read_mark" => res(crate::read::mark(app, &arg::<String>(a, "key")?, &arg::<Vec<i64>>(a, "chapters")?, arg(a, "read")?).await),
         "media_episodes" => ok(media::episodes(app, &arg::<String>(a, "seriesId")?).await),
         "media_search" => ok(media::search(app, &arg::<String>(a, "term")?).await),

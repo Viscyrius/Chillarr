@@ -49,7 +49,12 @@ const STORE: &str = "https://github.com/keiyoushi/extensions/raw/repo/index.pb";
 /// Dynasty Scans and Manhwatop, plus the publishers' own MANGA Plus and Comikey.
 /// Each answered a search within seconds on 2026-11-08 (Darling in the Franxx,
 /// a Seven Seas title, was on nine of them); MangaHub errored and was left out.
-const DEFAULT_SOURCES: [&str; 28] = [
+/// More on 2026-11-08 (user: "a LOT more"): every big English aggregator in
+/// keiyoushi's list that isn't 18+ (checked against index.json that night),
+/// plus Comick's successor (Comick Live), MangaBall, MangaDNA, NiAdd,
+/// NovelCool, MangaTaro, Kagane and MangaToon. More sites means a slower
+/// first search; each is still cut off at 45 s.
+const DEFAULT_SOURCES: [&str; 73] = [
     "eu.kanade.tachiyomi.extension.all.mangadex",
     "eu.kanade.tachiyomi.extension.en.weebcentral",
     "eu.kanade.tachiyomi.extension.en.asurascans",
@@ -78,6 +83,51 @@ const DEFAULT_SOURCES: [&str; 28] = [
     "eu.kanade.tachiyomi.extension.en.manhwatop",
     "eu.kanade.tachiyomi.extension.all.mangaplus",
     "eu.kanade.tachiyomi.extension.all.comikey",
+    "eu.kanade.tachiyomi.extension.en.mangabay",
+    "eu.kanade.tachiyomi.extension.en.mangabolt",
+    "eu.kanade.tachiyomi.extension.en.mangacloud",
+    "eu.kanade.tachiyomi.extension.en.mangademon",
+    "eu.kanade.tachiyomi.extension.en.mangaeclipse",
+    "eu.kanade.tachiyomi.extension.en.mangafreak",
+    "eu.kanade.tachiyomi.extension.en.mangagg",
+    "eu.kanade.tachiyomi.extension.en.mangahome",
+    "eu.kanade.tachiyomi.extension.en.mangakakalotfun",
+    "eu.kanade.tachiyomi.extension.en.manganel",
+    "eu.kanade.tachiyomi.extension.en.manganow",
+    "eu.kanade.tachiyomi.extension.en.mangaonlinefun",
+    "eu.kanade.tachiyomi.extension.en.mangaowlio",
+    "eu.kanade.tachiyomi.extension.en.mangapandaonl",
+    "eu.kanade.tachiyomi.extension.en.mangareadersite",
+    "eu.kanade.tachiyomi.extension.en.mangatoday",
+    "eu.kanade.tachiyomi.extension.en.mangauno",
+    "eu.kanade.tachiyomi.extension.en.mangamob",
+    "eu.kanade.tachiyomi.extension.en.mgreadio",
+    "eu.kanade.tachiyomi.extension.en.onemangaco",
+    "eu.kanade.tachiyomi.extension.en.onemangainfo",
+    "eu.kanade.tachiyomi.extension.en.todaymanga",
+    "eu.kanade.tachiyomi.extension.en.vyvymanga",
+    "eu.kanade.tachiyomi.extension.en.kissmangain",
+    "eu.kanade.tachiyomi.extension.en.mangafoxfun",
+    "eu.kanade.tachiyomi.extension.en.mangahereonl",
+    "eu.kanade.tachiyomi.extension.en.s2manga",
+    "eu.kanade.tachiyomi.extension.en.manhuanext",
+    "eu.kanade.tachiyomi.extension.en.manhuahot",
+    "eu.kanade.tachiyomi.extension.en.manhwabuddy",
+    "eu.kanade.tachiyomi.extension.en.toonily",
+    "eu.kanade.tachiyomi.extension.en.mangatrend",
+    "eu.kanade.tachiyomi.extension.en.bunmanga",
+    "eu.kanade.tachiyomi.extension.en.comix",
+    "eu.kanade.tachiyomi.extension.en.readcomicsonline",
+    "eu.kanade.tachiyomi.extension.en.xoxocomics",
+    "eu.kanade.tachiyomi.extension.en.mangastash",
+    "eu.kanade.tachiyomi.extension.all.comicklive",
+    "eu.kanade.tachiyomi.extension.all.mangaball",
+    "eu.kanade.tachiyomi.extension.all.mangadna",
+    "eu.kanade.tachiyomi.extension.all.niadd",
+    "eu.kanade.tachiyomi.extension.all.novelcool",
+    "eu.kanade.tachiyomi.extension.all.mangataro",
+    "eu.kanade.tachiyomi.extension.all.kagane",
+    "eu.kanade.tachiyomi.extension.all.mangatoon",
 ];
 
 /// The password Suwayomi was started with this time. Chillarr starts it, so a
@@ -395,6 +445,9 @@ pub fn pick_sources(nodes: &[Value], lang: &str, adult: bool) -> Vec<(String, St
         .collect()
 }
 
+/// Sites searched at the same time (candidates).
+const SEARCH_AT_ONCE: usize = 12;
+
 pub async fn candidates(names: &[String], lang: &str, adult: bool) -> Result<Vec<Candidate>, String> {
     let srcs = match gql("{sources{nodes{id displayName lang isNsfw}}}", json!({})).await {
         Ok(v) => v,
@@ -403,10 +456,18 @@ pub async fn candidates(names: &[String], lang: &str, adult: bool) -> Result<Vec
     // Only sources in that language: a mixed "all" source lists every
     // language's copy of each chapter (MangaDex ALL had 556 rows for 468).
     let srcs = pick_sources(srcs["sources"]["nodes"].as_array().map(|a| a.as_slice()).unwrap_or(&[]), lang, adult);
+    // 12 sites at a time: with 73 all at once, the ones behind Cloudflare queue
+    // at the one FlareSolverr and push even good sites past their time. Each
+    // site's 45 s starts when its turn comes.
+    let turns = std::sync::Arc::new(tokio::sync::Semaphore::new(SEARCH_AT_ONCE));
     let mut set = tokio::task::JoinSet::new();
     for (id, name) in srcs {
         let names = names.to_vec();
-        set.spawn(async move { tokio::time::timeout(Duration::from_secs(45), one_source(id, name, names)).await });
+        let turns = turns.clone();
+        set.spawn(async move {
+            let _turn = turns.acquire_owned().await;
+            tokio::time::timeout(Duration::from_secs(45), one_source(id, name, names)).await
+        });
     }
     let mut out = Vec::new();
     let mut slow = 0;
@@ -518,38 +579,52 @@ pub fn one_per_chapter(chs: Vec<Chapter>) -> Vec<Chapter> {
 async fn one_source(source_id: String, source: String, names: Vec<String>) -> Option<Candidate> {
     // The first name is the most common (English, else romaji); a second try
     // with another name catches sources that list the original title.
-    for q in names.iter().take(2) {
-        let found = gql(
+    // Each name's matches, best first. A licensed series (Darling in the
+    // Franxx, Seven Seas) often still has its page on a site with the chapters
+    // taken down ("No chapters found", 2026-11-08): the next match, or the next
+    // name, is tried instead of giving up on the whole site. A search that
+    // errors (Cloudflare) moves on to the next name too.
+    let mut tried: Vec<i64> = Vec::new();
+    for q in names.iter().take(3) {
+        let Ok(found) = gql(
             "mutation($s:LongString!,$q:String){fetchSourceManga(input:{source:$s,type:SEARCH,page:1,query:$q}){mangas{id title}}}",
             json!({ "s": source_id, "q": q }),
         )
         .await
-        .ok()?;
-        let hit = found["fetchSourceManga"]["mangas"]
-            .as_array()?
+        else {
+            continue;
+        };
+        let mut hits: Vec<(f64, i64, String)> = found["fetchSourceManga"]["mangas"]
+            .as_array()
+            .map(|a| a.as_slice())
+            .unwrap_or(&[])
             .iter()
             .filter_map(|m| Some((m["id"].as_i64()?, m["title"].as_str()?.to_string())))
             .map(|(id, t)| (read_core::best_title_score(&t, &names), id, t))
             .filter(|(s, ..)| *s >= read_core::SAME_TITLE)
-            .max_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
-        let Some((_, manga_id, title)) = hit else { continue };
-        let got = gql("mutation($id:Int!){fetchMangaAndChapters(input:{id:$id,fetchManga:true,fetchChapters:true}){chapters{id chapterNumber}}}", json!({ "id": manga_id })).await.ok()?;
-        let mut chs: Vec<(i64, f64)> = got["fetchMangaAndChapters"]["chapters"].as_array()?.iter().filter_map(|c| Some((c["id"].as_i64()?, c["chapterNumber"].as_f64()?))).collect();
-        // One per chapter number, for the count: duplicates aren't more chapters.
-        chs.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
-        chs.dedup_by(|a, b| a.1 == b.1);
-        if chs.is_empty() {
-            return None;
+            .collect();
+        hits.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+        let fresh: Vec<(f64, i64, String)> = hits.into_iter().filter(|h| !tried.contains(&h.1)).take(3).collect();
+        for (_, manga_id, title) in fresh {
+            tried.push(manga_id);
+            let Ok(got) = gql("mutation($id:Int!){fetchMangaAndChapters(input:{id:$id,fetchManga:true,fetchChapters:true}){chapters{id chapterNumber}}}", json!({ "id": manga_id })).await else { continue };
+            let mut chs: Vec<(i64, f64)> = got["fetchMangaAndChapters"]["chapters"].as_array().map(|a| a.as_slice()).unwrap_or(&[]).iter().filter_map(|c| Some((c["id"].as_i64()?, c["chapterNumber"].as_f64()?))).collect();
+            // One per chapter number, for the count: duplicates aren't more chapters.
+            chs.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+            chs.dedup_by(|a, b| a.1 == b.1);
+            if chs.is_empty() {
+                continue;
+            }
+            let latest = chs.iter().map(|c| c.1).fold(None, |m: Option<f64>, n| Some(m.map_or(n, |m| m.max(n))));
+            // Sampling is only for ranking: a slow page never costs the copy itself.
+            let samples = tokio::time::timeout(Duration::from_secs(12), sample_pages(&chs)).await.unwrap_or_default();
+            let mut widths: Vec<u32> = samples.iter().map(|s| s.w).collect();
+            widths.sort();
+            let mut dens: Vec<f64> = samples.iter().map(|s| s.bytes as f64 / (s.w as f64 * s.h as f64).max(1.0) * if s.webp { 1.6 } else { 1.0 }).collect();
+            dens.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            let density = dens.get(dens.len() / 2).copied().unwrap_or(0.0);
+            return Some(Candidate { source_id, source, manga_id, title, chapters: chs.len(), latest, quality: read_core::quality(&samples), width: widths.get(widths.len() / 2).copied().unwrap_or(0), density });
         }
-        let latest = chs.iter().map(|c| c.1).fold(None, |m: Option<f64>, n| Some(m.map_or(n, |m| m.max(n))));
-        // Sampling is only for ranking: a slow page never costs the copy itself.
-        let samples = tokio::time::timeout(Duration::from_secs(12), sample_pages(&chs)).await.unwrap_or_default();
-        let mut widths: Vec<u32> = samples.iter().map(|s| s.w).collect();
-        widths.sort();
-        let mut dens: Vec<f64> = samples.iter().map(|s| s.bytes as f64 / (s.w as f64 * s.h as f64).max(1.0) * if s.webp { 1.6 } else { 1.0 }).collect();
-        dens.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        let density = dens.get(dens.len() / 2).copied().unwrap_or(0.0);
-        return Some(Candidate { source_id, source, manga_id, title, chapters: chs.len(), latest, quality: read_core::quality(&samples), width: widths.get(widths.len() / 2).copied().unwrap_or(0), density });
     }
     None
 }

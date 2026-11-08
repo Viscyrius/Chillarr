@@ -1,5 +1,6 @@
 // Settings: the six apps and Fix everything, indexers, library folders,
 // app paths, the Jellyfin account and streaming, general options, logs.
+import { hiddenBox } from "./hidden.js";
 import { $, ask, audioChoice, el, icon, ICON, invoke, LABEL, listen, ORDER, store, toast, viewer, WEB } from "./api.js";
 import { startProfiles } from "./profiles.js";
 import { installWithMeter, openSetup } from "./setup.js";
@@ -550,7 +551,8 @@ function appsLoginBlock(name) {
 async function account(panel) {
   const ms = await invoke("media_status");
   panel.append(el("h2", { text: "Account & devices" }),
-    el("p", { class: "sub", text: "Your profiles, and how to watch on your phone, TV or laptop. Nothing goes through the cloud: your PC does the work." }));
+    el("p", { class: "sub", text: "Your profiles, and how to watch on your phone, TV or laptop. Nothing goes through the cloud: your PC does the work." }),
+    hiddenBox());
   if (!ms.installed) {
     panel.append(el("button", { class: "btn primary", onclick: () => offerInstall(["Jellyfin"]) }, "Install Jellyfin"));
     return;

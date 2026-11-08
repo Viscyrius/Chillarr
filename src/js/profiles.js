@@ -3,6 +3,7 @@
 // Jellyfin account of its own (profiles.rs), so its history and My List
 // follow it to Jellyfin's TV and phone apps. In Jellyfin's web pages
 // (WEB) it's pick and add only, and a pick signs the browser in as them.
+import { refreshHidden } from "./hidden.js";
 import { $, ask, el, icon, invoke, setPerson, toast, WEB } from "./api.js";
 
 const COLORS = ["#e50914", "#f5a623", "#2ecc71", "#1abc9c", "#3498db", "#9b59b6", "#e84393", "#95a5a6"];
@@ -22,6 +23,7 @@ async function load() {
   list = await invoke("profiles_list", WEB ? { trust: window.__CHILLARR_JF__.trust() } : {}).catch(() => []);
   // On the web it's whoever is signed in (app.js), profile or not.
   if (!WEB) setPerson(list.find((p) => p.active)?.id);
+  refreshHidden();
   drawTopbar();
   return list;
 }

@@ -5,6 +5,7 @@
 // profile. Getting a series: pick the translation, then Best (the sharpest
 // complete copy, found by asking every source) or a copy of your choice,
 // then which chapters.
+import { hideButton, isHidden, markHidden } from "./hidden.js";
 import { ask, canDelete, el, getPref, icon, ICON, invoke, setPref, toast } from "./api.js";
 import { openReader } from "./reader.js";
 import { openBook } from "./bookreader.js";
@@ -197,7 +198,7 @@ function card(c, shelf = null) {
   b.addEventListener("mouseenter", () => pvSchedule(b, c, shelf));
   b.addEventListener("mouseleave", () => pvSoon());
   if (styleNow() === "classic" && c.kind !== "book") classicCaption(b, c, shelf);
-  return b;
+  return markHidden(b, c, shelf);
 }
 
 /** Classic's caption: the title, then one quiet line (genre in colour, then length or where you are). */
@@ -231,7 +232,7 @@ function bookCard(x) {
   const sub = x.problem ? "Needs a look" : !x.ready ? (x.progress != null ? `Downloading ${Math.round(x.progress * 100)}%` : "Starting") : done ? "Finished" : x.read > 0 ? `${Math.round(x.read * 100)}% read` : x.author || "";
   const b = el("button", { class: "tile", "aria-label": x.title }, box, el("div", { class: "cap" }, el("strong", { text: x.title }), sub ? ` · ${sub}` : ""));
   b.addEventListener("click", () => openBookPanel({ kind: "book", title: x.title, author: x.author, cover: x.cover, description: x.description, olid: x.olid, anilist: x.anilist }, x));
-  return b;
+  return markHidden(b, x);
 }
 
 /** Where a row's "Explore all" goes: every title in it, a page at a time (allPage). */
@@ -427,7 +428,7 @@ function heroPicks(cards) {
   const seen = new Set();
   const out = [];
   for (const c of cards) {
-    if (!c || !c.anilist || seen.has(c.anilist) || !(c.banner || c.cover) || !c.description) continue;
+    if (!c || !c.anilist || seen.has(c.anilist) || !(c.banner || c.cover) || !c.description || isHidden(c)) continue;
     seen.add(c.anilist);
     out.push(c);
   }
@@ -461,6 +462,8 @@ function ago(ms) {
 
 /** Each followed series with its chapters (for updates and the week), newest first. */
 async function followedWithChapters(series) {
+  // Hidden from the week by this profile: left out here (Your week, Latest updates).
+  series = series.filter((s) => !s.hide_week);
   const got = await Promise.all(series.slice(0, 16).map((s) => invoke("read_detail", { key: s.key }).then((d) => ({ s, d })).catch(() => null)));
   return got.filter(Boolean).map(({ s, d }) => {
     const chs = d.chapters.filter((c) => c.downloaded || c.uploaded).slice().sort((a, b) => (b.number ?? 0) - (a.number ?? 0));
@@ -478,7 +481,7 @@ function rankRow(c, i) {
       el("strong", { text: c.title }),
       el("small", { text: [(c.genres || []).slice(0, 2).join(", "), kindOf(c)].filter(Boolean).join(" \u00b7 ") })),
     c.score ? el("span", { class: "rk-score", text: `\u2605 ${(c.score / 10).toFixed(1)}` }) : null);
-  return b;
+  return markHidden(b, c);
 }
 
 /** Tabs that swap a list: [[label, loader]], each loader returning cards. */
@@ -540,17 +543,36 @@ async function midnightHome(view, my) {
     const list = await followedWithChapters(series);
     if (my !== seq) return;
     updates.replaceChildren(el("h2", { class: "mn-h", text: "Latest updates" }), el("div", { class: "mn-updates" }, list.map((x, i) =>
-      el("div", { class: "mn-up", style: `--i:${i}` },
+      markHidden(el("div", { class: "mn-up", style: `--i:${i}` },
         el("button", { class: "mn-up-cover", "aria-label": x.s.title, onclick: () => openSeries({ key: x.s.key, card: x.card }) }, x.s.cover ? el("img", { src: x.s.cover, alt: "", loading: "lazy" }) : null),
         el("div", { class: "mn-up-text" },
           el("button", { class: "mn-up-title", onclick: () => openSeries({ key: x.s.key, card: x.card }), text: x.s.title }),
           ...x.chs.slice(0, 3).map((c) => el("button", { class: "mn-ch" + (c.read ? " read" : ""), disabled: !c.downloaded, onclick: () => read(x.s.key, c.id, x.card) },
-            el("span", {}, chLabel(c), c.fresh ? el("b", { class: "read-new-pill", text: "NEW" }) : ""), el("small", { text: c.downloaded ? ago(c.uploaded) : "Not here yet" }))))))));
+            el("span", {}, chLabel(c), c.fresh ? el("b", { class: "read-new-pill", text: "NEW" }) : ""), el("small", { text: c.downloaded ? ago(c.uploaded) : "Not here yet" }))))), x.s, x.card))));
   }
   return true;
 }
 
 const WEEK = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+/** Hides a series from Your week and Latest updates on this profile, or shows it again. */
+async function setHideWeek(key, title, hide) {
+  try {
+    await invoke("read_hide_week", { key, hide });
+    toast(hide ? `${title} is hidden from Your week. Show it again from its page.` : `${title} shows in Your week again.`);
+    window.dispatchEvent(new Event("chillarr:refresh"));
+    return true;
+  } catch (e) { toast(String(e), true); return false; }
+}
+
+/** A Your week card with a small Hide button on it. */
+function weekCard(t, s) {
+  const b = el("button", { class: "week-hide", title: "Hide from Your week", "aria-label": `Hide ${s.title} from Your week`,
+    onclick: async (e) => { e.stopPropagation(); e.preventDefault(); if (await setHideWeek(s.key, s.title, true)) t.remove(); } },
+    icon("M3 3l18 18M10.6 6.1A10 10 0 0 1 12 6c5 0 9 6 9 6a17 17 0 0 1-3 3.5M6.6 6.6C4.3 8.1 3 12 3 12s4 6 9 6a9 9 0 0 0 4.4-1.1M9.9 9.9a3 3 0 0 0 4.2 4.2"));
+  t.append(b);
+  return t;
+}
 const CLASSIC_GENRES = ["Action", "Fantasy", "Romance", "Drama", "Comedy", "Thriller", "Slice of Life", "Supernatural"];
 
 /** A Classic card: big cover, the genre in colour, the title, and an UP badge when it updated today. */
@@ -575,7 +597,7 @@ function classicRank(c, i) {
   b.addEventListener("click", () => pvOpen(c, null));
   b.addEventListener("mouseenter", () => pvSchedule(b, c, null));
   b.addEventListener("mouseleave", () => pvSoon());
-  return b;
+  return markHidden(b, c);
 }
 
 async function classicHome(view, my) {
@@ -613,7 +635,7 @@ async function classicHome(view, my) {
     const order = [...WEEK.keys()].map((k) => (today + k) % 7);
     week.append(el("h2", { class: "cl-h", text: "Your week" }), el("p", { class: "cl-sub", text: "Your series by the day their chapters usually come out." }),
       tabbed("cl-week", order.map((i) => tabs[i]), (items) => (items.length
-        ? [el("div", { class: "cl-grid" }, items.map((x, i) => classicCard(x.card, i, { shelf: x.s, up: Date.now() - x.newest < 86400000 })))]
+        ? [el("div", { class: "cl-grid" }, items.map((x, i) => weekCard(classicCard(x.card, i, { shelf: x.s, up: Date.now() - x.newest < 86400000 }), x.s)))]
         : [el("p", { class: "cl-empty", text: "Nothing of yours comes out that day." })])));
   }
   return true;
@@ -968,6 +990,8 @@ function shell(c) {
     .filter(Boolean).flatMap((x, i) => (i ? [el("span", { class: "sep" }), el("span", { text: x })] : [el("span", { text: x })])));
   const options = el("div", { class: "read-options" });
   const actions = el("div", { class: "actions" });
+  // Hide is on every series and book: it goes from every page of this profile.
+  const hideOn = () => actions.append(hideButton(c.title, () => { if (dlg) dlg.close(); }, c));
   const poster = c.cover ? el("img", { class: "read-poster", src: c.cover, alt: "" }) : null;
   hero.append(el("button", { class: "close", "aria-label": "Close", onclick: () => d.close() }, icon("M6 6l12 12M18 6L6 18")),
     el("div", { class: "read-head-row" }, poster, el("div", { class: "detail-head" }, el("h2", { text: c.title }), meta, options, actions)));
@@ -980,7 +1004,7 @@ function shell(c) {
     d.freshT = setTimeout(() => d.classList.remove("fresh"), 1200);
     d.showModal();
   }
-  return { actions, body, options };
+  return { actions, body, options, hideOn };
 }
 
 /** My List on any title: a toggle that remembers per profile. */
@@ -1029,7 +1053,7 @@ export async function openSeries({ key = null, card: c = null }) {
   clearTimeout(poll);
   if (!key && c && c.anilist && followedByAnilist.has(c.anilist)) key = followedByAnilist.get(c.anilist);
   if (key) return showFollowed(key, mine, c);
-  const { actions, body, options } = shell(c);
+  const { actions, body, options, hideOn } = shell(c);
   // The chapters show by themselves: the copies are looked up as the panel opens,
   // and again when the translation or copy choice changes.
   const state = { lang: getPref("read-lang") || "en", copy: getPref("read-copy") || "best", onChange: () => getCopies(c, state, list, mine) };
@@ -1039,6 +1063,7 @@ export async function openSeries({ key = null, card: c = null }) {
   followBtn.addEventListener("click", () => state.follow && state.follow([], followBtn));
   state.followBtn = followBtn;
   actions.append(followBtn, listButton(c));
+  hideOn();
   const list = el("section", { class: "read-sources" });
   body.append(...[list, similarSection(c, mine)].filter(Boolean));
   getCopies(c, state, list, mine);
@@ -1078,7 +1103,7 @@ async function getCopies(c, state, list, mine) {
   // A newer ask (the translation changed) wins over one still out.
   state.asks = (state.asks || 0) + 1;
   const ask = state.asks;
-  list.replaceChildren(el("p", { class: "note read-wait", text: "Finding the chapters on every site, sharpest first. About 20 seconds." }));
+  list.replaceChildren(el("p", { class: "note read-wait", text: "Finding the chapters on every site, sharpest first. This can take up to a minute." }));
   const seenKey = `${c.anilist || c.title}|${state.lang}`;
   const seen = copiesSeen.get(seenKey);
   let got;
@@ -1216,7 +1241,7 @@ async function showFollowed(key, mine, c0) {
   const f = d.followed;
   const c = { ...(c0 || {}), ...f, chapters: d.chapters.length };
   const scroll = dlg && dlg.open ? dlg.scrollTop : 0;
-  const { actions, body, options } = shell(c);
+  const { actions, body, options, hideOn } = shell(c);
   if (f.lang) options.append(el("span", { class: "read-lang-tag", text: f.lang.toUpperCase() }));
   const readIds = new Set(d.chapters.filter((r) => r.read).map((r) => r.id));
   const spot = d.spot;
@@ -1243,6 +1268,11 @@ async function showFollowed(key, mine, c0) {
     } catch (e) { toast(String(e), true); live.disabled = false; }
   });
   actions.append(live, el("button", { class: "btn soft", onclick: () => unfollow(f) }, "Stop following"));
+  hideOn();
+  const hidden = !!(d.spot && d.spot.hide_week);
+  actions.append(el("button", { class: "btn soft read-hideweek" + (hidden ? " on" : ""), "aria-pressed": String(hidden),
+    title: "Keep it out of Your week and Latest updates on this profile",
+    onclick: async () => { if (await setHideWeek(key, f.title, !hidden)) showFollowed(key, ++panelSeq, c0); } }, hidden ? "Show in Your week" : "Hide from Your week"));
   const here = d.chapters.filter((r) => r.downloaded);
   if (here.length && canDelete()) actions.append(el("button", { class: "btn soft", onclick: () => deletePicker(key, f, here, body, c0) }, icon(TRASH), "Delete downloads"));
   const where = el("p", { class: "note read-from-source" },
@@ -1457,7 +1487,7 @@ export async function openBookPanel(c, mine = null) {
     mine = myBooks.find((x) => sameBook(c, x)) || null;
   }
   const shown = { ...c, chapters: null, status: null, genres: c.genres || [] };
-  const { actions, body } = shell(shown);
+  const { actions, body, hideOn } = shell(shown);
   if (c.author) actions.parentElement.querySelector(".meta").prepend(el("span", { text: c.author }), el("span", { class: "sep" }));
   if (mine) {
     if (mine.ready) {
@@ -1481,11 +1511,13 @@ export async function openBookPanel(c, mine = null) {
       poll = setTimeout(() => { if (my === panelSeq && dlg && dlg.open) openBookPanel(c); }, 4000);
     }
     actions.append(el("button", { class: "btn soft", onclick: () => removeBook(mine) }, "Remove"));
+    hideOn();
     if (mine.problem) { const list = el("section", { class: "read-sources" }); body.append(list); bookCopies(c, list, el("button", {}, "x"), my); }
     return;
   }
   const find = el("button", { class: "btn primary" }, icon(ICON.download), "Find copies");
   actions.append(find, listButton(c));
+  hideOn();
   const list = el("section", { class: "read-sources" });
   body.prepend(list);
   find.addEventListener("click", () => bookCopies(c, list, find, my));

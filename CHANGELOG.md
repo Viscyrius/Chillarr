@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.15.1 (2026-11-08)
+- New: Hidden. Every profile can hide films, series, anime, manga and books from all its pages, behind a password of its own (not the PIN). Press Hide on a title's page. Settings > Account & devices sets the password, shows hidden things until you lock them (or for an hour), and lists them to show again.
+- Reading: hide a series from Your week (and Latest updates) on your profile, so whoever looks at the screen doesn't see it. Use the button on its card in Your week or "Hide from Your week" on its page. "Show in Your week" brings it back. It is still in your list and opens as usual.
+- Many more manga sites: 73 now, up from 28. Every big English site in the list is searched, plus Comick Live, MangaBall, NiAdd, NovelCool and more.
+- Fixed: a series a site lists without chapters (often a licensed one, like Darling in the Franxx from Seven Seas) made that whole site give up. It now tries the site's next match and the series' other names. Sites are searched 12 at a time so the slow ones don't hold up the rest.
+
 ## 0.15.0 (2026-11-08)
 - New: Read Party. Read a series together, like Watch together for films. Press the people button in the reader to start one and share the code; friends join from Read together in the top bar. Everyone stays on the same chapter and page, whoever turns it. Joining a series you don't follow adds it to your list without downloading it again.
 - Many more manga sites: Mangahere, MangaFox, Mangatown, MangaKatana, Manganato, MangaPill, MangaRead.org, Bato, Dynasty Scans and Manhwatop, plus MANGA Plus and Comikey from the publishers. Every series is looked for on all of them at once.
