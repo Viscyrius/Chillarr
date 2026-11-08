@@ -293,6 +293,8 @@ fn need(cmd: &str) -> Option<Need> {
         // list per Jellyfin user), and only stops a download Watch now itself
         // started and nobody else wants.
         | "watchnow_remove"
+        // Written as the viewer, who can change only their own (comments.rs).
+        | "comments_key" | "comments_list" | "comments_add" | "comments_edit" | "comments_delete"
         // Only for a viewer who is one of Chillarr's profiles (profiles.rs).
         | "profiles_list" | "profiles_switch_web" | "profiles_add"
         // The phone remote's code for the device asking, and only that one.
@@ -410,6 +412,11 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
         "watchnow_list" => ok(watchnow::list(app).await),
         "watchnow_ready" => res(watchnow::ready(app, &arg::<String>(a, "key")?).await),
         "night_prepare" => res(crate::night::prepare(app, &arg::<String>(a, "id")?, arg(a, "track")?).await),
+        "comments_key" => ok(crate::comments::key_for(app, &arg::<Tile>(a, "tile")?).await),
+        "comments_list" => res(crate::comments::list(app, &arg::<String>(a, "key")?).await),
+        "comments_add" => res(crate::comments::add(app, &arg::<String>(a, "key")?, &arg::<String>(a, "text")?).await),
+        "comments_edit" => res(crate::comments::edit(app, &arg::<String>(a, "key")?, &arg::<String>(a, "commentId")?, &arg::<String>(a, "text")?).await),
+        "comments_delete" => res(crate::comments::delete(app, &arg::<String>(a, "key")?, &arg::<String>(a, "commentId")?).await),
         "syncplay_info" => res(syncplay::info(app)),
         "syncplay_call" => res(syncplay::call(app, &arg::<String>(a, "method")?, &arg::<String>(a, "path")?, arg(a, "body")?).await),
         "syncplay_tile" => ok(syncplay::tile(app, &arg::<String>(a, "id")?).await),
@@ -848,6 +855,7 @@ mod tests {
         // A phone waits for Watch now and asks for night mode through these.
         assert_eq!(need("watchnow_ready"), Some(Need::Viewer));
         assert_eq!(need("night_prepare"), Some(Need::Viewer));
+        assert_eq!(need("comments_add"), Some(Need::Viewer));
         assert_eq!(need("media_delete"), Some(Need::Delete));
         assert_eq!(need("storage_set_cleanup"), Some(Need::Admin));
     }
@@ -913,6 +921,8 @@ mod tests {
         assert_eq!(ids, ["a1", "b2", "c3", "d4"]);
         assert!(item_ids("media_stop_waiting", &json!({ "id": 5, "tile": { "jf_id": null } })).is_empty(), "Radarr/Sonarr numbers and no item");
         assert!(item_ids("profiles_switch_web", &json!({ "id": "dbe66171bc7341e5948735285f43113c" })).is_empty(), "a profile is a person, not a title");
+        assert!(item_ids("comments_delete", &json!({ "key": "tmdb:1", "commentId": "0a1b2c3d4e5f6a7b" })).is_empty(), "a comment's id isn't a title");
+        assert_eq!(item_ids("comments_key", &json!({ "tile": { "jf_id": "b2" } })), ["b2"], "a library title must be one the viewer can see");
     }
 
     #[test]

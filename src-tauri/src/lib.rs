@@ -3,6 +3,7 @@ mod bridge;
 mod viewer;
 mod seal;
 mod catalog;
+mod comments;
 mod completed;
 mod discover;
 mod fix;
@@ -357,6 +358,33 @@ async fn media_watched_keys(app: AppHandle) -> Vec<String> {
 #[tauri::command]
 fn completed_remove(app: AppHandle, key: String) -> Result<(), String> {
     completed::remove(&app, &key)
+}
+
+/// The key a title's comments are kept under (comments.rs), or None.
+#[tauri::command]
+async fn comments_key(app: AppHandle, tile: tiles::Tile) -> Option<String> {
+    comments::key_for(&app, &tile).await
+}
+
+/// A title's comments, newest first.
+#[tauri::command]
+async fn comments_list(app: AppHandle, key: String) -> Result<Vec<comments::View>, String> {
+    comments::list(&app, &key).await
+}
+
+#[tauri::command]
+async fn comments_add(app: AppHandle, key: String, text: String) -> Result<comments::View, String> {
+    comments::add(&app, &key, &text).await
+}
+
+#[tauri::command]
+async fn comments_edit(app: AppHandle, key: String, comment_id: String, text: String) -> Result<comments::View, String> {
+    comments::edit(&app, &key, &comment_id, &text).await
+}
+
+#[tauri::command]
+async fn comments_delete(app: AppHandle, key: String, comment_id: String) -> Result<(), String> {
+    comments::delete(&app, &key, &comment_id).await
 }
 
 /// `(keys, jellyfin ids)` on My List.
@@ -887,6 +915,11 @@ pub fn run() {
             storage_set_cleanup,
             media_my_list_marks,
             completed_remove,
+            comments_key,
+            comments_list,
+            comments_add,
+            comments_edit,
+            comments_delete,
             media_completed,
             media_watched_keys,
             media_show_episodes,

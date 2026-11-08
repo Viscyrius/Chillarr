@@ -3,6 +3,7 @@ import { $, ask, canDelete, closeDialog, el, getPref, icon, ICON, invoke, listen
 import { canWatchNow, isWatchNow, movieLike, play, removeWatchNow, watchNow } from "./player.js";
 import { completedActions, confirmRedownload, isWatched, listable, loadWatched, onMyList, removeContinue, resumable, setMyList } from "./mylist.js";
 import { subtitlesControl } from "./subpick.js";
+import { commentsBox, loadComments } from "./comments.js";
 
 const dlg = $("#detail");
 const shut = () => {
@@ -818,6 +819,7 @@ export async function openDetail(t, opts = {}) {
   pickState = null;
   loadAbout(t);
   loadSimilar(t);
+  loadComments(t);
   const pic = t.backdrop || t.poster;
   $("#detail-hero").style.backgroundImage = pic ? `url("${pic.replace(/"/g, "%22")}")` : "none";
   $("#detail-title").textContent = t.title;
@@ -925,7 +927,7 @@ export async function openDetail(t, opts = {}) {
 // panel has opened. A card opens its title in place; Back (Esc, B, the phone
 // remote, or the Back pill) returns to the title before, at the same card.
 const simBox = el("section", { class: "similar", id: "detail-similar", "aria-label": "Similar to this", hidden: true });
-$("#detail .detail-body").append(simBox);
+$("#detail .detail-body").append(simBox, commentsBox);
 /** Where the row sits in the panel's content, leaving out the slide a title swap gives the body. */
 function simTop() {
   const body = simBox.parentElement;
