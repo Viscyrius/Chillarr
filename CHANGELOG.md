@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.14.0 (2026-11-08)
+- New: Style in Movies too. Cinema, Midnight or Classic, each in dark or light, from the picker in the middle of the top bar. Movies and reading each keep their own style, for each profile.
+  - Midnight: dark violet and dense, a shorter picture at the top, ratings on the covers, and a Popular ranking down the side (Top 10, Trending, Series).
+  - Classic: the featured picture is a card inside the page, and the Top 10 is a numbered chart with the title and genre beside each cover.
+- New: Explore all on reading rows. Click a row's title (Popular manhwa, Fantasy books and the rest) to see everything in it, with more loading as you scroll. Book rows too.
+- Reading looks tidier:
+  - The arrows on the big picture sit with the dots at the bottom right, so they never cover the title. Same in Movies.
+  - The picture behind is sharper when the series has a banner.
+  - New chapters is only as wide as what's in it, not a big empty panel.
+  - Midnight: the Popular now grid lines up with its heading, and Latest updates is a proper grid.
+  - Classic: the Top 10 is a numbered chart with small covers. Cards show the title, then the genre and length on one line. UP and NEW no longer sit on top of each other.
+  - Lists that switch with tabs fade across instead of jumping.
+- Light mode, everywhere: buttons, the details panel, the series panel and the hover cards no longer keep dark colours. The player and the reader stay dark.
+- On a narrow window the Style picker sits at the top of the page, in one row.
+- New: 18+ titles can also come from HentaiRead. It's only searched for 18+ titles.
+- 18+ in the reading filters can be turned on from any profile (it's still off until you pick it).
+- A TV, phone or browser signed in as a profile with a PIN now asks for that PIN first.
+- Each profile has its own manga and books: what one follows doesn't show on another's, and following something already here doesn't download it again.
+- A profile made on a TV or phone now shows in the PC's profile picker right away.
+- Watch together no longer micro-stutters: tiny pauses aren't sent to the whole party any more, and small drifts are caught up gently instead of jumping.
+- Fixed: a Watch now film could stay in Downloads after it finished (The Dark Knight did). A player that has said nothing for 10 minutes no longer counts as still watching.
+
 ## 0.13.4 (2026-11-08)
 - New chapters are hard to miss now: a glowing New chapters section at the top of reading Home (in every style), a count on the Home tab, NEW on each new chapter in a series, and a short note when you open reading. New means out since you last read that series, so following something doesn't call its whole back catalogue new.
 - Eight more manga sites: Thunder Scans and Manhua Plus (furthest ahead on long manhua: The Devil Butler goes to chapter 922 in English there, where the others stopped at 701), plus ManhuaUS, Top Manhua, Mangakakalot, Mangabat, MangaK and Zinmanga. They're added the next time the manga downloader starts. On a series you follow, Change copy lists them.

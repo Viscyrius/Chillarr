@@ -8,6 +8,7 @@
 import { ask, el, getPref, icon, ICON, invoke, setPref, toast } from "./api.js";
 import { openReader } from "./reader.js";
 import { openBook } from "./bookreader.js";
+import { applyLook, drawPickers, inlinePicker, onStyle, styleNow } from "./look.js";
 
 const KIND = { KR: "Manhwa", CN: "Manhua", TW: "Manhua", JP: "Manga" };
 const kindOf = (c) => (c.kind === "book" ? "Book" : c.format === "NOVEL" ? "Light novel" : KIND[c.country] || "Comic");
@@ -195,7 +196,20 @@ function card(c, shelf = null) {
   b.addEventListener("click", () => pvOpen(c, shelf));
   b.addEventListener("mouseenter", () => pvSchedule(b, c, shelf));
   b.addEventListener("mouseleave", () => pvSoon());
+  if (styleNow() === "classic" && c.kind !== "book") classicCaption(b, c, shelf);
   return b;
+}
+
+/** Classic's caption: the title, then one quiet line (genre in colour, then length or where you are). */
+function classicCaption(t, c, shelf) {
+  const cap = t.querySelector(".cap");
+  const second = shelf ? shelf.resume_label || "" : (c.chapters ? `${c.chapters} ch` : c.year ? String(c.year) : "");
+  if (cap) cap.replaceWith(el("div", { class: "cap cl-cap" }, el("strong", { text: c.title })));
+  const line = el("div", { class: "rc-extra cl-line" },
+    ...[c.genres && c.genres.length ? el("span", { class: "rc-genre", text: c.genres[0] }) : null,
+      second ? el("span", { class: "rc-ch", text: second }) : null].filter(Boolean));
+  const extra = t.querySelector(".rc-extra");
+  if (extra) extra.replaceWith(line); else t.append(line);
 }
 
 /** A Top 10 card: the big outlined number beside the cover, like the films' Top 10. */
@@ -219,16 +233,35 @@ function bookCard(x) {
   return b;
 }
 
-function row(id, title, cards) {
+/** Where a row's "Explore all" goes: every title in it, a page at a time (allPage). */
+const allHref = (id, title) => `#r-all/${encodeURIComponent(id)}/${encodeURIComponent(title)}`;
+const hasAll = (id) => id in ROW_EXPLORE || id.startsWith("books-");
+
+function row(id, title, cards, allId = id) {
   const track = el("div", { class: "track" }, cards);
   const step = () => track.clientWidth * 0.85;
+  // Like Movies: the title and "Explore all" open every title in the row.
+  const all = hasAll(allId) ? allHref(allId, title === "Top 10 today" ? "Trending now" : title) : null;
   return el("section", { class: "row", dataset: { row: id } },
-    el("div", { class: "row-head" }, el("h2", { text: title }), el("span", { class: "count", text: String(cards.length) })),
+    el("div", { class: "row-head" }, all ? el("a", { class: "row-title", href: all }, el("h2", { text: title })) : el("h2", { text: title }),
+      all ? el("a", { class: "explore", href: all }, "Explore all", icon(ICON.right)) : el("span", { class: "count", text: String(cards.length) })),
     el("div", { class: "track-wrap" },
       el("button", { class: "arrow prev", "aria-label": "Scroll left", onclick: () => track.scrollBy({ left: -step(), behavior: "smooth" }) }, icon(ICON.left)),
       track,
       el("button", { class: "arrow next", "aria-label": "Scroll right", onclick: () => track.scrollBy({ left: step(), behavior: "smooth" }) }, icon(ICON.right))));
 }
+
+/** read.rs rows() as the same query for a whole page (read_explore). */
+const ROW_EXPLORE = {
+  trending: { kind: "all", sort: "trending" },
+  manhwa: { kind: "manhwa", sort: "popular" },
+  manhua: { kind: "manhua", sort: "popular" },
+  manga: { kind: "manga", sort: "popular" },
+  top: { kind: "all", sort: "score" },
+  new: { kind: "all", status: "RELEASING", year_from: 2024, sort: "popular" },
+  action: { kind: "all", genres: ["Action"], sort: "popular" },
+  romance: { kind: "all", genres: ["Romance"], sort: "popular" },
+};
 
 const asCard = (s) => ({ anilist: s.anilist, title: s.title, cover: s.cover, country: s.country, status: s.status });
 const page = (...kids) => el("div", { class: "read-page" }, ...kids);
@@ -273,7 +306,8 @@ function freshCards(lib) {
     t.classList.add("fresh-tile", "rise");
     t.style.setProperty("--i", String(i));
     const cap = t.querySelector(".cap");
-    if (cap) cap.replaceChildren(el("strong", { text: s.title }), ` \u00b7 ${s.fresh_label || "New"}`, el("small", { class: "fresh-when", text: ago(s.fresh_at * 1000) }));
+    if (cap) cap.replaceChildren(el("strong", { text: s.title }), el("span", { class: "fresh-ch", text: s.fresh_label || "New" }), el("small", { class: "fresh-when", text: ago(s.fresh_at * 1000) }));
+    t.querySelector(".rc-extra")?.remove();
     return t;
   });
 }
@@ -299,6 +333,7 @@ export async function renderRead(view, tab) {
   pvHide(true);
   drawPickers(); // the top bar's Style picker, on every reading tab
   if (TAB_TITLE[tab]) return explorePage(view, tab, my);
+  if (tab === "r-all") return allPage(view, my);
   if (tab === "r-books") return booksPage(view, my);
   if (tab === "r-mylist") return listPage(view, my);
   if (tab === "r-downloads") return downloadsPage(view, my);
@@ -321,7 +356,10 @@ function readHero(picks) {
   if (!picks.length) return null;
   let at = 0;
   const bg = (c) => (c.banner || c.cover ? `url("${String(c.banner || c.cover).replace(/"/g, "%22")}")` : "none");
+  // A banner is a wide strip and only needs softening; a cover alone is blown up, so it's blurred more.
+  const kindBg = (n, c) => n.classList.toggle("is-cover", !c.banner);
   const bgA = el("div", { class: "hero-bg read-hero-bg", style: `background-image:${bg(picks[0])}` });
+  kindBg(bgA, picks[0]);
   const bgB = el("div", { class: "hero-bg read-hero-bg out" });
   const art = el("div", { class: "read-hero-art" });
   const section = el("section", { class: "hero read-hero-top" }, bgA, bgB, copy(picks[0]), art);
@@ -349,8 +387,9 @@ function readHero(picks) {
   }
   if (picks.length < 2) return section;
   const dots = el("div", { class: "hero-dots" }, picks.map((_, i) => el("button", { class: i === 0 ? "on" : "", "aria-label": `Show featured series ${i + 1}`, onclick: () => show(i) })));
+  // The arrows sit with the dots, bottom right, clear of the words.
   const side = (cls, label, path, step) => el("button", { class: `hero-arrow ${cls}`, "aria-label": label, onclick: () => show(at + step) }, icon(path));
-  section.append(dots, side("prev", "Previous series", ICON.left, -1), side("next", "Next series", ICON.right, 1));
+  section.append(el("div", { class: "hero-nav" }, side("prev", "Previous series", ICON.left, -1), dots, side("next", "Next series", ICON.right, 1)));
   let downX = null;
   section.addEventListener("pointerdown", (e) => { if (!e.target.closest("button, a")) downX = e.clientX; });
   section.addEventListener("pointerup", (e) => {
@@ -362,6 +401,7 @@ function readHero(picks) {
   function show(i) {
     at = (i + picks.length) % picks.length;
     back.style.backgroundImage = bg(picks[at]);
+    kindBg(back, picks[at]);
     back.classList.remove("out");
     front.classList.add("out");
     [front, back] = [back, front];
@@ -394,76 +434,15 @@ function heroPicks(cards) {
   return [...mine, ...out.filter((c) => !followedByAnilist.has(c.anilist))].slice(0, 6);
 }
 
-/* ---------- styles: how reading looks ----------
+/* ---------- styles: how reading looks (look.js) ----------
    Cinema: big pictures and rows, like the films. Midnight: dark and dense, the
    newest chapters of what you follow up front, a ranking down the side.
    Classic: light, a numbered top 10, your series by the day they update, and
-   popular by genre. Kept per profile; the picker sits in the middle of the top
-   bar while reading (on a narrow screen, at the top of Home). */
-const STYLES = [["cinema", "Cinema"], ["midnight", "Midnight"], ["classic", "Classic"]];
-const styleNow = () => { const s = getPref("read-style"); return STYLES.some(([k]) => k === s) ? s : "cinema"; };
-/** Dark or light, kept for each style: Classic starts light, the others dark. */
-const shadeNow = (s = styleNow()) => { const v = getPref(`read-shade-${s}`); return v === "light" || v === "dark" ? v : s === "classic" ? "light" : "dark"; };
-function applyLook() {
-  document.body.dataset.rstyle = styleNow();
-  document.body.dataset.rshade = shadeNow();
-}
-const SUN = "M12 4V2M12 22v-2M4 12H2M22 12h-2M5.6 5.6 4.2 4.2M19.8 19.8l-1.4-1.4M5.6 18.4l-1.4 1.4M19.8 4.2l-1.4 1.4M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10z";
-const MOON = "M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z";
-function flipShade() {
-  setPref(`read-shade-${styleNow()}`, shadeNow() === "light" ? "dark" : "light");
-  applyLook();
-  drawPickers();
-}
+   popular by genre. */
 let currentView = null;
 let currentTab = "r-home";
-
-function styleButtons(onPick) {
-  const now = styleNow();
-  return STYLES.map(([k, label]) => el("button", { class: k === now ? "on" : "", dataset: { style: k }, "aria-pressed": String(k === now), onclick: () => onPick(k) }, label));
-}
-
-function setStyle(k) {
-  if (k === styleNow()) return;
-  setPref("read-style", k);
-  applyLook();
-  drawPickers();
-  if (!currentView || !document.body.contains(currentView)) return;
-  // The page fades across to the new look.
-  const v = currentView;
-  v.classList.add("rs-swap");
-  setTimeout(() => { renderRead(v, currentTab); requestAnimationFrame(() => v.classList.remove("rs-swap")); }, matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 180);
-}
-
-let topPicker = null;
-function drawPickers() {
-  if (!topPicker) {
-    const bar = document.getElementById("topbar");
-    const actions = bar && bar.querySelector(".top-actions");
-    if (!actions) return;
-    topPicker = el("div", { class: "read-style", role: "group", "aria-label": "Style" }, el("span", { class: "read-style-label", text: "Style" }), el("div", { class: "read-style-seg" }));
-    bar.insertBefore(topPicker, actions);
-  }
-  const seg = topPicker.querySelector(".read-style-seg");
-  seg.replaceChildren(...styleButtons(setStyle), el("i", { class: "read-style-pill", "aria-hidden": "true" }));
-  const light = shadeNow() === "light";
-  const shade = () => el("button", { class: "read-shade", "aria-label": light ? "Dark" : "Light", title: light ? "Switch to dark" : "Switch to light", onclick: flipShade }, icon(light ? MOON : SUN));
-  const old = topPicker.querySelector(".read-shade");
-  if (old) old.replaceWith(shade()); else topPicker.append(shade());
-  // The pill slides under the picked one.
-  requestAnimationFrame(() => {
-    const on = seg.querySelector("button.on");
-    const pill = seg.querySelector(".read-style-pill");
-    if (on && pill) { pill.style.width = `${on.offsetWidth}px`; pill.style.transform = `translateX(${on.offsetLeft - 3}px)`; }
-  });
-  for (const s of document.querySelectorAll(".read-style-inline .chips")) {
-    s.replaceChildren(...styleButtons(setStyle).map((b) => { b.className = "chip" + (b.className ? " on" : ""); return b; }),
-      el("button", { class: "chip", onclick: flipShade }, light ? "Dark" : "Light"));
-  }
-}
-
-/** The style picker at the top of Home, for screens too narrow for the top bar's. */
-const inlinePicker = () => el("div", { class: "read-style-inline" }, el("span", { text: "Style" }), el("div", { class: "chips" }));
+// A new style draws the reading tab on screen again.
+onStyle("read", () => (currentView && document.body.contains(currentView) ? renderRead(currentView, currentTab) : null));
 
 /** "2 hours ago" for an upload time (Suwayomi gives milliseconds since 1970, as text). */
 function ago(ms) {
@@ -506,19 +485,28 @@ function tabbed(cls, tabs, draw) {
   const head = el("div", { class: "tabbed-tabs", role: "tablist" });
   const body = el("div", { class: "tabbed-body" });
   const cache = new Map();
-  const pick = async (i) => {
+  let want = 0;
+  const pick = async (i, first = false) => {
+    want = i;
     [...head.children].forEach((b, j) => { b.classList.toggle("on", j === i); b.setAttribute("aria-selected", String(j === i)); });
-    body.classList.add("swap");
+    // The old list fades out while the new one loads, then the new one fades in.
+    const out = first ? null : new Promise((r) => setTimeout(r, 160));
+    if (!first) body.classList.add("swap");
     let items = cache.get(i);
     if (!items) {
       try { items = await tabs[i][1](); } catch (e) { items = []; }
       cache.set(i, items);
     }
+    await out;
+    if (want !== i) return; // another tab was picked meanwhile
+    body.style.minHeight = first ? "" : `${body.offsetHeight}px`; // no jump while it swaps
     body.replaceChildren(...draw(items));
-    requestAnimationFrame(() => body.classList.remove("swap"));
+    void body.offsetWidth;
+    body.classList.remove("swap");
+    setTimeout(() => { body.style.minHeight = ""; }, 260);
   };
   head.append(...tabs.map(([label], i) => el("button", { role: "tab", onclick: () => pick(i) }, label)));
-  pick(0);
+  pick(0, true);
   return el("div", { class: `tabbed ${cls}` }, head, body);
 }
 
@@ -569,9 +557,24 @@ function classicCard(c, i, opts = {}) {
   const t = card(c, opts.shelf || null);
   t.classList.add("rise", "cl-card");
   t.style.setProperty("--i", String(i));
-  if (opts.rank) t.querySelector(".art").append(el("span", { class: "cl-rank", text: String(opts.rank) }));
   if (opts.up) t.querySelector(".art").append(el("span", { class: "cl-up", text: "UP" }));
   return t;
+}
+
+/** Classic's ranking: a big number, a small cover, the title and genre, in columns like a chart. */
+function classicRank(c, i) {
+  const img = c.cover ? el("img", { src: c.cover, alt: "", loading: "lazy", decoding: "async" }) : null;
+  if (img) img.addEventListener("load", () => img.classList.add("loaded"), { once: true });
+  const b = el("button", { class: "cl-rk", style: `--i:${i}`, "aria-label": c.title },
+    el("span", { class: "cl-rk-n", text: String(i + 1) }),
+    el("span", { class: "cl-rk-art art" }, img),
+    el("span", { class: "cl-rk-text" },
+      el("strong", { text: c.title }),
+      el("small", { text: [(c.genres || [])[0], kindOf(c)].filter(Boolean).join(" \u00b7 ") })));
+  b.addEventListener("click", () => pvOpen(c, null));
+  b.addEventListener("mouseenter", () => pvSchedule(b, c, null));
+  b.addEventListener("mouseleave", () => pvSoon());
+  return b;
 }
 
 async function classicHome(view, my) {
@@ -590,7 +593,7 @@ async function classicHome(view, my) {
     ["Trending", async () => trending.slice(0, 10)],
     ["Popular", () => exploreItems({ kind: "all", sort: "popular" }).then((x) => x.slice(0, 10))],
     ["Top rated", () => exploreItems({ kind: "all", sort: "score" }).then((x) => x.slice(0, 10))],
-  ], (items) => [el("div", { class: "cl-grid" }, items.map((c, i) => classicCard(c, i, { rank: i + 1 })))]));
+  ], (items) => [el("div", { class: "cl-ranks" }, items.map(classicRank))]));
   byGenre.append(el("h2", { class: "cl-h", text: "Popular by genre" }), tabbed("cl-genres",
     CLASSIC_GENRES.map((g) => [g, () => exploreItems({ kind: "all", genres: [g], sort: "popular" }).then((x) => x.slice(0, 10))]),
     (items) => [el("div", { class: "cl-grid" }, items.map((c, i) => classicCard(c, i)))]));
@@ -624,7 +627,7 @@ async function homePage(view, my) {
   const lib = el("div");
   const rows = el("div", {}, ...skel());
   const top = el("div", { class: "read-hero-slot" });
-  view.replaceChildren(top, page(head("Reading"), lib, rows));
+  view.replaceChildren(top, page(inlinePicker(), head("Reading"), lib, rows));
   const [{ lib: series }, books] = await Promise.all([know(), invoke("read_books").catch(() => [])]);
   if (my !== seq) return;
   myBooks = books;
@@ -643,7 +646,7 @@ async function homePage(view, my) {
     const h = readHero(heroPicks(got.flatMap((r) => r.items)));
     if (h) { top.replaceWith(h); view.querySelector(".read-page").classList.add("under-hero"); }
     rows.replaceChildren(...got.filter((r) => r.items.length).map((r) => (r.id === "trending"
-      ? row("top10", "Top 10 today", r.items.slice(0, 10).map((c, i) => topTen(c, i + 1)))
+      ? row("top10", "Top 10 today", r.items.slice(0, 10).map((c, i) => topTen(c, i + 1)), "trending")
       : row(r.id, r.title, r.items.map((c) => card(c))))));
     invoke("read_book_rows").then((bk) => {
       if (my !== seq) return;
@@ -756,6 +759,7 @@ async function explorePage(view, tab, my) {
   const style = styleNow();
   const top = el("div", { class: "read-hero-slot" });
   const filterHead = head(TAB_TITLE[tab], el("div", { class: "read-filters" }, toggle, order));
+  const picker = inlinePicker();
   let body;
   if (style === "midnight") {
     const side = el("aside", { class: "mn-side" }, el("h2", { class: "mn-h", text: "Popular" }), tabbed("mn-rank", [
@@ -763,17 +767,17 @@ async function explorePage(view, tab, my) {
       ["Top rated", () => exploreItems({ kind, sort: "score" }).then((x) => x.slice(0, 10))],
       ["Most read", () => exploreItems({ kind, sort: "popular" }).then((x) => x.slice(0, 10))],
     ], (items) => items.map(rankRow)));
-    body = el("div", { class: "read-page mn-home mn-explore" }, filterHead, el("div", { class: "mn-cols" }, el("div", { class: "mn-main" }, panel, grid, more), side));
+    body = el("div", { class: "read-page mn-home mn-explore" }, picker, filterHead, el("div", { class: "mn-cols" }, el("div", { class: "mn-main" }, panel, grid, more), side));
   } else if (style === "classic") {
     const top5 = el("section", { class: "cl-block cl-top5" }, tabbed("cl-top", [
       ["Trending", () => exploreItems({ kind, sort: "trending" }).then((x) => x.slice(0, 5))],
       ["Top rated", () => exploreItems({ kind, sort: "score" }).then((x) => x.slice(0, 5))],
-    ], (items) => [el("div", { class: "cl-grid" }, items.map((c, i) => classicCard(c, i, { rank: i + 1 })))]));
-    body = el("div", { class: "read-page cl-home cl-explore" },
+    ], (items) => [el("div", { class: "cl-ranks" }, items.map(classicRank))]));
+    body = el("div", { class: "read-page cl-home cl-explore" }, picker,
       el("div", { class: "cl-banner" }, el("h1", { text: TAB_TITLE[tab] }), el("p", { text: `The ${TAB_TITLE[tab].toLowerCase()} people are reading now, and everything else to find.` })),
       top5, filterHead, panel, grid, more);
   } else {
-    body = page(filterHead, panel, grid, more);
+    body = page(picker, filterHead, panel, grid, more);
   }
   view.replaceChildren(top, body);
   if (style !== "classic") {
@@ -818,6 +822,43 @@ async function explorePage(view, tab, my) {
   io.observe(more);
   const stop = () => { if (my !== seq) io.disconnect(); };
   window.addEventListener("hashchange", stop, { once: true });
+  await next();
+  return true;
+}
+
+/** Every title in a row, more as you scroll: a reading row's "Explore all". */
+async function allPage(view, my) {
+  clearInterval(heroTimer);
+  const [, rawId, rawTitle] = location.hash.slice(1).split("/");
+  const id = decodeURIComponent(rawId || "");
+  const title = decodeURIComponent(rawTitle || "") || "Explore";
+  const books = id.startsWith("books-");
+  const grid = el("div", { class: "grid read-grid" });
+  const more = el("div", { class: "read-more" });
+  const back = el("button", { class: "btn soft read-back", onclick: () => (history.length > 1 ? history.back() : (location.hash = "#r-home")) }, icon(ICON.left), "Back");
+  view.replaceChildren(page(inlinePicker(), head(title, back), grid, more));
+  if (!hasAll(id)) { more.replaceChildren(note("This row can't be opened.")); return true; }
+  await know();
+  if (my !== seq) return;
+  let pageNo = 0, done = false, busy = false;
+  async function next() {
+    if (busy || done || my !== seq) return;
+    busy = true;
+    more.replaceChildren(el("div", { class: "skel skel-row" }));
+    try {
+      const got = books ? await invoke("read_book_more", { id, page: ++pageNo }) : await invoke("read_explore", { e: { ...ROW_EXPLORE[id], page: ++pageNo } });
+      if (my !== seq) return;
+      grid.append(...(got.items || []).map((c, k) => { const t = card(c); t.style.setProperty("--i", String(Math.min(k, 20))); t.classList.add("rise"); return t; }));
+      done = !got.more;
+      more.replaceChildren(done ? note(grid.childElementCount ? "That's everything." : "Nothing here right now.") : "");
+      if (!done) setTimeout(() => { if (my === seq && more.getBoundingClientRect().top < innerHeight + 900) next(); }, 0);
+    } catch (e) {
+      if (my === seq) { more.replaceChildren(note(String(e))); done = true; }
+    } finally { busy = false; }
+  }
+  const io = new IntersectionObserver((e) => { if (e[0].isIntersecting) next(); }, { rootMargin: "900px" });
+  io.observe(more);
+  window.addEventListener("hashchange", () => io.disconnect(), { once: true });
   await next();
   return true;
 }

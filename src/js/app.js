@@ -10,10 +10,11 @@ import * as place from "./place.js";
 import "./nav.js";
 import { recentSearches } from "./recent.js";
 import { applyTheme, syncIcons } from "./theme.js";
+import { applyLook, drawPickers, onStyle } from "./look.js";
 
 const view = $("#view");
 const TABS = ["home", "movies", "series", "anime", "downloads", "mylist", "settings", "explore", "filter",
-  "r-home", "r-manhwa", "r-manhua", "r-manga", "r-novels", "r-books", "r-downloads", "r-mylist"];
+  "r-home", "r-manhwa", "r-manhua", "r-manga", "r-novels", "r-books", "r-downloads", "r-mylist", "r-all"];
 
 /* ---------- watching and reading ----------
    Two Chillarrs in one: the book button switches to reading (its own tabs,
@@ -32,6 +33,9 @@ function applyMode(mode, animate) {
   btn.setAttribute("aria-label", reading ? "Switch to watching" : "Switch to reading");
   btn.title = reading ? "Movies and shows" : "Reading";
   $("#search").placeholder = reading ? "Manga, manhwa, novels, books" : "Movies, series, anime";
+  // Each mode has its own style and shade.
+  applyLook();
+  drawPickers();
   if (!first && animate) {
     clearTimeout(swapTimer);
     body.classList.remove("mode-swap");
@@ -61,10 +65,11 @@ function route(redraw = false) {
   const tab = TABS.includes(hash.split("/")[0]) ? hash.split("/")[0] : "home";
   const tabMode = modeOf(tab);
   if (tabMode) { applyMode(tabMode, true); if (getPref("mode") !== tabMode) setPref("mode", tabMode); }
+  applyLook(); // another profile may keep another look
   const left = place.current();
   const { id, fresh } = place.entry();
   document.querySelectorAll("[data-tab]").forEach((a) => a.classList.toggle("on", a.dataset.tab === tab));
-  if (tab === current && tab !== "settings" && tab !== "explore" && tab !== "filter") return;
+  if (tab === current && tab !== "settings" && tab !== "explore" && tab !== "filter" && tab !== "r-all") return;
   // Leaving a page: remember where you were on it. Search results aren't a
   // page of their own; the place from before the search stays.
   if (left && left !== id && current && current !== "search") place.remember(left);
@@ -91,9 +96,13 @@ function route(redraw = false) {
   else drawn = renderTab(view, tab, mode);
   // Once the page is in (it runs before that frame is drawn); what loads after it is followed too.
   if (mode) Promise.resolve(drawn).then(() => { if (place.current() === id) place.restore(id); });
+  return drawn;
 }
 
 window.addEventListener("hashchange", () => route());
+
+// A new style while watching: the page on screen is drawn again in it, where you were.
+onStyle("watch", () => { if (current === "search") return null; current = ""; return route(true); });
 
 // The top bar turns solid once the page scrolls past the hero.
 window.addEventListener("scroll", () => $("#topbar").classList.toggle("solid", window.scrollY > 40), { passive: true });

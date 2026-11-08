@@ -785,6 +785,12 @@ async fn read_book_rows() -> Vec<serde_json::Value> {
     books::rows().await
 }
 
+/// One page of a book row's See all.
+#[tauri::command]
+async fn read_book_more(id: String, page: u32) -> Result<serde_json::Value, String> {
+    books::more(&id, page).await
+}
+
 #[tauri::command]
 async fn read_book_search(term: String) -> Result<Vec<serde_json::Value>, String> {
     books::search(&term).await
@@ -1097,6 +1103,7 @@ pub fn run() {
             read_similar,
             read_downloads,
             read_book_rows,
+            read_book_more,
             read_book_search,
             read_book_copies,
             read_book_get,
