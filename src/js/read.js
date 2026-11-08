@@ -8,6 +8,7 @@
 import { ask, canDelete, el, getPref, icon, ICON, invoke, setPref, toast } from "./api.js";
 import { openReader } from "./reader.js";
 import { openBook } from "./bookreader.js";
+import { ADULT_CHOICES, chipKit, clearButton, filtersButton, moreButton, orderSelect } from "./filterpanel.js";
 import { applyLook, drawPickers, inlinePicker, onStyle, styleNow } from "./look.js";
 
 const KIND = { KR: "Manhwa", CN: "Manhua", TW: "Manhua", JP: "Manga" };
@@ -687,47 +688,19 @@ async function explorePage(view, tab, my) {
   const grid = el("div", { class: "grid read-grid" });
   const more = el("div", { class: "read-more" });
   const panel = el("div", { class: "fl-bar read-fl" });
-  let open = getPref("read-filters-open") === "1";
   let moreOpen = false;
-  const countBadge = el("span", { class: "read-fl-count" });
-  const toggle = el("button", { class: "btn soft read-fl-toggle", "aria-expanded": String(open), onclick: () => {
-    open = !open;
-    setPref("read-filters-open", open ? "1" : "0");
-    toggle.setAttribute("aria-expanded", String(open));
-    panel.classList.toggle("shut", !open);
-  } }, icon("M4 6h16M7 12h10M10 18h4"), "Filters", countBadge);
-  const order = el("select", { class: "quality", "aria-label": "Order" }, SORTS.map(([v, t]) => el("option", { value: v, text: t, selected: f.sort === v })));
-  order.addEventListener("change", () => change((x) => (x.sort = order.value)));
-  panel.classList.toggle("shut", !open);
+  const { button: toggle, count: showCount } = filtersButton(panel, "read-filters-open");
+  const order = orderSelect(SORTS, f.sort, (v) => change((x) => (x.sort = v)));
 
   function change(mut) {
     mut(f);
     drawPanel();
     restart();
   }
-  const cycle = (inKey, outKey, v) => change((x) => {
-    if (x[inKey].includes(v)) { x[inKey] = x[inKey].filter((g) => g !== v); x[outKey] = [...x[outKey], v]; }
-    else if (x[outKey].includes(v)) x[outKey] = x[outKey].filter((g) => g !== v);
-    else x[inKey] = [...x[inKey], v];
-  });
-  const triChip = (v, inKey, outKey) => {
-    const on = f[inKey].includes(v), out = f[outKey].includes(v);
-    return el("button", { class: `chip${on ? " on" : ""}${out ? " out" : ""}`, "aria-pressed": on ? "true" : out ? "mixed" : "false",
-      title: on ? "Showing only these. Click to leave them out." : out ? "Leaving these out. Click to clear." : "Click to show only these",
-      onclick: () => cycle(inKey, outKey, v) }, ...[out ? icon("M5 12h14") : on ? icon(ICON.check) : null, v].filter(Boolean));
-  };
-  const oneOf = (options, isOn, pick) => el("div", { class: "chips" }, options.map((o) =>
-    el("button", { class: `chip${isOn(o) ? " on" : ""}`, onclick: () => change((x) => pick(x, o)) }, o[o.length - 1])));
-  const field = (label, ...kids) => el("div", { class: "fl-field" }, el("h3", { text: label }), ...kids);
-  const yearBox = (key, label) => {
-    const i = el("input", { class: "read-from", type: "number", min: "1900", max: "2100", step: "1", placeholder: label, "aria-label": label, value: f[key] ? String(f[key]) : "" });
-    i.addEventListener("change", () => change((x) => { const n = parseInt(i.value, 10); x[key] = n >= 1900 && n <= 2100 ? n : null; }));
-    return i;
-  };
+  const { triChip, oneOf, field, years } = chipKit(f, change);
   function drawPanel() {
     const n = filterCount(f);
-    countBadge.textContent = n ? String(n) : "";
-    countBadge.hidden = !n;
+    showCount(n);
     const gs = f.adult !== "hide" && info.adult ? [...genres, "Hentai"] : genres;
     const parts = [
       field("Genres", el("div", { class: "chips" }, gs.map((g) => triChip(g, "genres", "not_genres")))),
@@ -736,20 +709,20 @@ async function explorePage(view, tab, my) {
       el("div", { class: "fl-row" },
         field("Status", oneOf(STATUSES, (o) => f.status === o[0], (x, o) => (x.status = o[0]))),
         field("Rating", oneOf(SCORES, (o) => f.min_score === o[0], (x, o) => (x.min_score = o[0])))),
-      el("button", { class: "linkish fl-more" + (moreOpen ? " open" : ""), onclick: () => { moreOpen = !moreOpen; drawPanel(); } }, "More filters", icon("m6 9 6 6 6-6")),
+      moreButton(moreOpen, () => { moreOpen = !moreOpen; drawPanel(); }),
     ];
     if (moreOpen) {
       parts.push(
         field("More themes", el("div", { class: "chips" }, info.tags.slice(20).map((t) => triChip(t, "tags", "not_tags")))),
         el("div", { class: "fl-row" },
           field("Length", oneOf(LENGTHS.map((l, i) => [i, l[2]]), (o) => f.length === o[0], (x, o) => (x.length = o[0]))),
-          field("Years", el("div", { class: "read-years" }, yearBox("year_from", "From"), el("span", { text: "to" }), yearBox("year_to", "To")))));
+          field("Years", years())));
       if (info.adult) {
-        parts.push(field("18+", oneOf([["hide", "Hidden"], ["include", "Include"], ["only", "Only 18+"]], (o) => f.adult === o[0], (x, o) => (x.adult = o[0])),
+        parts.push(field("18+", oneOf(ADULT_CHOICES, (o) => f.adult === o[0], (x, o) => (x.adult = o[0])),
           el("small", { class: "read-fl-hint", text: "Off until you pick Include or Only 18+." })));
       }
     }
-    if (n) parts.push(el("button", { class: "linkish read-fl-clear", onclick: () => change((x) => Object.assign(x, { ...BLANK_FILTER, sort: x.sort })) }, "Clear filters"));
+    if (n) parts.push(clearButton(() => change((x) => Object.assign(x, { ...BLANK_FILTER, sort: x.sort }))));
     panel.replaceChildren(...parts);
   }
   drawPanel();
