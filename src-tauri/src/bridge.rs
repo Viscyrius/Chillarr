@@ -314,8 +314,10 @@ fn need(cmd: &str) -> Option<Need> {
         // series downloads it, like Download does for a film.
         | "read_rows" | "read_search" | "read_library" | "read_detail" | "read_sources" | "read_follow" | "read_open" | "read_progress" | "read_mode" | "read_mark"
         | "read_book_rows" | "read_book_more" | "read_book_search" | "read_book_copies" | "read_book_get" | "read_books" | "read_book_open"
-        | "read_languages" | "read_copy_chapters" | "read_get_chapters" | "read_keep_up" | "read_list" | "read_list_set" | "read_explore" | "read_genres" | "read_filter_info" | "read_similar" | "read_downloads" => Need::Viewer,
-        "read_unfollow" | "read_book_remove" | "read_stop_chapters" => Need::Delete,
+        | "read_languages" | "read_copy_chapters" | "read_get_chapters" | "read_keep_up" | "read_list" | "read_list_set" | "read_explore" | "read_genres" | "read_filter_info" | "read_similar" | "read_downloads"
+        | "read_delete_plan" => Need::Viewer,
+        // Deleting reading's files (read_storage.rs), like a film's Delete.
+        "read_unfollow" | "read_book_remove" | "read_stop_chapters" | "read_storage" | "read_delete_chapters" | "read_book_delete_file" => Need::Delete,
         "media_delete" | "media_delete_episodes" | "media_stop_download" | "media_stop_waiting" => Need::Delete,
         "storage_overview" | "storage_set_cleanup" | "library_scan" | "library_stats" | "seeding" | "set_seeding" | "get_settings" | "shelf_status" | "meili_status" | "subs_status" => Need::Admin,
         _ => return None,
@@ -402,6 +404,10 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
         "read_genres" => ok(crate::read::GENRES.to_vec()),
         "read_downloads" => res(crate::read::downloads(app).await),
         "read_unfollow" => res(crate::read::unfollow(app, &arg::<String>(a, "key")?, arg(a, "delete")?).await),
+        "read_storage" => res(crate::read_storage::overview(app).await),
+        "read_delete_plan" => res(crate::read_storage::plan(app, &arg::<String>(a, "key")?, arg(a, "ids")?).await),
+        "read_delete_chapters" => res(crate::read_storage::delete(app, &arg::<String>(a, "key")?, arg(a, "ids")?, arg::<Option<bool>>(a, "othersOk")?.unwrap_or(false)).await),
+        "read_book_delete_file" => res(crate::read_storage::delete_book(app, &arg::<String>(a, "key")?, arg::<Option<bool>>(a, "othersOk")?.unwrap_or(false)).await),
         "read_open" => res(crate::read::open(app, &arg::<String>(a, "key")?, arg(a, "chapter")?).await),
         "read_progress" => res(crate::read::set_spot(app, &arg::<String>(a, "key")?, arg(a, "chapter")?, arg(a, "page")?, arg(a, "pages")?)),
         "read_mode" => res(crate::read::set_mode(app, &arg::<String>(a, "key")?, &arg::<String>(a, "mode")?)),

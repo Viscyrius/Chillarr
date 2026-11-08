@@ -137,7 +137,7 @@ fn data_dir(app: &AppHandle) -> Result<PathBuf, String> {
     app.path().app_data_dir().map_err(|e| e.to_string())
 }
 
-fn uid(app: &AppHandle) -> Result<String, String> {
+pub(crate) fn uid(app: &AppHandle) -> Result<String, String> {
     crate::media::active_user(app).ok_or_else(|| "Sign in to Jellyfin first.".to_string())
 }
 
@@ -208,6 +208,10 @@ pub struct Followed {
     /// its own. Empty: from before this was kept, the PC owner's.
     #[serde(default)]
     pub owners: Vec<String>,
+    /// Chapters deleted by hand (read_storage.rs): new-chapter fetching leaves
+    /// them alone, as it does read ones. Getting one again takes it off.
+    #[serde(default)]
+    pub removed: Vec<i64>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -324,7 +328,7 @@ pub fn owned_by(list: &[String], pc_owner: Option<&str>, uid: &str) -> bool {
     owners_of(list, pc_owner).iter().any(|o| o == uid)
 }
 
-fn mine(app: &AppHandle, f: &Followed, uid: &str) -> bool {
+pub(crate) fn mine(app: &AppHandle, f: &Followed, uid: &str) -> bool {
     owned_by(&f.owners, crate::profiles::owner_id(app).as_deref(), uid)
 }
 
@@ -360,7 +364,7 @@ fn spots_file(dir: &Path, uid: &str) -> PathBuf {
     dir.join(format!("read-{uid}.json"))
 }
 
-fn spots(app: &AppHandle, uid: &str) -> HashMap<String, Spot> {
+pub(crate) fn spots(app: &AppHandle, uid: &str) -> HashMap<String, Spot> {
     data_dir(app).map(|d| load_json(&spots_file(&d, uid))).unwrap_or_default()
 }
 
@@ -385,7 +389,7 @@ fn all_spots(app: &AppHandle) -> Vec<HashMap<String, Spot>> {
 
 /// The series' download folder: `<Comics>/mangas/<source>/<title>`, the title
 /// as Suwayomi wrote it (compared loosely: it strips characters Windows refuses).
-fn series_dir(app: &AppHandle, source: &str, source_title: &str) -> Option<PathBuf> {
+pub(crate) fn series_dir(app: &AppHandle, source: &str, source_title: &str) -> Option<PathBuf> {
     if !crate::suwayomi::plain_name(source) {
         return None;
     }
@@ -1002,6 +1006,9 @@ pub async fn get_chapters(app: &AppHandle, key: &str, ids: &[i64]) -> Result<Str
         return Ok("Those are already here.".into());
     }
     crate::suwayomi::enqueue(&want).await?;
+    if f.removed.iter().any(|id| want.contains(id)) {
+        update_followed(app, key, |x| x.removed.retain(|id| !want.contains(id)));
+    }
     Ok(match want.len() {
         1 => format!("Getting 1 chapter of {}.", f.title),
         n => format!("Getting {n} chapters of {}.", f.title),
@@ -1121,6 +1128,7 @@ pub async fn follow(app: &AppHandle, meta: Meta, pick: crate::suwayomi::Candidat
         told: None,
         ahead_told: None,
         owners,
+        removed: vec![],
     });
     save_followed(app, &all)?;
     let msg = match queued {
@@ -1229,7 +1237,8 @@ pub async fn fetch_new(app: &AppHandle) {
     let queued: std::collections::HashSet<i64> = crate::suwayomi::queue().await.into_iter().map(|q| q.1).collect();
     for f in list.into_iter().filter(|f| f.new_too) {
         let Ok(chs) = chapter_list(&f).await else { continue };
-        let read_by_someone = |id: i64| profiles.iter().filter_map(|p| p.get(&f.key)).any(|s| s.read.contains_key(&id));
+        // Deleted by hand counts like read: it was let go on purpose.
+        let read_by_someone = |id: i64| f.removed.contains(&id) || profiles.iter().filter_map(|p| p.get(&f.key)).any(|s| s.read.contains_key(&id));
         let want = new_wanted(&chs, &queued, &read_by_someone, f.from);
         if !want.is_empty() && crate::suwayomi::enqueue(&want).await.is_ok() {
             crate::log::log(app, crate::model::Level::Ok, format!("Getting {} new chapter(s) of {}.", want.len(), f.title));

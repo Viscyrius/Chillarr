@@ -5,7 +5,7 @@
 // profile. Getting a series: pick the translation, then Best (the sharpest
 // complete copy, found by asking every source) or a copy of your choice,
 // then which chapters.
-import { ask, el, getPref, icon, ICON, invoke, setPref, toast } from "./api.js";
+import { ask, canDelete, el, getPref, icon, ICON, invoke, setPref, toast } from "./api.js";
 import { openReader } from "./reader.js";
 import { openBook } from "./bookreader.js";
 import { applyLook, drawPickers, inlinePicker, onStyle, styleNow } from "./look.js";
@@ -1243,6 +1243,8 @@ async function showFollowed(key, mine, c0) {
     } catch (e) { toast(String(e), true); live.disabled = false; }
   });
   actions.append(live, el("button", { class: "btn soft", onclick: () => unfollow(f) }, "Stop following"));
+  const here = d.chapters.filter((r) => r.downloaded);
+  if (here.length && canDelete()) actions.append(el("button", { class: "btn soft", onclick: () => deletePicker(key, f, here, body, c0) }, icon(TRASH), "Delete downloads"));
   const where = el("p", { class: "note read-from-source" },
     `From ${srcName(f.source)}`, f.width ? ` · ${f.width} px wide` : "",
     f.fill && f.fill.length ? ` · the rest from ${f.fill.map((x) => srcName(x.source)).join(", ")}` : "",
@@ -1305,7 +1307,104 @@ function chapterRow(key, r, c0) {
       el("strong", { text: chLabel(r) }), name ? el("span", { class: "read-ch-name", text: name }) : null,
       r.scanlator && !/^unknown$/i.test(r.scanlator) ? el("small", { text: r.scanlator }) : null),
     r.fresh ? el("b", { class: "read-new-pill", text: "NEW" }) : null,
-    el("span", { class: "read-ch-state", text: state }), get || mark);
+    el("span", { class: "read-ch-state", text: state }), get || mark,
+    r.downloaded && canDelete() ? el("button", { class: "read-mark read-del", title: "Delete this chapter's download", "aria-label": `Delete ${chLabel(r)}`,
+      onclick: async (e) => { e.stopPropagation(); if (await deleteChapters(key, [r.id], chLabel(r))) refreshIfOpen(key, c0); } }, icon(TRASH)) : null);
+}
+
+/* ---------- deleting downloads (issue #39) ---------- */
+// The series stays followed: deleted chapters can be downloaded again, and
+// new-chapter fetching leaves them alone.
+const TRASH = "M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3";
+export const bytesText = (b) => (b >= 1073741824 ? `${(b / 1073741824).toFixed(1)} GB` : b >= 1048576 ? `${Math.round(b / 1048576)} MB` : `${Math.max(1, Math.round((b || 0) / 1024))} KB`);
+
+/** Asks first, with the size it frees and who else reads it; true once deleted. */
+export async function deleteChapters(key, ids, what = "") {
+  let plan;
+  try { plan = await invoke("read_delete_plan", { key, ids }); } catch (e) { toast(String(e), true); return false; }
+  if (!plan.chapters) { toast("Nothing of that is downloaded."); return false; }
+  const n = plan.chapters;
+  const head = n === 1 && what ? `Delete ${what} (${bytesText(plan.bytes)})?` : `Delete ${n} chapter${n === 1 ? "" : "s"} (${bytesText(plan.bytes)})?`;
+  const others = plan.others || [];
+  const body = others.length
+    ? `${others.join(", ")} still read${others.length === 1 ? "s" : ""} this. The files go for them too. You can download them again any time.`
+    : "You keep following it. You can download them again any time.";
+  if (!(await ask(head, body, [], "Delete", "Cancel"))) return false;
+  try { toast(await invoke("read_delete_chapters", { key, ids, othersOk: others.length > 0 })); return true; }
+  catch (e) { toast(String(e), true); return false; }
+}
+
+/** Every downloaded chapter, ticked or not, with From/To and All/None. */
+function deletePicker(key, f, here, body, c0) {
+  const old = body.querySelector(".read-delpick");
+  if (old) { old.remove(); return; }
+  const picked = new Set(here.map((r) => r.id));
+  const count = el("strong");
+  const go = el("button", { class: "btn primary" }, icon(TRASH), "");
+  const rows = here.map((r) => {
+    const box = el("input", { type: "checkbox", checked: true, "aria-label": chLabel(r) });
+    box.addEventListener("change", () => { if (box.checked) picked.add(r.id); else picked.delete(r.id); paint(); });
+    const row = el("label", { class: "read-pick here" }, box, el("span", { class: "read-pick-n", text: chLabel(r) }), r.read ? el("small", { text: "Read" }) : null);
+    row.box = box;
+    return row;
+  });
+  const setAll = (on, test = () => true) => {
+    here.forEach((r, i) => { const v = on && test(r); rows[i].box.checked = v; if (v) picked.add(r.id); else picked.delete(r.id); });
+    paint();
+  };
+  const num = (label) => el("input", { class: "read-from", type: "number", step: "any", "aria-label": label });
+  const from = num("From chapter");
+  const to = num("To chapter");
+  const range = () => {
+    const a = from.value === "" ? -Infinity : Number(from.value);
+    const b = to.value === "" ? Infinity : Number(to.value);
+    const [x, y] = a <= b ? [a, b] : [b, a];
+    setAll(true, (r) => (r.number == null ? x === -Infinity && y === Infinity : r.number >= x && r.number <= y));
+  };
+  from.addEventListener("input", range);
+  to.addEventListener("input", range);
+  function paint() {
+    count.textContent = `${picked.size} of ${here.length} picked`;
+    go.lastChild.textContent = picked.size === here.length ? "Delete all" : `Delete ${picked.size}`;
+    go.disabled = !picked.size;
+  }
+  go.addEventListener("click", async () => {
+    go.disabled = true;
+    const ids = picked.size === here.length ? null : [...picked];
+    if (await deleteChapters(key, ids)) refreshIfOpen(key, c0); else paint();
+  });
+  const box = el("section", { class: "read-sources read-delpick" },
+    el("div", { class: "read-sources-head" }, el("h3", { text: `Delete downloads of ${f.title}` })),
+    note("You keep following it. Deleted chapters can be downloaded again any time."),
+    el("div", { class: "read-pick-bar" },
+      el("label", { class: "read-from-wrap" }, "Chapters ", from), el("label", { class: "read-from-wrap" }, " to ", to),
+      el("button", { class: "linkish", onclick: () => setAll(true) }, "All"),
+      el("button", { class: "linkish", onclick: () => setAll(false) }, "None"),
+      el("button", { class: "linkish", onclick: () => setAll(true, (r) => r.read) }, "Read ones"),
+      count),
+    el("div", { class: "read-pick-list" }, rows.slice().reverse()),
+    el("div", { class: "read-pick-go" }, el("button", { class: "btn soft", onclick: () => box.remove() }, "Cancel"), go));
+  body.prepend(box);
+  paint();
+  box.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+/** A book's file goes; the book stays in the list as not downloaded. */
+export async function deleteBookFile(x, others = []) {
+  const body = others.length
+    ? `${others.join(", ")} still read${others.length === 1 ? "s" : ""} this. The file goes for them too. The book stays in your list and you can download it again.`
+    : "The book stays in your list as not downloaded. You can download it again any time.";
+  if (!(await ask(`Delete the file of ${x.title}${x.bytes ? ` (${bytesText(x.bytes)})` : ""}?`, body, [], "Delete file", "Cancel"))) return false;
+  try { toast(await invoke("read_book_delete_file", { key: x.key, othersOk: others.length > 0 })); return true; }
+  catch (e) {
+    // Asked from the book's own panel, which doesn't know who else has it.
+    if (!others.length && /still reads/.test(String(e))
+      && await ask("Someone else still reads this book", "The file goes for them too. Delete it anyway?", [], "Delete file", "Cancel")) {
+      try { toast(await invoke("read_book_delete_file", { key: x.key, othersOk: true })); return true; } catch (e2) { toast(String(e2), true); return false; }
+    }
+    if (others.length || !/still reads/.test(String(e))) toast(String(e), true);
+    return false;
+  }
 }
 
 /** The reader goes over everything: the panel (a modal, drawn above all
@@ -1368,6 +1467,15 @@ export async function openBookPanel(c, mine = null) {
       actions.append(el("button", { class: "btn play", onclick: go(done) }, icon(ICON.play),
         done ? "Read again" : mine.read > 0 ? `Resume (${Math.round(mine.read * 100)}%)` : "Read"));
       if (done && mine.read < 0.995) actions.append(el("button", { class: "btn soft", onclick: go(false) }, `Resume (${Math.round(mine.read * 100)}%)`));
+      if (canDelete()) actions.append(el("button", { class: "btn soft", onclick: async () => { if (await deleteBookFile(mine)) { window.dispatchEvent(new Event("chillarr:refresh")); openBookPanel(c); } } }, icon(TRASH), "Delete file"));
+    } else if (mine.not_downloaded) {
+      // Its file was deleted: still in the list, downloaded again from here.
+      actions.append(el("span", { class: "status-pill", text: "Not downloaded" }));
+      const again = el("button", { class: "btn primary" }, icon(ICON.download), "Find copies");
+      actions.append(again);
+      const list = el("section", { class: "read-sources" });
+      body.prepend(list);
+      again.addEventListener("click", () => bookCopies(c, list, again, my));
     } else {
       actions.append(el("span", { class: "status-pill", text: mine.problem || (mine.progress != null ? `Downloading ${Math.round(mine.progress * 100)}%` : "Starting the download") }));
       poll = setTimeout(() => { if (my === panelSeq && dlg && dlg.open) openBookPanel(c); }, 4000);

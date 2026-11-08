@@ -140,6 +140,10 @@ pub struct Book {
     /// own. Empty: from before this was kept, the PC owner's.
     #[serde(default)]
     pub owners: Vec<String>,
+    /// Its file was deleted on purpose (read_storage.rs): kept in the list, not
+    /// looked for. Picking a copy again gets it back.
+    #[serde(default)]
+    pub not_downloaded: bool,
 }
 
 fn books_file(app: &AppHandle) -> Result<PathBuf, String> {
@@ -251,7 +255,12 @@ pub async fn get(app: &AppHandle, meta: BookMeta, id: &str) -> Result<String, St
         _ => crate::read_core::norm_title(&b.title) == crate::read_core::norm_title(&meta.title) && b.author == meta.author,
     };
     let mut list = all(app);
-    if let Some(b) = list.iter_mut().find(|b| same(b)) {
+    // Its file was deleted: this download brings it back, for whoever had it.
+    let mut kept_owners: Option<Vec<String>> = None;
+    if let Some(i) = list.iter().position(|b| same(b) && b.not_downloaded && crate::read::owned_by(&b.owners, pc_owner.as_deref(), &me)) {
+        kept_owners = Some(crate::read::owners_of(&list[i].owners, pc_owner.as_deref()));
+    }
+    if let Some(b) = list.iter_mut().find(|b| same(b)).filter(|_| kept_owners.is_none()) {
         if crate::read::owned_by(&b.owners, pc_owner.as_deref(), &me) {
             return Ok(format!("{} is already in your books.", b.title));
         }
@@ -283,6 +292,9 @@ pub async fn get(app: &AppHandle, meta: BookMeta, id: &str) -> Result<String, St
     let mut key = [0u8; 8];
     getrandom::getrandom(&mut key).map_err(|e| e.to_string())?;
     let mut list = all(app);
+    if kept_owners.is_some() {
+        list.retain(|b| !(same(b) && b.not_downloaded));
+    }
     list.push(Book {
         key: format!("b{}", key.iter().map(|b| format!("{b:02x}")).collect::<String>()),
         title: meta.title.clone(),
@@ -296,7 +308,8 @@ pub async fn get(app: &AppHandle, meta: BookMeta, id: &str) -> Result<String, St
         file: None,
         added: chrono::Utc::now().timestamp(),
         problem: None,
-        owners: vec![me],
+        owners: kept_owners.unwrap_or_else(|| vec![me]),
+        not_downloaded: false,
     });
     save(app, &list)?;
     let msg = format!("Getting {}.", meta.title);
@@ -308,7 +321,7 @@ pub async fn get(app: &AppHandle, meta: BookMeta, id: &str) -> Result<String, St
 /// trimmed to the one file, and filed away once it's done.
 pub async fn tick(app: &AppHandle) {
     let mut list = all(app);
-    if list.iter().all(|b| b.file.is_some()) {
+    if list.iter().all(|b| b.file.is_some() || b.not_downloaded) {
         return;
     }
     let Some(q) = crate::waiting::qbit(app) else { return };
@@ -316,7 +329,7 @@ pub async fn tick(app: &AppHandle) {
     let Some(dir) = crate::read::books_dir(app) else { return };
     let seeding = matches!(crate::waiting::seeding(app).await, Ok(true));
     let mut changed = false;
-    for b in list.iter_mut().filter(|b| b.file.is_none()) {
+    for b in list.iter_mut().filter(|b| b.file.is_none() && !b.not_downloaded) {
         // Matched by its hash, in the books category: never by name, which let
         // "Dune" take "Dune Messiah"'s torrent.
         let Some(h) = b.hash.clone() else {
@@ -400,6 +413,35 @@ pub async fn remove(app: &AppHandle, key: &str) -> Result<String, String> {
     list.retain(|x| x.key != key);
     save(app, &list)?;
     Ok(format!("Removed {}.", b.title))
+}
+
+/// Deletes a book's file (and its download), keeping the book in the list as
+/// not downloaded. Others having it too need `others_ok`: the file is shared.
+pub async fn delete_file(app: &AppHandle, key: &str, others_ok: bool) -> Result<String, String> {
+    let me = crate::media::active_user(app).ok_or("Sign in to Jellyfin first.")?;
+    let pc_owner = crate::profiles::owner_id(app);
+    let b = all(app).into_iter().find(|b| b.key == key).ok_or("That book isn't in the list any more.")?;
+    let others = crate::read::owners_of(&b.owners, pc_owner.as_deref()).into_iter().any(|o| o != me);
+    if others && !others_ok {
+        return Err("Someone else still reads this book.".into());
+    }
+    if let (Some(h), Some(q)) = (&b.hash, crate::waiting::qbit(app)) {
+        let _ = q.delete(&[h.clone()], true).await;
+    }
+    if let Some(p) = path_of(app, &b) {
+        std::fs::remove_file(&p).map_err(|e| format!("Couldn't delete it: {e}"))?;
+    }
+    let mut list = all(app);
+    if let Some(x) = list.iter_mut().find(|x| x.key == key) {
+        x.file = None;
+        x.hash = None;
+        x.problem = None;
+        x.not_downloaded = true;
+    }
+    save(app, &list)?;
+    let msg = format!("Deleted the file of {}.", b.title);
+    crate::log::log(app, crate::model::Level::Ok, &msg);
+    Ok(msg)
 }
 
 // ---------- EPUB ----------

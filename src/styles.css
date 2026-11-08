@@ -1989,6 +1989,9 @@ html.no-grid .pf-fields > * + *, html.no-grid .skel-copy > * + * { margin-top: 1
 .read-mark:hover { background: var(--surface); color: var(--text); }
 .read-mark svg { width: 18px; height: 18px; }
 .read-ch.is-read .read-mark { color: var(--accent); }
+.read-mark.read-del:hover { color: var(--red); }
+.rs-folder .path { margin-top: 4px; }
+.rs-total { margin: 4px 0 8px; }
 
 /* ---------- the reader (reader.js) ---------- */
 .reader { position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: var(--z-player); background: #000; color: #eee; outline: none; transition: opacity 0.2s var(--ease); }
