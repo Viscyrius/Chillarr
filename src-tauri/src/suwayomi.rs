@@ -328,14 +328,44 @@ pub async fn languages() -> Result<Vec<(String, usize)>, String> {
     Ok(out)
 }
 
-pub async fn candidates(names: &[String], lang: &str) -> Result<Vec<Candidate>, String> {
-    let srcs = gql("{sources{nodes{id displayName lang}}}", json!({})).await?;
+/// 18+ sources (only installed and searched for an 18+ title, for those allowed it).
+pub const ADULT_SOURCES: [&str; 1] = ["eu.kanade.tachiyomi.extension.en.hentairead"];
+
+/// Installs the 18+ sources when they aren't yet (the first 18+ search does it).
+pub async fn ensure_adult() {
+    let Ok(have) = gql("{extensions(condition:{isInstalled:true}){nodes{pkgName}}}", json!({})).await else { return };
+    let installed: Vec<String> = have["extensions"]["nodes"].as_array().map(|a| a.iter().filter_map(|e| e["pkgName"].as_str().map(String::from)).collect()).unwrap_or_default();
+    let missing: Vec<&str> = ADULT_SOURCES.iter().copied().filter(|p| !installed.iter().any(|i| i == p)).collect();
+    if missing.is_empty() {
+        return;
+    }
+    let _ = gql("mutation{fetchExtensions(input:{}){extensions{pkgName}}}", json!({})).await;
+    for p in missing {
+        if let Err(e) = gql("mutation($id:String!){updateExtension(input:{id:$id,patch:{install:true}}){extension{isInstalled}}}", json!({ "id": p })).await {
+            eprintln!("suwayomi: couldn't install {p}: {e}");
+        }
+    }
+}
+
+/// Which sources a search asks: that language only, and 18+ ones only when `adult`.
+pub fn pick_sources(nodes: &[Value], lang: &str, adult: bool) -> Vec<(String, String)> {
+    nodes
+        .iter()
+        .filter(|s| s["lang"].as_str() == Some(lang))
+        // isNsfw when Suwayomi says it; the name otherwise (an older Suwayomi without the field).
+        .filter(|s| adult || !(s["isNsfw"] == true || s["displayName"].as_str().is_some_and(|n| n.to_ascii_lowercase().contains("hentai"))))
+        .filter_map(|s| Some((s["id"].as_str()?.to_string(), s["displayName"].as_str()?.to_string())))
+        .collect()
+}
+
+pub async fn candidates(names: &[String], lang: &str, adult: bool) -> Result<Vec<Candidate>, String> {
+    let srcs = match gql("{sources{nodes{id displayName lang isNsfw}}}", json!({})).await {
+        Ok(v) => v,
+        Err(_) => gql("{sources{nodes{id displayName lang}}}", json!({})).await?,
+    };
     // Only sources in that language: a mixed "all" source lists every
     // language's copy of each chapter (MangaDex ALL had 556 rows for 468).
-    let srcs: Vec<(String, String)> = srcs["sources"]["nodes"]
-        .as_array()
-        .map(|a| a.iter().filter(|s| s["lang"].as_str() == Some(lang)).filter_map(|s| Some((s["id"].as_str()?.to_string(), s["displayName"].as_str()?.to_string()))).collect())
-        .unwrap_or_default();
+    let srcs = pick_sources(srcs["sources"]["nodes"].as_array().map(|a| a.as_slice()).unwrap_or(&[]), lang, adult);
     let mut set = tokio::task::JoinSet::new();
     for (id, name) in srcs {
         let names = names.to_vec();
@@ -598,6 +628,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn adult_sources_only_for_adult_searches() {
+        let nodes = vec![
+            json!({ "id": "1", "displayName": "Weeb Central (EN)", "lang": "en", "isNsfw": false }),
+            json!({ "id": "2", "displayName": "HentaiRead (EN)", "lang": "en", "isNsfw": true }),
+            json!({ "id": "3", "displayName": "HentaiRead (EN)", "lang": "en" }),
+            json!({ "id": "4", "displayName": "Ruler (ES)", "lang": "es", "isNsfw": false }),
+        ];
+        let ids = |v: Vec<(String, String)>| v.into_iter().map(|x| x.0).collect::<Vec<_>>();
+        assert_eq!(ids(pick_sources(&nodes, "en", false)), vec!["1"], "18+ left out, flagged or by name");
+        assert_eq!(ids(pick_sources(&nodes, "en", true)), vec!["1", "2", "3"]);
+        assert_eq!(ids(pick_sources(&nodes, "es", false)), vec!["4"]);
+    }
+
+    #[test]
     fn launch_args_keep_it_hidden_and_local() {
         let a = args(Path::new(r"C:\s\bin\Suwayomi-Server.jar"), Path::new(r"C:\d"), Path::new(r"D:\Reading\Comics"), "http://localhost:8191", "pw");
         let has = |s: &str| a.iter().any(|x| x == s);
@@ -678,7 +722,7 @@ mod tests {
         }
         let t = std::time::Instant::now();
         let names: Vec<String> = std::env::var("CHILLARR_TITLES").map(|t| t.split('|').map(String::from).collect()).unwrap_or_else(|_| vec!["Solo Leveling".to_string(), "Na Honjaman Level Up".to_string(), "Only I Level Up".to_string()]);
-        let c = candidates(&names, &std::env::var("CHILLARR_LANG").unwrap_or_else(|_| "en".into())).await.unwrap();
+        let c = candidates(&names, &std::env::var("CHILLARR_LANG").unwrap_or_else(|_| "en".into()), false).await.unwrap();
         for x in &c {
             println!("{:24} {:30} ch={:4} latest={:?} width={} q={:.0}", x.source, x.title, x.chapters, x.latest, x.width, x.quality);
         }

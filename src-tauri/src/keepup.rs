@@ -157,7 +157,7 @@ async fn tell_behind(app: &AppHandle, f: &Followed) {
     let mut names = vec![f.title.clone()];
     names.extend(f.names.iter().cloned());
     let lang = f.lang.clone().unwrap_or_else(|| "en".into());
-    let Ok(found) = crate::suwayomi::candidates(&names, &lang).await else { return };
+    let Ok(found) = crate::suwayomi::candidates(&names, &lang, false).await else { return };
     let ahead = found.iter().filter(|c| !f.has_manga(c.manga_id)).filter_map(|c| c.latest.map(|l| (l, c))).filter(|(l, _)| *l >= ours + 1.0).max_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
     let Some((latest, c)) = ahead else { return };
     if f.ahead_told.is_some_and(|t| t >= latest) {

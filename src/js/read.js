@@ -1156,7 +1156,7 @@ async function pickChapters(c, x, state, list, mine, found, fill) {
   paint();
 }
 
-const meta = (c) => ({ anilist: c.anilist ?? null, title: c.title, names: c.names || [], cover: c.cover ?? null, banner: c.banner ?? null, country: c.country ?? null, format: c.format ?? null, status: c.status ?? null, description: c.description ?? null, genres: c.genres || [] });
+const meta = (c) => ({ anilist: c.anilist ?? null, title: c.title, names: c.names || [], cover: c.cover ?? null, banner: c.banner ?? null, country: c.country ?? null, format: c.format ?? null, status: c.status ?? null, description: c.description ?? null, genres: c.genres || [], adult: !!c.adult });
 const chLabel = (r) => (r.number != null ? `Chapter ${r.number}` : r.name || "Chapter");
 
 async function showFollowed(key, mine, c0) {
