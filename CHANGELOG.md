@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.13.4 (2026-11-08)
+- New chapters are hard to miss now: a glowing New chapters section at the top of reading Home (in every style), a count on the Home tab, NEW on each new chapter in a series, and a short note when you open reading. New means out since you last read that series, so following something doesn't call its whole back catalogue new.
+- Eight more manga sites: Thunder Scans and Manhua Plus (furthest ahead on long manhua: The Devil Butler goes to chapter 922 in English there, where the others stopped at 701), plus ManhuaUS, Top Manhua, Mangakakalot, Mangabat, MangaK and Zinmanga. They're added the next time the manga downloader starts. On a series you follow, Change copy lists them.
+- New: Dark and Light for every reading style (the sun and moon next to Style). Each style remembers its own; Classic starts light, the others dark.
+- New: Similar to this, under every series.
+- Filters: a Themes row next to Genres (Isekai, Murim, Regression, Cultivation, Villainess and more), and 70 themes under More filters. AniList itself has 18 manga genres.
+- The reading tabs take on your style: Midnight gets the ranking down the side, Classic a banner and a numbered top 5.
+- Fixed: Midnight's smaller picture at the top went under the top bar on wide screens.
+- Fixed: Classic's hover cards were washed out (light grey on white).
+
 ## 0.13.3 (2026-11-08)
 - Manhwa, Manhua, Manga and Novels now open with the big featured picture too, showing that tab's trending series, with your filters and the grid under it.
 - The Style picker shows on every reading tab, not only after visiting Home.

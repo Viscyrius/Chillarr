@@ -308,7 +308,7 @@ fn need(cmd: &str) -> Option<Need> {
         // series downloads it, like Download does for a film.
         | "read_rows" | "read_search" | "read_library" | "read_detail" | "read_sources" | "read_follow" | "read_open" | "read_progress" | "read_mode" | "read_mark"
         | "read_book_rows" | "read_book_search" | "read_book_copies" | "read_book_get" | "read_books" | "read_book_open"
-        | "read_languages" | "read_copy_chapters" | "read_get_chapters" | "read_keep_up" | "read_list" | "read_list_set" | "read_explore" | "read_genres" | "read_filter_info" | "read_downloads" => Need::Viewer,
+        | "read_languages" | "read_copy_chapters" | "read_get_chapters" | "read_keep_up" | "read_list" | "read_list_set" | "read_explore" | "read_genres" | "read_filter_info" | "read_similar" | "read_downloads" => Need::Viewer,
         "read_unfollow" | "read_book_remove" | "read_stop_chapters" => Need::Delete,
         "media_delete" | "media_delete_episodes" | "media_stop_download" | "media_stop_waiting" => Need::Delete,
         "storage_overview" | "storage_set_cleanup" | "library_scan" | "library_stats" | "seeding" | "set_seeding" | "get_settings" | "shelf_status" | "meili_status" | "subs_status" => Need::Admin,
@@ -389,6 +389,7 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
         "read_list" => res(crate::read::my_list(app)),
         "read_list_set" => res(crate::read::toggle_list(app, &arg::<Value>(a, "card")?, arg(a, "on")?)),
         "read_explore" => res(crate::read::explore(app, &arg(a, "e")?).await),
+        "read_similar" => res(crate::read::similar(app, arg(a, "anilist")?).await),
         "read_filter_info" => ok(serde_json::json!({ "tags": crate::read::TAGS.to_vec(), "adult": crate::read::adult_ok(app) })),
         "read_genres" => ok(crate::read::GENRES.to_vec()),
         "read_downloads" => res(crate::read::downloads(app).await),

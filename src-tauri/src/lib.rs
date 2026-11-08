@@ -734,6 +734,11 @@ async fn read_explore(app: AppHandle, e: read::Explore) -> Result<serde_json::Va
     read::explore(&app, &e).await
 }
 
+#[tauri::command]
+async fn read_similar(app: AppHandle, anilist: i64) -> Result<Vec<serde_json::Value>, String> {
+    read::similar(&app, anilist).await
+}
+
 /// Tags for More filters, and whether this profile may see 18+.
 #[tauri::command]
 fn read_filter_info(app: AppHandle) -> serde_json::Value {
@@ -1089,6 +1094,7 @@ pub fn run() {
             read_explore,
             read_genres,
             read_filter_info,
+            read_similar,
             read_downloads,
             read_book_rows,
             read_book_search,

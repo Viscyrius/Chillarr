@@ -680,6 +680,11 @@ pub struct Shelf {
     pub resume_label: Option<String>,
     pub finished: bool,
     pub at: i64,
+    /// Chapters new since this profile last read it (is_fresh), the newest's
+    /// label, and when that came out (seconds).
+    pub fresh: usize,
+    pub fresh_label: Option<String>,
+    pub fresh_at: i64,
 }
 
 /// Every followed series, as the watching profile sees it.
@@ -695,9 +700,23 @@ pub async fn library(app: &AppHandle) -> Result<Vec<Shelf>, String> {
     Ok(out)
 }
 
+/// When a chapter came out, in seconds (Suwayomi gives milliseconds, as text).
+fn uploaded_secs(c: &crate::suwayomi::Chapter) -> i64 {
+    c.uploaded.as_deref().and_then(|u| u.trim().parse::<i64>().ok()).map(|ms| ms / 1000).unwrap_or(0)
+}
+
+/// New for this profile: here, not read, and out since they last read the series
+/// (or since it was followed: what was already out then isn't news).
+pub fn is_fresh(c: &crate::suwayomi::Chapter, f: &Followed, spot: Option<&Spot>) -> bool {
+    let since = spot.map(|s| s.at).unwrap_or(0).max(f.added);
+    c.downloaded && !spot.is_some_and(|s| s.read.contains_key(&c.id)) && uploaded_secs(c) > since
+}
+
 pub fn shelf_of(f: &Followed, chs: &[crate::suwayomi::Chapter], spot: Option<&Spot>) -> Shelf {
     let read = |id: i64| spot.is_some_and(|s| s.read.contains_key(&id));
     let unread = chs.iter().filter(|c| c.downloaded && !read(c.id)).count();
+    let fresh: Vec<&crate::suwayomi::Chapter> = chs.iter().filter(|c| is_fresh(c, f, spot)).collect();
+    let fresh_label = fresh.iter().filter_map(|c| c.number).fold(None, |m: Option<f64>, n| Some(m.map_or(n, |m| m.max(n)))).map(|n| if n.fract() == 0.0 { format!("Chapter {}", n as i64) } else { format!("Chapter {n}") });
     // Resume where you were; finished that chapter, the next one; never started, the first.
     let resume = match spot {
         Some(s) if !read(s.chapter) && chs.iter().any(|c| c.id == s.chapter) => Some((s.chapter, s.page)),
@@ -730,6 +749,9 @@ pub fn shelf_of(f: &Followed, chs: &[crate::suwayomi::Chapter], spot: Option<&Sp
         // Read to the end of a series that has ended.
         finished: all_read && f.status.as_deref() == Some("FINISHED"),
         at: spot.map(|s| s.at).unwrap_or(f.added),
+        fresh: fresh.len(),
+        fresh_label,
+        fresh_at: fresh.iter().map(|c| uploaded_secs(c)).max().unwrap_or(0),
     }
 }
 
@@ -749,6 +771,8 @@ pub struct ChapterRow {
     pub read: bool,
     pub progress: Option<f64>,
     pub queued: Option<f64>,
+    /// New since this profile last read the series.
+    pub fresh: bool,
 }
 
 pub async fn detail(app: &AppHandle, key: &str) -> Result<Detail, String> {
@@ -763,7 +787,8 @@ pub async fn detail(app: &AppHandle, key: &str) -> Result<Detail, String> {
             let read = spot.as_ref().is_some_and(|s| s.read.contains_key(&ch.id));
             let progress = spot.as_ref().filter(|s| s.chapter == ch.id && !read && s.pages > 0).map(|s| (s.page + 1) as f64 / s.pages as f64);
             let queued = q.iter().find(|x| x.1 == ch.id).map(|x| x.2);
-            ChapterRow { ch, read, progress, queued }
+            let fresh = is_fresh(&ch, &f, spot.as_ref());
+            ChapterRow { ch, read, progress, queued, fresh }
         })
         .collect::<Vec<_>>();
     let mode = spot.as_ref().and_then(|s| s.mode.clone()).unwrap_or_else(|| f.mode.clone());
@@ -1443,13 +1468,42 @@ pub async fn explore(app: &AppHandle, e: &Explore) -> Result<Value, String> {
 }
 
 /// Tags people filter manga by most (AniList's names), for More filters.
-pub const TAGS: [&str; 40] = ["Isekai", "Reincarnation", "Regression", "Time Skip", "Revenge", "Murim", "Cultivation", "Martial Arts", "Dungeon", "Super Power",
-    "Magic", "Swordplay", "Demons", "Gods", "Mythology", "Royal Affairs", "Nobility", "Villainess", "Female Protagonist", "Male Protagonist",
-    "Anti-Hero", "Overpowered Main Characters", "Female Harem", "Male Harem", "School", "Office Lilies", "Love Triangle", "Age Gap", "Boys' Love", "Yuri",
-    "Tragedy", "Survival", "Post-Apocalyptic", "Video Games", "Virtual World", "Zombie", "Vampire", "Historical", "Full Color", "Long Strip"];
+pub const TAGS: [&str; 72] = [
+    // The first 20 show as Themes beside the genres; the rest under More filters.
+    "Isekai", "Reincarnation", "Regression", "Revenge", "Murim", "Cultivation", "Martial Arts", "Dungeon", "Super Power", "Magic",
+    "Overpowered Main Characters", "Villainess", "Female Protagonist", "Male Protagonist", "Royal Affairs", "Female Harem", "School", "Time Skip", "Survival", "Boys' Love",
+    "Swordplay", "Demons", "Gods", "Mythology", "Nobility", "Anti-Hero", "Male Harem", "Office Lilies", "Love Triangle", "Age Gap",
+    "Yuri", "Tragedy", "Post-Apocalyptic", "Video Games", "Virtual World", "Zombie", "Vampire", "Historical", "Full Color", "Long Strip",
+    "Shounen", "Seinen", "Shoujo", "Josei", "Ninja", "Samurai", "Assassins", "Kingdom Management", "Politics", "Military",
+    "War", "Kemonomimi", "Elf", "Dragons", "Witch", "Necromancy", "Alchemy", "Cooking", "Family Life", "Coming of Age",
+    "Body Swapping", "Time Manipulation", "Tsundere", "Yandere", "Twins", "Delinquents", "Gyaru", "Gender Bending", "Monster Girl", "Teacher",
+    "Pirates", "Heterosexual",
+];
 
 /// AniList's manga genres, for the filter chips (A to Z).
 pub const GENRES: [&str; 18] = ["Action", "Adventure", "Comedy", "Drama", "Ecchi", "Fantasy", "Horror", "Mahou Shoujo", "Mecha", "Music", "Mystery", "Psychological", "Romance", "Sci-Fi", "Slice of Life", "Sports", "Supernatural", "Thriller"];
+
+/// "Similar to this": AniList's readers' recommendations for a series, best rated
+/// first, adult ones only for those allowed 18+.
+pub async fn similar(app: &AppHandle, anilist: i64) -> Result<Vec<Value>, String> {
+    if anilist <= 0 {
+        return Ok(vec![]);
+    }
+    let q = format!("query($id:Int){{Media(id:$id,type:MANGA){{recommendations(sort:RATING_DESC,perPage:18){{nodes{{rating mediaRecommendation{{isAdult {MEDIA_FIELDS}}}}}}}}}}}");
+    let v = crate::media::anilist(&json!({ "query": q, "variables": { "id": anilist } })).await?;
+    let adult = adult_ok(app);
+    Ok(v["data"]["Media"]["recommendations"]["nodes"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter(|n| n["rating"].as_i64().unwrap_or(0) > 0)
+                .map(|n| &n["mediaRecommendation"])
+                .filter(|m| m.is_object() && (adult || m["isAdult"] != true))
+                .map(card)
+                .collect()
+        })
+        .unwrap_or_default())
+}
 
 pub async fn search(term: &str) -> Result<Vec<Value>, String> {
     let term = term.trim();
@@ -1591,6 +1645,21 @@ mod tests {
         chs.push(ch(7, 7.0, false));
         assert_eq!(new_wanted(&chs, &none, &read, None), vec![6, 7], "after the last read one: new");
         assert_eq!(new_wanted(&chs, &none, &|_| false, None), (1..=7).collect::<Vec<i64>>(), "nothing here or read: everything");
+    }
+
+    #[test]
+    fn new_chapters_are_the_ones_out_since_you_last_read() {
+        let f = Followed { key: "m1".into(), added: 1_000, ..Default::default() };
+        let at = |id: i64, secs: i64, here: bool| Chapter { uploaded: Some((secs * 1000).to_string()), ..ch(id, id as f64, here) };
+        let chs = vec![at(1, 500, true), at(2, 2_000, true), at(3, 3_000, true), at(4, 3_500, false)];
+        // Never read: new since following (chapter 1 was already out).
+        assert_eq!(chs.iter().filter(|c| is_fresh(c, &f, None)).map(|c| c.id).collect::<Vec<_>>(), vec![2, 3]);
+        let mut s = Spot { chapter: 2, at: 2_500, ..Default::default() };
+        s.read.insert(2, 2_500);
+        // Read up to 2 at 2500: only 3 is new (4 isn't here yet).
+        assert_eq!(chs.iter().filter(|c| is_fresh(c, &f, Some(&s))).map(|c| c.id).collect::<Vec<_>>(), vec![3]);
+        let shelf = shelf_of(&f, &chs, Some(&s));
+        assert_eq!((shelf.fresh, shelf.fresh_label.as_deref(), shelf.fresh_at), (1, Some("Chapter 3"), 3_000));
     }
 
     #[test]

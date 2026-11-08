@@ -37,7 +37,12 @@ const STORE: &str = "https://raw.githubusercontent.com/keiyoushi/extensions/repo
 /// manhua tried (Tales of Demons and Gods, Martial Peak, Battle Through the
 /// Heavens, Soul Land), where the first six missed most of Battle Through the
 /// Heavens; Kun Manga had Soul Land at 3200 px.
-const DEFAULT_SOURCES: [&str; 8] = [
+/// Thunder Scans and Manhua Plus: the groups furthest ahead on long manhua. The
+/// Devil Butler (Demonic Emperor) stopped at 701 on the first eight; Thunder Scans
+/// had 922 in English (MangaUpdates, 2026-11-08). ManhuaUS, Top Manhua, Mangakakalot,
+/// Mangabat, MangaK and Zinmanga: big catalogs, so a series one site stopped
+/// carrying is still somewhere (all in keiyoushi's list on 2026-11-08).
+const DEFAULT_SOURCES: [&str; 16] = [
     "eu.kanade.tachiyomi.extension.all.mangadex",
     "eu.kanade.tachiyomi.extension.en.weebcentral",
     "eu.kanade.tachiyomi.extension.en.asurascans",
@@ -46,6 +51,14 @@ const DEFAULT_SOURCES: [&str; 8] = [
     "eu.kanade.tachiyomi.extension.all.webtoons",
     "eu.kanade.tachiyomi.extension.en.kunmangaonline",
     "eu.kanade.tachiyomi.extension.en.mangago",
+    "eu.kanade.tachiyomi.extension.en.thunderscans",
+    "eu.kanade.tachiyomi.extension.en.manhuaplus",
+    "eu.kanade.tachiyomi.extension.en.manhuaus",
+    "eu.kanade.tachiyomi.extension.en.topmanhua",
+    "eu.kanade.tachiyomi.extension.en.mangakakalot",
+    "eu.kanade.tachiyomi.extension.en.mangabat",
+    "eu.kanade.tachiyomi.extension.en.mangabuddy",
+    "eu.kanade.tachiyomi.extension.en.zinmanga",
 ];
 
 /// The password Suwayomi was started with this time. Chillarr starts it, so a
