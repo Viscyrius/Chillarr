@@ -228,6 +228,12 @@ async fn syncplay_call(app: AppHandle, method: String, path: String, body: Optio
     syncplay::call(&app, &method, &path, body).await
 }
 
+/// Watch together chat: a message to everyone in the party.
+#[tauri::command]
+async fn syncplay_say(app: AppHandle, group: String, text: String) -> Result<(), String> {
+    syncplay::say(&app, &group, &text).await
+}
+
 #[tauri::command]
 async fn syncplay_tile(app: AppHandle, id: String) -> Option<tiles::Tile> {
     syncplay::tile(&app, &id).await
@@ -905,6 +911,7 @@ pub fn run() {
             syncplay_info,
             syncplay_call,
             syncplay_tile,
+            syncplay_say,
             profiles_add,
             profiles_switch,
             profiles_check_pin,

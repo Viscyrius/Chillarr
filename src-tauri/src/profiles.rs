@@ -246,7 +246,24 @@ pub fn lock_if_pinned(app: &AppHandle) {
 /// Whether a profile that can be picked has a PIN.
 fn pinned(app: &AppHandle) -> bool {
     let Some(me) = owner(app) else { return false };
-    app.state::<Profiles>().store.lock().unwrap().list.iter().any(|p| (p.id == me.user_id || p.session.is_some()) && p.pin.is_some())
+    pinned_in(&app.state::<Profiles>().store.lock().unwrap().list, &me.user_id)
+}
+
+/// `pinned` on a list: the owner (`owner_id`) and every profile with a sign-in can be picked.
+fn pinned_in(list: &[Profile], owner_id: &str) -> bool {
+    list.iter().any(|p| (p.id == owner_id || p.session.is_some()) && p.pin.is_some())
+}
+
+/// The owner just signed in (setup, or Settings after a sign-out). On start
+/// there was no owner yet, so `lock_if_pinned` couldn't see the PINs: the same
+/// rule now, so a profile with a PIN is never opened just by signing in.
+/// Whoever is watching is picked next ("Who's watching?").
+pub fn owner_changed(app: &AppHandle) {
+    if pinned(app) {
+        let media = app.state::<Media>();
+        media.set_profile(None);
+        media.lock();
+    }
 }
 
 /// media::connect signed in with a Jellyfin admin when no owner sign-in was
@@ -959,6 +976,21 @@ mod tests {
         }
         assert!(last.contains("PIN"), "{last}");
         assert!(pin_gate(&tries, "p", Some(&stored), Some("1234"), now).is_ok(), "the PC's own tries are separate");
+    }
+
+    #[test]
+    fn a_pin_anywhere_locks_a_new_sign_in() {
+        let p = |id: &str, pin: bool, session: bool| Profile {
+            id: id.into(),
+            pin: pin.then(|| "salt:hash".to_string()),
+            session: session.then(|| Session { user_id: id.into(), ..Default::default() }),
+            ..Default::default()
+        };
+        assert!(pinned_in(&[p("owner", true, false)], "owner"), "the owner's own PIN locks it");
+        assert!(pinned_in(&[p("owner", false, false), p("kid", true, true)], "owner"), "any profile with a PIN: ask who's watching");
+        assert!(!pinned_in(&[p("owner", false, false), p("kid", false, true)], "owner"), "no PIN anywhere: straight in");
+        assert!(!pinned_in(&[p("owner", false, false), p("gone", true, false)], "owner"), "a profile that can't be picked doesn't count");
+        assert!(!pinned_in(&[], "owner"), "first run, no profiles yet");
     }
 
     #[test]

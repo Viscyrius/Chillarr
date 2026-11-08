@@ -3,7 +3,11 @@
 // Jellyfin is the referee: play, pause and seek become requests, and the
 // player only moves when the group's command comes back, at the moment it
 // names. Message shapes are the ones measured on Jellyfin 12.1.
-import { $, el, invoke, store, toast } from "./api.js";
+//
+// Chat: everyone in the party can type to each other while it plays. SyncPlay
+// has no messages, so Chillarr carries them (syncplay.rs `say`): the window
+// hears a Tauri event, a web page its bridge stream, the same "together-chat".
+import { $, el, icon, invoke, listen, store, toast } from "./api.js";
 import { syncControl as player } from "./player.js";
 
 const TICKS = 1e7;
@@ -177,6 +181,7 @@ function startTimers() {
 
 function leftGroup() {
   const was = g.name;
+  chatReset();
   Object.assign(g, { id: null, name: "", people: [], itemId: null, playlistItemId: null, state: "Idle", cmd: null, startWhenReady: false });
   clearInterval(pingTimer);
   clearInterval(driftTimer);
@@ -236,6 +241,7 @@ async function leave() {
 
 async function draw() {
   for (const b of [$("#together-btn"), $("#p-together")]) b.classList.toggle("on", !!g.id);
+  chatBtn.hidden = !g.id;
   if (!dlg.open) return;
   const head = el("h2", { text: g.id ? g.name : "Watch together" });
   const parts = [head];
@@ -243,6 +249,7 @@ async function draw() {
     parts.push(
       el("div", { class: "wt-people" }, g.people.map((p) => el("span", { class: "wt-person" }, el("span", { class: "wt-dot" }), p))),
       el("p", { class: "wt-note", text: g.itemId ? "Play, pause and skips happen for everyone. If someone's connection is slow, the party waits for them." : "Pick something to watch: everyone in the party starts it together." }),
+      el("p", { class: "wt-note", text: "To chat with the party, press C in the player or use the chat button at the top." }),
       invite(),
       el("div", { class: "ask-actions" },
         el("button", { class: "btn ghost", onclick: leave }, "Leave party"),
@@ -281,4 +288,96 @@ export function openTogether() {
 }
 
 $("#together-btn").addEventListener("click", openTogether);
+
+/* ---------- Chat ---------- */
+// A small panel over the picture (C or the chat button) and, while it's shut,
+// each new message floats up for a few seconds and fades. Nothing pauses.
+const CHAT_MAX = 300;
+const FLOAT_MS = 6000;
+const said = [];
+let unread = 0;
+const chatBtn = el("button", { class: "p-btn chat-btn", id: "p-chat-btn", "aria-label": "Party chat", title: "Party chat (C)", hidden: true },
+  icon("M4 5h16v11H9l-5 4z"), el("span", { class: "chat-badge", hidden: true }));
+$("#p-together").before(chatBtn);
+const chatList = el("ol", { class: "chat-list", "aria-live": "polite" });
+const chatInput = el("input", { type: "text", class: "chat-input", maxlength: String(CHAT_MAX), placeholder: "Say something", "aria-label": "Message to the party", autocomplete: "off" });
+const chatSend = el("button", { class: "btn small primary", type: "submit" }, "Send");
+const chatForm = el("form", { class: "chat-form" }, chatInput, chatSend);
+const chatPanel = el("div", { class: "p-chat", role: "dialog", "aria-label": "Party chat", hidden: true },
+  el("div", { class: "chat-head" }, el("b", { text: "Party chat" }), el("button", { class: "link-btn", type: "button", onclick: () => toggleChat(false) }, "Hide")),
+  chatList, chatForm);
+const chatFloat = el("ol", { class: "chat-float", "aria-hidden": "true" });
+$("#player").append(chatPanel, chatFloat);
+chatBtn.addEventListener("click", (e) => { e.stopPropagation(); toggleChat(); });
+chatPanel.addEventListener("click", (e) => e.stopPropagation());
+
+const timeOf = (at) => new Date(at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+const line = (m) => el("li", { class: m.from === me ? "chat-line mine" : "chat-line" },
+  el("b", { text: m.from }), el("span", { text: m.text }), el("time", { text: timeOf(m.at) }));
+
+function drawBadge() {
+  const b = chatBtn.querySelector(".chat-badge");
+  b.hidden = !unread;
+  b.textContent = unread > 9 ? "9+" : String(unread);
+}
+
+/** Opens or shuts the chat panel (no argument: the other way). Only in a party. */
+export function toggleChat(on = chatPanel.hidden) {
+  if (on && !g.id) return;
+  chatPanel.hidden = !on;
+  chatFloat.hidden = on;
+  if (on) {
+    unread = 0;
+    drawBadge();
+    chatFloat.replaceChildren();
+    chatList.scrollTop = chatList.scrollHeight;
+    chatInput.focus();
+  } else if (chatPanel.contains(document.activeElement)) document.activeElement.blur();
+}
+
+function chatReset() {
+  said.length = 0;
+  unread = 0;
+  chatList.replaceChildren();
+  chatFloat.replaceChildren();
+  toggleChat(false);
+  drawBadge();
+}
+
+listen("together-chat", (e) => {
+  const m = e.payload;
+  if (!m || !g.id || m.group !== g.id || said.some((x) => x.id === m.id)) return;
+  said.push(m);
+  if (said.length > 200) { said.shift(); chatList.firstChild?.remove(); }
+  const near = chatList.scrollHeight - chatList.scrollTop - chatList.clientHeight < 40;
+  chatList.append(line(m));
+  if (near || m.from === me) chatList.scrollTop = chatList.scrollHeight;
+  if (!chatPanel.hidden || m.from === me) return;
+  unread++;
+  drawBadge();
+  // While it's shut: the message floats up over the picture, then fades.
+  const f = line(m);
+  chatFloat.append(f);
+  while (chatFloat.children.length > 3) chatFloat.firstChild.remove();
+  setTimeout(() => { f.classList.add("out"); setTimeout(() => f.remove(), 600); }, FLOAT_MS);
+});
+
+chatForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const text = chatInput.value.trim();
+  if (!text || !g.id) return;
+  chatSend.disabled = true;
+  try {
+    await invoke("syncplay_say", { group: g.id, text });
+    chatInput.value = "";
+  } catch (err) { toast(String(err), true); }
+  chatSend.disabled = false;
+  chatInput.focus();
+});
+// Typing is for the message, not the player's keys (Space, M, F...). Esc
+// shuts the panel and leaves the player where it is.
+chatInput.addEventListener("keydown", (e) => {
+  e.stopPropagation();
+  if (e.key === "Escape" || [461, 10009].includes(e.keyCode)) { e.preventDefault(); toggleChat(false); }
+});
 dlg.addEventListener("click", (e) => { if (e.target === dlg) dlg.close(); });

@@ -2,7 +2,7 @@
 // app can play it, or converted on the fly into an HLS stream (played with hls.js).
 import { $, ask, AUDIO_LANGS, el, fmtTime, getPref, icon, invoke, listen, screenMode, setPref, store, toast, windowFull } from "./api.js";
 import { SubRenderer, parseAss, parseVtt, setSubScale, subScale } from "./subrender.js";
-import { buffering, caughtUp, inGroup, loadedHere, openTogether, requestPause, requestPlay, requestSeek, startedHere } from "./syncplay.js";
+import { buffering, caughtUp, inGroup, loadedHere, openTogether, requestPause, requestPlay, requestSeek, startedHere, toggleChat } from "./syncplay.js";
 
 const box = $("#player");
 // Not const: when this device turns out unable to send the sound through Web
@@ -920,7 +920,7 @@ $("#p-next").addEventListener("click", playNext);
 // pauses, a double click goes full screen; the wheel is the volume, like VLC.
 // The bars count as the picture only while they're hidden: with them up, the
 // space between the buttons is part of the controls, like in Jellyfin.
-const onPicture = (e) => !e.target.closest("button, input, select, label, a, .p-menu, .p-upnext, .p-wait, .p-seek, .pad-panel, .pad-bar, .p-title, .p-keys")
+const onPicture = (e) => !e.target.closest("button, input, select, label, a, .p-menu, .p-upnext, .p-wait, .p-seek, .pad-panel, .pad-bar, .p-title, .p-keys, .p-chat")
   && !(shown() && e.target.closest(".p-top, .p-bottom"));
 // A finger is different: a tap on the picture shows or hides the bars (the
 // big play button pauses), and a tap on the controls keeps them up.
@@ -1237,7 +1237,7 @@ function poke() {
 document.addEventListener("mouseleave", () => (overControls = false));
 window.addEventListener("mousemove", (e) => {
   if (box.hidden) return;
-  overControls = !!e.target.closest?.(".p-bottom, .p-top, .p-menu-wrap, .p-upnext, .p-skip");
+  overControls = !!e.target.closest?.(".p-bottom, .p-top, .p-menu-wrap, .p-upnext, .p-skip, .p-chat");
   if (pad.on) {
     // Only a real move hands the player back to the mouse; the first event
     // after switching may just be the browser re-checking the hover.
@@ -1282,6 +1282,7 @@ window.addEventListener("keydown", (e) => {
   else if (k === "ArrowDown") { setVolume(level - 0.05); volOsd(); }
   else if (k === "m") { video.muted = !video.muted; volOsd(); }
   else if (k === "n") setNight(!night);
+  else if (k === "c" && inGroup()) toggleChat();
   else if (k === "f" || k === "F11") toggleFull();
   else if (k === "s") skipNow();
   else if (k === "g") nudgeSub(-0.1);
@@ -1310,6 +1311,7 @@ const KEYS = [
   [["S"], "Skip intro or recap"],
   [["G", "H"], "Subtitles earlier or later"],
   [["N"], "Night mode"],
+  [["C"], "Chat, in a watch party"],
   [["F"], "Full screen"],
   [["Esc"], "Close a menu, leave full screen, then the player"],
   [["?"], "This list"],
