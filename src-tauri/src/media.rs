@@ -428,6 +428,9 @@ pub async fn connect(app: &AppHandle, user: &str, password: &str) -> Result<(), 
     // No owner sign-in was kept (jellyfin.json is sealed like profiles.json,
     // so they are lost together): this sign-in is the proof the lock waits for.
     if fresh {
+        // On start nobody was signed in, so the PINs weren't looked at: a
+        // profile with one is never opened just by signing in.
+        crate::profiles::owner_changed(app);
         let admin = Jf::new(&j.base, &s.device_id, Some(&s)).get_json("/Users/Me").await.is_ok_and(|me| me["Policy"]["IsAdministrator"] == true);
         if admin {
             crate::profiles::owner_signed_in(app).await;
