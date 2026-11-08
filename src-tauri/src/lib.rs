@@ -1,5 +1,7 @@
 mod arr;
 mod downloads_home;
+mod zipread;
+mod read_core;
 mod bridge;
 mod viewer;
 mod seal;
