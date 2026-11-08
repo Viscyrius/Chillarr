@@ -431,6 +431,8 @@ pub struct Opened {
     pub mode: String,
     pub page: usize,
     pub title: String,
+    /// The pages are the graphics card's sharpened copy (sharpen.rs).
+    pub sharp: bool,
 }
 
 /// Opens one downloaded chapter for the watching profile.
@@ -445,6 +447,8 @@ pub async fn open(app: &AppHandle, key: &str, chapter: i64) -> Result<Opened, St
     let dir = series_dir(app, src, title).ok_or("This series has nothing downloaded yet.")?;
     let chs: Vec<crate::suwayomi::Chapter> = merged.into_iter().map(|x| x.0).collect();
     let file = chapter_file(&dir, &ch).ok_or("That chapter isn't downloaded yet.")?;
+    // The graphics card's sharpened copy, when Settings has it on and it's made.
+    let (file, sharp) = crate::sharpen::pick(app, file);
     let (entries, pages, sizes) = tokio::task::spawn_blocking({
         let file = file.clone();
         move || -> Result<_, String> {
@@ -468,7 +472,7 @@ pub async fn open(app: &AppHandle, key: &str, chapter: i64) -> Result<Opened, St
     let page = spot.filter(|s| s.chapter == chapter).map(|s| s.page.min(pages.len() - 1)).unwrap_or(0);
     let mode = spot.and_then(|s| s.mode.clone()).unwrap_or_else(|| f.mode.clone());
     let ticket = app.state::<Reading>().issue(file, Arc::new(entries), pages);
-    Ok(Opened { ticket, pages: sizes, chapter: ch, prev, next, mode, page, title: f.title })
+    Ok(Opened { ticket, pages: sizes, chapter: ch, prev, next, mode, page, title: f.title, sharp })
 }
 
 /// `/read/<ticket>/<page>` (a comic's page), `/read/<ticket>/f/<path>` (a

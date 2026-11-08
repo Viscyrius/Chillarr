@@ -33,6 +33,7 @@ mod media;
 mod meili;
 mod night;
 mod search_tap;
+mod sharpen;
 mod procs;
 mod qbit;
 mod settings;
@@ -834,6 +835,17 @@ async fn gpu_set(app: AppHandle, on: bool) -> Result<serde_json::Value, String> 
     gpu::set(&app, on).await
 }
 
+/// Sharpen pages with the graphics card: for this PC's window only, never in bridge.rs's list.
+#[tauri::command]
+fn sharpen_status(app: AppHandle) -> serde_json::Value {
+    sharpen::status(&app)
+}
+
+#[tauri::command]
+async fn sharpen_set(app: AppHandle, on: bool) -> Result<serde_json::Value, String> {
+    sharpen::set(&app, on).await
+}
+
 /// Limit downloads: for this PC's window only, never in bridge.rs's list.
 #[tauri::command]
 fn limit_status(app: AppHandle) -> serde_json::Value {
@@ -1170,6 +1182,8 @@ pub fn run() {
             limit_measure,
             gpu_status,
             gpu_set,
+            sharpen_status,
+            sharpen_set,
             night_prepare,
             library_stats,
             library_scan,
@@ -1257,6 +1271,7 @@ pub fn run() {
             waiting::spawn(app.handle().clone());
             watchnow::spawn(app.handle().clone());
             limit::spawn(app.handle().clone());
+            sharpen::spawn(app.handle().clone());
             indexers::spawn(app.handle().clone());
             subfetch::spawn(app.handle().clone());
             search_tap::spawn(app.handle().clone());
