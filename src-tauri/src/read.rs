@@ -1457,16 +1457,12 @@ pub struct Explore {
     pub page: u32,
 }
 
-/// 18+ in reading: the PC owner's own profile in the window, or a Jellyfin admin
-/// on the web. Everyone else always gets it hidden, whatever they ask for.
-pub fn adult_ok(app: &AppHandle) -> bool {
-    if let Some(v) = crate::viewer::current() {
-        return v.admin;
-    }
-    match (crate::profiles::owner_id(app), crate::media::active_user(app)) {
-        (Some(owner), Some(active)) => owner == active,
-        _ => false,
-    }
+/// 18+ in reading: every profile may turn it on (the owner's call, 2026-11-08:
+/// "it's a universal thing"). It stays off until someone picks Include or Only
+/// 18+ in the filters, and 18+ sources are only searched for 18+ titles. The
+/// one place to narrow it again.
+pub fn adult_ok(_app: &AppHandle) -> bool {
+    true
 }
 
 pub fn explore_args(e: &Explore, adult_allowed: bool) -> Result<String, String> {
