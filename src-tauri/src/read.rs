@@ -852,6 +852,9 @@ pub struct Meta {
     pub description: Option<String>,
     #[serde(default)]
     pub genres: Vec<String>,
+    /// AniList marks the title 18+.
+    #[serde(default)]
+    pub adult: bool,
 }
 
 impl Meta {
@@ -882,7 +885,12 @@ pub async fn sources(app: &AppHandle, meta: &Meta, lang: &str) -> Result<Copies,
     }
     ensure_root(app).await?;
     crate::suwayomi::ready(app).await?;
-    let list = crate::suwayomi::candidates(&meta.all_names(), lang).await?;
+    // 18+ sources only for an 18+ title, and only for those allowed (adult_ok).
+    let adult = meta.adult && adult_ok(app);
+    if adult {
+        crate::suwayomi::ensure_adult().await;
+    }
+    let list = crate::suwayomi::candidates(&meta.all_names(), lang, adult).await?;
     let pair = crate::suwayomi::best_pair(&list);
     let has_files = |c: &crate::suwayomi::Candidate| {
         series_dir(app, &c.source, &c.title).and_then(|d| std::fs::read_dir(d).ok()).is_some_and(|mut it| it.next().is_some())
@@ -1266,7 +1274,7 @@ pub async fn downloads(app: &AppHandle) -> Result<Value, String> {
 
 // ---------- discovery (AniList) ----------
 
-const MEDIA_FIELDS: &str = "id title{romaji english native} synonyms coverImage{extraLarge large color} bannerImage countryOfOrigin format status chapters volumes averageScore genres description(asHtml:false) startDate{year}";
+const MEDIA_FIELDS: &str = "id isAdult title{romaji english native} synonyms coverImage{extraLarge large color} bannerImage countryOfOrigin format status chapters volumes averageScore genres description(asHtml:false) startDate{year}";
 
 /// A card on the Read tab.
 pub fn card(m: &Value) -> Value {
@@ -1291,6 +1299,7 @@ pub fn card(m: &Value) -> Value {
         "genres": m["genres"],
         "description": m["description"].as_str().map(clean_text),
         "year": m["startDate"]["year"],
+        "adult": m["isAdult"] == true,
     })
 }
 
