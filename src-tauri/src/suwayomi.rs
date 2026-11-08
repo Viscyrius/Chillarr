@@ -214,6 +214,12 @@ fn first_line(s: &str) -> String {
 /// Installed, running, answering and set up: everything a download needs.
 /// Installs it the first time (one download, no Windows prompt).
 pub async fn ready(app: &AppHandle) -> Result<(), String> {
+    // One at a time: setup's background call and a Find copies pressed during
+    // the 340 MB download once ran together, and the second, finding the
+    // installer busy, tried to start a downloader that wasn't there yet
+    // (2026-11-08). The second now waits for the first instead.
+    static ONE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    let _one = ONE.lock().await;
     if crate::read::comics_dir(app).is_none() {
         return Err("Pick a folder for reading in Settings > Library & storage first.".into());
     }
@@ -222,6 +228,10 @@ pub async fn ready(app: &AppHandle) -> Result<(), String> {
         let failed = crate::onboard::install_only(app, vec![AppId::Suwayomi]).await;
         if let Some((_, e)) = failed.first() {
             return Err(format!("Couldn't set up the manga downloader: {e}"));
+        }
+        // install_only gives way when another install is running and says nothing.
+        if installed_java().is_none() {
+            return Err("Another install is running. Try again when it's done.".into());
         }
     }
     if !crate::fix::ensure_running(app, AppId::Suwayomi).await {
