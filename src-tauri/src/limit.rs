@@ -220,6 +220,23 @@ async fn round(app: &AppHandle) -> Result<(), crate::qbit::QbError> {
     }
     let free: HashSet<String> = if host_free { known.into_iter().filter(|h| there.contains(h)).collect() } else { HashSet::new() };
     let (cap_down, cap_up) = (cap_of(down), cap_of(up));
+    // Manga downloads (manga_net.rs) are one more download sharing the same
+    // budget: their share comes off what qBittorrent may use.
+    let (manga_down, manga_up) = crate::manga_net::take_moved();
+    let secs = EVERY.as_secs().max(1);
+    let torrents = |field: &str| list.iter().map(|t| t[field].as_u64().unwrap_or(0)).sum::<u64>();
+    let split = |cap: u64, torrent_speed: u64, manga_speed: u64| {
+        if manga_speed == 0 {
+            // Idle: a small allowance so it can start; the torrents keep the rest.
+            let m = (cap / 8).max(LEAST);
+            return (cap.saturating_sub(m).max(LEAST), m);
+        }
+        let s = share_out(cap, &[torrent_speed, manga_speed]);
+        (s[0].max(LEAST), s[1].max(LEAST))
+    };
+    let (cap_down, manga_cap_down) = split(cap_down, torrents("dlspeed"), manga_down / secs);
+    let (cap_up, manga_cap_up) = split(cap_up, torrents("upspeed"), manga_up / secs);
+    crate::manga_net::set_rate(manga_cap_down, manga_cap_up);
     for (hash, limit) in plan(&list, &free, cap_down, "dlspeed", "dl_limit", is_downloading) {
         q.set_torrent_limit("Download", &hash, limit).await?;
     }
@@ -237,6 +254,7 @@ async fn round(app: &AppHandle) -> Result<(), crate::qbit::QbError> {
 
 /// Back to how qBittorrent was: no shares, and its own overall limits.
 async fn lift(app: &AppHandle) -> Result<(), crate::qbit::QbError> {
+    crate::manga_net::set_rate(0, 0);
     let Some(q) = crate::waiting::qbit(app) else { return Ok(()) };
     q.set_torrent_limit("Download", "all", 0).await?;
     q.set_torrent_limit("Upload", "all", 0).await?;
@@ -254,6 +272,7 @@ pub fn spawn(app: AppHandle) {
             tokio::time::sleep(EVERY).await;
             let (on, host_free) = with(&app, |s| (s.on, s.host_free));
             if !on {
+                crate::manga_net::set_rate(0, 0);
                 continue;
             }
             if host_free && count % QUEUES_EVERY == 0 {

@@ -8,7 +8,8 @@ import { padInput } from "./player.js";
 import { goBack, stop as stopRestore } from "./place.js";
 import { closeProfiles } from "./profiles.js";
 
-const TABS = ["home", "movies", "series", "anime", "downloads", "mylist"];
+const WATCH_TABS = ["home", "movies", "series", "anime", "downloads", "mylist"];
+const READ_TABS = ["r-home", "r-manhwa", "r-manhua", "r-manga", "r-novels", "r-books", "r-downloads", "r-mylist"];
 const SELECTOR = "button, a[href], input, select, textarea, [tabindex]:not([tabindex='-1'])";
 
 /** The layer on top: an open dialog, the player, or the page. */
@@ -141,6 +142,7 @@ function select() {
 }
 
 function tab(step) {
+  const TABS = document.body.dataset.mode === "read" ? READ_TABS : WATCH_TABS;
   const cur = (location.hash.slice(1) || "home").split("/")[0];
   const i = TABS.indexOf(cur);
   location.hash = `#${TABS[(i < 0 ? 0 : i + step + TABS.length) % TABS.length]}`;

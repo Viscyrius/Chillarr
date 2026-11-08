@@ -1,8 +1,8 @@
 // Routing between tabs, the top bar, search, and the first-run tutorial.
-import { $, el, invoke, screenMode, setPerson, store, viewer, WEB, windowFull } from "./api.js";
+import { $, el, getPref, invoke, personKey, screenMode, setPerson, setPref, store, viewer, WEB, windowFull } from "./api.js";
 import { renderTab, renderSearch, renderExplore, stopBrowse, warmTabs } from "./browse.js";
 import { renderFilter } from "./filter.js";
-import { renderRead, stopRead } from "./read.js";
+import { renderRead, renderReadSearch, stopRead } from "./read.js";
 import { renderSettings, stopSettings } from "./settings.js";
 import { openSetup } from "./setup.js";
 import { knowPerson, startProfiles, startProfilesWeb } from "./profiles.js";
@@ -12,7 +12,42 @@ import { recentSearches } from "./recent.js";
 import { applyTheme, syncIcons } from "./theme.js";
 
 const view = $("#view");
-const TABS = ["home", "movies", "series", "anime", "read", "downloads", "mylist", "settings", "explore", "filter"];
+const TABS = ["home", "movies", "series", "anime", "downloads", "mylist", "settings", "explore", "filter",
+  "r-home", "r-manhwa", "r-manhua", "r-manga", "r-novels", "r-books", "r-downloads", "r-mylist"];
+
+/* ---------- watching and reading ----------
+   Two Chillarrs in one: the book button switches to reading (its own tabs,
+   search, list and downloads), the film button back. Each profile keeps the
+   one it was in. Settings, Explore and Filters belong to neither. */
+const modeOf = (tab) => (tab.startsWith("r-") ? "read" : ["settings", "explore", "filter"].includes(tab) ? null : "watch");
+const homeOf = (mode) => (mode === "read" ? "r-home" : "home");
+let swapTimer = 0;
+function applyMode(mode, animate) {
+  const body = document.body;
+  if (body.dataset.mode === mode) return;
+  const first = !body.dataset.mode;
+  body.dataset.mode = mode;
+  const reading = mode === "read";
+  const btn = $("#mode-btn");
+  btn.setAttribute("aria-label", reading ? "Switch to watching" : "Switch to reading");
+  btn.title = reading ? "Movies and shows" : "Reading";
+  $("#search").placeholder = reading ? "Manga, manhwa, novels, books" : "Movies, series, anime";
+  if (!first && animate) {
+    clearTimeout(swapTimer);
+    body.classList.remove("mode-swap");
+    void body.offsetWidth;
+    body.classList.add("mode-swap");
+    swapTimer = setTimeout(() => body.classList.remove("mode-swap"), 700);
+  }
+}
+// The logo goes home in the mode you're in.
+document.querySelector(".brand").addEventListener("click", (e) => { e.preventDefault(); location.hash = homeOf(document.body.dataset.mode === "read" ? "read" : "watch"); });
+$("#mode-btn").addEventListener("click", () => {
+  const next = document.body.dataset.mode === "read" ? "watch" : "read";
+  setPref("mode", next);
+  $("#search").value = "";
+  location.hash = homeOf(next);
+});
 let current = "";
 
 /**
@@ -20,8 +55,12 @@ let current = "";
  * which stays up until the new one is ready and keeps your place.
  */
 function route(redraw = false) {
-  const hash = location.hash.slice(1) || "home";
+  // The old Read tab's address goes to reading's home.
+  if (location.hash === "#read") { location.replace("#r-home"); return; }
+  const hash = location.hash.slice(1) || homeOf(getPref("mode") === "read" ? "read" : "watch");
   const tab = TABS.includes(hash.split("/")[0]) ? hash.split("/")[0] : "home";
+  const tabMode = modeOf(tab);
+  if (tabMode) { applyMode(tabMode, true); if (getPref("mode") !== tabMode) setPref("mode", tabMode); }
   const left = place.current();
   const { id, fresh } = place.entry();
   document.querySelectorAll("[data-tab]").forEach((a) => a.classList.toggle("on", a.dataset.tab === tab));
@@ -38,10 +77,10 @@ function route(redraw = false) {
   if (!mode) window.scrollTo({ top: 0, behavior: "instant" });
   const want = mode ? place.cards(id) : 0;
   if (tab !== "settings") stopSettings();
-  if (tab !== "read") stopRead();
+  if (!tab.startsWith("r-")) stopRead();
   let drawn;
   if (tab === "settings") { stopBrowse(); renderSettings(view, hash.split("/")[1]); }
-  else if (tab === "read") { stopBrowse(); drawn = renderRead(view); }
+  else if (tab.startsWith("r-")) { stopBrowse(); drawn = renderRead(view, tab); }
   else if (tab === "filter") {
     const [, kind, json] = hash.split("/");
     let f = {};
@@ -67,7 +106,8 @@ function runSearch(term) {
     current = "search";
     stopSettings();
     document.querySelectorAll("[data-tab]").forEach((a) => a.classList.remove("on"));
-    renderSearch(view, term);
+    if (document.body.dataset.mode === "read") renderReadSearch(view, term);
+    else renderSearch(view, term);
     searched(term);
   } else if (!term) {
     current = "";
@@ -188,12 +228,20 @@ function drawViewer() {
 
 // Other modules ask for a redraw (after setup, a sign-in, a new download) this way,
 // so they don't need to import this file.
+// Another profile is watching now: it goes back to the mode it was in.
+let lastPerson = null;
 window.addEventListener("chillarr:refresh", () => {
+  if (lastPerson !== null && personKey() !== lastPerson) {
+    lastPerson = personKey();
+    const want = getPref("mode") === "read" ? "read" : "watch";
+    if (want !== document.body.dataset.mode) { location.hash = homeOf(want); return; }
+  }
+  lastPerson = personKey();
   invoke("media_status").then((m) => (store.media = WEB ? { ...m, vlc: false } : m));
   // A search on screen is searched again, not swapped for the tab under it
   // (a download landing used to wipe the box and drop the results coming in).
   const term = $("#search").value.trim();
-  if (current === "search" && term.length >= 2) { renderSearch(view, term); return; }
+  if (current === "search" && term.length >= 2) { document.body.dataset.mode === "read" ? renderReadSearch(view, term) : renderSearch(view, term); return; }
   current = "";
   // Coming back from the player (or a download landing) keeps your place on the page.
   route(true);

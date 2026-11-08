@@ -4,6 +4,7 @@ mod zipread;
 mod read_core;
 mod read;
 mod suwayomi;
+mod manga_net;
 mod books;
 mod bridge;
 mod viewer;
@@ -683,13 +684,58 @@ async fn read_detail(app: AppHandle, key: String) -> Result<read::Detail, String
 }
 
 #[tauri::command]
-async fn read_sources(app: AppHandle, meta: read::Meta) -> Result<Vec<suwayomi::Candidate>, String> {
-    read::sources(&app, &meta).await
+async fn read_sources(app: AppHandle, meta: read::Meta, lang: Option<String>) -> Result<read::Copies, String> {
+    read::sources(&app, &meta, lang.as_deref().unwrap_or("en")).await
 }
 
 #[tauri::command]
-async fn read_follow(app: AppHandle, meta: read::Meta, pick: suwayomi::Candidate, from: Option<f64>) -> Result<String, String> {
-    read::follow(&app, meta, pick, from).await
+async fn read_follow(app: AppHandle, meta: read::Meta, pick: suwayomi::Candidate, fill: Option<suwayomi::Candidate>, sel: Option<read::Pick>, lang: Option<String>) -> Result<String, String> {
+    read::follow(&app, meta, pick, fill, sel.unwrap_or(read::Pick { ids: None, from: None, new_too: true }), lang).await
+}
+
+#[tauri::command]
+async fn read_languages(app: AppHandle) -> Result<Vec<serde_json::Value>, String> {
+    read::languages(&app).await
+}
+
+#[tauri::command]
+async fn read_copy_chapters(app: AppHandle, manga_id: i64, fill_id: Option<i64>) -> Result<Vec<read::PickRow>, String> {
+    read::copy_chapters(&app, manga_id, fill_id).await
+}
+
+#[tauri::command]
+async fn read_get_chapters(app: AppHandle, key: String, ids: Vec<i64>) -> Result<String, String> {
+    read::get_chapters(&app, &key, &ids).await
+}
+
+#[tauri::command]
+async fn read_stop_chapters(app: AppHandle, key: String) -> Result<String, String> {
+    read::stop_chapters(&app, &key).await
+}
+
+#[tauri::command]
+fn read_list(app: AppHandle) -> Result<Vec<serde_json::Value>, String> {
+    read::my_list(&app)
+}
+
+#[tauri::command]
+fn read_list_set(app: AppHandle, card: serde_json::Value, on: bool) -> Result<bool, String> {
+    read::toggle_list(&app, &card, on)
+}
+
+#[tauri::command]
+async fn read_explore(e: read::Explore) -> Result<serde_json::Value, String> {
+    read::explore(&e).await
+}
+
+#[tauri::command]
+fn read_genres() -> Vec<&'static str> {
+    read::GENRES.to_vec()
+}
+
+#[tauri::command]
+async fn read_downloads(app: AppHandle) -> Result<serde_json::Value, String> {
+    read::downloads(&app).await
 }
 
 #[tauri::command]
@@ -1018,6 +1064,15 @@ pub fn run() {
             read_mark,
             read_folder,
             read_set_folder,
+            read_languages,
+            read_copy_chapters,
+            read_get_chapters,
+            read_stop_chapters,
+            read_list,
+            read_list_set,
+            read_explore,
+            read_genres,
+            read_downloads,
             read_book_rows,
             read_book_search,
             read_book_copies,

@@ -186,6 +186,80 @@ pub struct Followed {
     /// Chapters from this number on are wanted (None: all of them).
     #[serde(default)]
     pub from: Option<f64>,
+    /// The translation it's read in ("en", "es", "pt-BR"...).
+    #[serde(default)]
+    pub lang: Option<String>,
+    /// New chapters download by themselves (off when chapters were picked one by one and the box unticked).
+    #[serde(default = "yes")]
+    pub new_too: bool,
+    /// Other copies filling in what this one lacks (a site further ahead).
+    #[serde(default)]
+    pub fill: Vec<Fill>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct Fill {
+    pub manga_id: i64,
+    pub source: String,
+    pub source_title: String,
+    pub width: u32,
+}
+
+impl Followed {
+    /// Every copy: (Suwayomi manga id, source folder, series folder), the main one first.
+    pub fn copies(&self) -> Vec<(i64, String, String)> {
+        let mut v = vec![(self.manga_id, self.source.clone(), self.source_title.clone())];
+        v.extend(self.fill.iter().map(|x| (x.manga_id, x.source.clone(), x.source_title.clone())));
+        v
+    }
+
+    pub fn has_manga(&self, id: i64) -> bool {
+        self.manga_id == id || self.fill.iter().any(|x| x.manga_id == id)
+    }
+}
+
+/// One series out of several copies, in order: each chapter number from the
+/// first copy that has it downloaded, else the first that lists it. A chapter
+/// with no number is only taken from the main copy. Returns (chapter, copy).
+pub fn merge_copies(lists: Vec<Vec<crate::suwayomi::Chapter>>) -> Vec<(crate::suwayomi::Chapter, usize)> {
+    let mut out: Vec<(crate::suwayomi::Chapter, usize)> = Vec::new();
+    for (i, list) in lists.into_iter().enumerate() {
+        for c in list {
+            let Some(n) = c.number else {
+                if i == 0 {
+                    out.push((c, 0));
+                }
+                continue;
+            };
+            match out.iter_mut().find(|(o, _)| o.number == Some(n)) {
+                None => out.push((c, i)),
+                Some(slot) => {
+                    if c.downloaded && !slot.0.downloaded {
+                        *slot = (c, i);
+                    }
+                }
+            }
+        }
+    }
+    out.sort_by(|a, b| a.0.number.unwrap_or(f64::MAX).partial_cmp(&b.0.number.unwrap_or(f64::MAX)).unwrap_or(std::cmp::Ordering::Equal));
+    out
+}
+
+/// A followed series' chapters across its copies. The main copy must answer.
+pub async fn chapters_of(f: &Followed) -> Result<Vec<(crate::suwayomi::Chapter, usize)>, String> {
+    let mut lists = vec![crate::suwayomi::chapters(f.manga_id).await?];
+    for x in &f.fill {
+        lists.push(crate::suwayomi::chapters(x.manga_id).await.unwrap_or_default());
+    }
+    Ok(merge_copies(lists))
+}
+
+async fn chapter_list(f: &Followed) -> Result<Vec<crate::suwayomi::Chapter>, String> {
+    Ok(chapters_of(f).await?.into_iter().map(|x| x.0).collect())
+}
+
+fn yes() -> bool {
+    true
 }
 
 fn followed_file(app: &AppHandle) -> Result<PathBuf, String> {
@@ -254,12 +328,12 @@ fn all_spots(app: &AppHandle) -> Vec<HashMap<String, Spot>> {
 
 /// The series' download folder: `<Comics>/mangas/<source>/<title>`, the title
 /// as Suwayomi wrote it (compared loosely: it strips characters Windows refuses).
-fn series_dir(app: &AppHandle, f: &Followed) -> Option<PathBuf> {
-    if !crate::suwayomi::plain_name(&f.source) {
+fn series_dir(app: &AppHandle, source: &str, source_title: &str) -> Option<PathBuf> {
+    if !crate::suwayomi::plain_name(source) {
         return None;
     }
-    let src = comics_dir(app)?.join("mangas").join(&f.source);
-    let want = read_core::norm_title(&f.source_title);
+    let src = comics_dir(app)?.join("mangas").join(source);
+    let want = read_core::norm_title(source_title);
     std::fs::read_dir(&src).ok()?.filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.is_dir()).find(|p| p.file_name().is_some_and(|n| read_core::norm_title(&n.to_string_lossy()) == want))
 }
 
@@ -365,10 +439,13 @@ pub struct Opened {
 pub async fn open(app: &AppHandle, key: &str, chapter: i64) -> Result<Opened, String> {
     let uid = uid(app)?;
     let f = find(app, key)?;
-    let chs = crate::suwayomi::chapters(f.manga_id).await?;
-    let at = chs.iter().position(|c| c.id == chapter).ok_or("That chapter isn't there any more.")?;
-    let ch = chs[at].clone();
-    let dir = series_dir(app, &f).ok_or("This series has nothing downloaded yet.")?;
+    let merged = chapters_of(&f).await?;
+    let at = merged.iter().position(|(c, _)| c.id == chapter).ok_or("That chapter isn't there any more.")?;
+    let (ch, copy) = merged[at].clone();
+    let copies = f.copies();
+    let (_, src, title) = &copies[copy.min(copies.len() - 1)];
+    let dir = series_dir(app, src, title).ok_or("This series has nothing downloaded yet.")?;
+    let chs: Vec<crate::suwayomi::Chapter> = merged.into_iter().map(|x| x.0).collect();
     let file = chapter_file(&dir, &ch).ok_or("That chapter isn't downloaded yet.")?;
     // The graphics card's sharpened copy, when Settings has it on and it's made.
     let (file, sharp) = crate::sharpen::pick(app, file);
@@ -579,7 +656,7 @@ pub async fn library(app: &AppHandle) -> Result<Vec<Shelf>, String> {
     let s = spots(app, &uid);
     let mut out = Vec::new();
     for f in followed(app) {
-        let chs = crate::suwayomi::chapters(f.manga_id).await.unwrap_or_default();
+        let chs = chapter_list(&f).await.unwrap_or_default();
         out.push(shelf_of(&f, &chs, s.get(&f.key)));
     }
     out.sort_by(|a, b| b.at.cmp(&a.at).then(a.title.cmp(&b.title)));
@@ -645,7 +722,7 @@ pub struct ChapterRow {
 pub async fn detail(app: &AppHandle, key: &str) -> Result<Detail, String> {
     let uid = uid(app)?;
     let f = find(app, key)?;
-    let chs = crate::suwayomi::chapters(f.manga_id).await?;
+    let chs = chapter_list(&f).await?;
     let q = crate::suwayomi::queue().await;
     let spot = spots(app, &uid).remove(key);
     let rows = chs
@@ -707,29 +784,157 @@ impl Meta {
 }
 
 /// Every source's copy of the series, best first (slow: each source is searched).
-pub async fn sources(app: &AppHandle, meta: &Meta) -> Result<Vec<crate::suwayomi::Candidate>, String> {
+/// The copies of a series in one language, best first, and what Best takes.
+#[derive(Serialize)]
+pub struct Copies {
+    pub list: Vec<crate::suwayomi::Candidate>,
+    /// Best's main copy and its fill, as indexes into `list`.
+    pub best: Option<usize>,
+    pub fill: Option<usize>,
+}
+
+pub async fn sources(app: &AppHandle, meta: &Meta, lang: &str) -> Result<Copies, String> {
+    if !lang_ok(lang) {
+        return Err("Unknown language.".into());
+    }
     ensure_root(app).await?;
     crate::suwayomi::ready(app).await?;
-    crate::suwayomi::candidates(&meta.all_names()).await
+    let list = crate::suwayomi::candidates(&meta.all_names(), lang).await?;
+    let pair = crate::suwayomi::best_pair(&list);
+    Ok(Copies { best: pair.map(|p| p.0), fill: pair.and_then(|p| p.1), list })
+}
+
+/// A language code as sources name them: "en", "pt-BR", "zh-Hans".
+pub fn lang_ok(l: &str) -> bool {
+    (2..=10).contains(&l.len()) && l.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+}
+
+/// A language's own name, for the picker.
+pub fn lang_name(code: &str) -> String {
+    match code {
+        "en" => "English", "es" => "Español", "es-419" => "Español (Latinoamérica)", "pt" => "Português", "pt-BR" => "Português (Brasil)",
+        "fr" => "Français", "de" => "Deutsch", "it" => "Italiano", "ru" => "Русский", "uk" => "Українська", "pl" => "Polski", "tr" => "Türkçe",
+        "id" => "Bahasa Indonesia", "vi" => "Tiếng Việt", "th" => "ไทย", "ar" => "العربية", "ja" => "日本語", "ko" => "한국어",
+        "zh" | "zh-Hans" => "中文 (简体)", "zh-Hant" | "zh-hant" => "中文 (繁體)", "hi" => "हिन्दी", "ms" => "Bahasa Melayu", "fil" | "tl" => "Filipino",
+        "nl" => "Nederlands", "cs" => "Čeština", "hu" => "Magyar", "ro" => "Română", "bg" => "Български", "el" => "Ελληνικά", "he" => "עברית",
+        "sv" => "Svenska", "da" => "Dansk", "no" | "nb" => "Norsk", "fi" => "Suomi", "ca" => "Català", "fa" => "فارسی", "bn" => "বাংলা",
+        other => return other.to_string(),
+    }
+    .to_string()
+}
+
+/// Every language a series can be got in, with its own name.
+pub async fn languages(app: &AppHandle) -> Result<Vec<Value>, String> {
+    ensure_root(app).await?;
+    crate::suwayomi::ready(app).await?;
+    Ok(crate::suwayomi::languages().await?.into_iter().map(|(code, n)| json!({ "code": code, "name": lang_name(&code), "sources": n })).collect())
+}
+
+#[derive(Serialize)]
+pub struct PickRow {
+    #[serde(flatten)]
+    pub ch: crate::suwayomi::Chapter,
+    /// From the fill copy (the site further ahead).
+    pub fill: bool,
+}
+
+/// A copy's chapters (with a fill, both merged), before following: so they can be picked.
+pub async fn copy_chapters(app: &AppHandle, manga_id: i64, fill_id: Option<i64>) -> Result<Vec<PickRow>, String> {
+    crate::suwayomi::ready(app).await?;
+    let mut lists = vec![crate::suwayomi::chapters(manga_id).await?];
+    if let Some(f) = fill_id {
+        lists.push(crate::suwayomi::chapters(f).await.unwrap_or_default());
+    }
+    Ok(merge_copies(lists).into_iter().map(|(ch, i)| PickRow { ch, fill: i > 0 }).collect())
+}
+
+/// What to download when following.
+#[derive(Deserialize, Clone, Debug, Default)]
+pub struct Pick {
+    /// Chapters picked one by one; None: every chapter from `from` on.
+    pub ids: Option<Vec<i64>>,
+    pub from: Option<f64>,
+    #[serde(default = "yes")]
+    pub new_too: bool,
+}
+
+/// Gets chapters of a series already followed.
+pub async fn get_chapters(app: &AppHandle, key: &str, ids: &[i64]) -> Result<String, String> {
+    let f = find(app, key)?;
+    let chs = chapter_list(&f).await?;
+    let want: Vec<i64> = chs.iter().filter(|c| !c.downloaded && ids.contains(&c.id)).map(|c| c.id).collect();
+    if want.is_empty() {
+        return Ok("Those are already here.".into());
+    }
+    crate::suwayomi::enqueue(&want).await?;
+    Ok(match want.len() {
+        1 => format!("Getting 1 chapter of {}.", f.title),
+        n => format!("Getting {n} chapters of {}.", f.title),
+    })
+}
+
+/// Stops what a series has downloading.
+pub async fn stop_chapters(app: &AppHandle, key: &str) -> Result<String, String> {
+    let f = find(app, key)?;
+    let queued: Vec<i64> = crate::suwayomi::queue().await.into_iter().filter(|q| f.has_manga(q.0)).map(|q| q.1).collect();
+    crate::suwayomi::dequeue(&queued).await?;
+    Ok(format!("Stopped the downloads of {}.", f.title))
 }
 
 /// Follows the series from `pick` (a candidate from `sources`), downloading
 /// every chapter from `from` on. Following it again from another source
 /// replaces the old one; what was read is kept.
-pub async fn follow(app: &AppHandle, meta: Meta, pick: crate::suwayomi::Candidate, from: Option<f64>) -> Result<String, String> {
+pub async fn follow(app: &AppHandle, meta: Meta, pick: crate::suwayomi::Candidate, fill: Option<crate::suwayomi::Candidate>, sel: Pick, lang: Option<String>) -> Result<String, String> {
+    let from = sel.from;
+    if lang.as_deref().is_some_and(|l| !lang_ok(l)) {
+        return Err("Unknown language.".into());
+    }
     ensure_root(app).await?;
     crate::suwayomi::ready(app).await?;
     // Where its chapters land is Suwayomi's say, never the page's: the folder
     // names come from the downloader itself and are checked to be plain names.
     let (source, source_title) = crate::suwayomi::folder_names(pick.manga_id).await?;
-    let queued = crate::suwayomi::follow(pick.manga_id, from).await?;
+    let fill = match fill.filter(|x| x.manga_id != pick.manga_id) {
+        Some(x) => {
+            let (s, t) = crate::suwayomi::folder_names(x.manga_id).await?;
+            vec![Fill { manga_id: x.manga_id, source: s, source_title: t, width: x.width }]
+        }
+        None => vec![],
+    };
+    // What to get, out of every copy merged: each chapter from one copy only.
+    let mut lists = vec![crate::suwayomi::chapters(pick.manga_id).await?];
+    for x in &fill {
+        lists.push(crate::suwayomi::chapters(x.manga_id).await.unwrap_or_default());
+    }
+    let wanted: Vec<i64> = merge_copies(lists)
+        .into_iter()
+        .map(|x| x.0)
+        .filter(|c| !c.downloaded)
+        .filter(|c| match &sel.ids {
+            Some(p) => p.contains(&c.id),
+            None => from.is_none_or(|f| c.number.unwrap_or(f64::MAX) >= f),
+        })
+        .map(|c| c.id)
+        .collect();
+    crate::suwayomi::follow(pick.manga_id, from, Some(&[])).await?;
+    for x in &fill {
+        crate::suwayomi::follow(x.manga_id, from, Some(&[])).await?;
+    }
+    if !wanted.is_empty() {
+        crate::suwayomi::enqueue(&wanted).await?;
+    }
+    let queued = wanted.len();
     let mut all = followed(app);
     let mode = read_core::default_mode(meta.country.as_deref(), meta.format.as_deref()).to_string();
     let key = format!("m{}", pick.manga_id);
     // The same series from another source: the old one stops.
     let old: Vec<Followed> = all.iter().filter(|f| f.key != key && meta.anilist.is_some() && f.anilist == meta.anilist).cloned().collect();
     for o in &old {
-        let _ = crate::suwayomi::unfollow(o.manga_id).await;
+        for (id, _, _) in o.copies() {
+            if id != pick.manga_id && !fill.iter().any(|x| x.manga_id == id) {
+                let _ = crate::suwayomi::unfollow(id).await;
+            }
+        }
     }
     all.retain(|f| f.key != key && !old.iter().any(|o| o.key == f.key));
     all.push(Followed {
@@ -751,12 +956,16 @@ pub async fn follow(app: &AppHandle, meta: Meta, pick: crate::suwayomi::Candidat
         width: pick.width,
         added: now(),
         from,
+        lang,
+        new_too: sel.new_too,
+        fill: fill.clone(),
     });
     save_followed(app, &all)?;
     let msg = match queued {
-        0 => format!("Following {}. New chapters download by themselves.", meta.title),
-        1 => format!("Getting 1 chapter of {} from {}.", meta.title, source),
-        n => format!("Getting {n} chapters of {} from {}.", meta.title, source),
+        0 if sel.new_too => format!("Following {}. New chapters download by themselves.", meta.title),
+        0 => format!("{} is on your list.", meta.title),
+        1 => format!("Getting 1 chapter of {}.", meta.title),
+        n => format!("Getting {n} chapters of {}.", meta.title),
     };
     crate::log::log(app, crate::model::Level::Ok, &msg);
     Ok(msg)
@@ -765,12 +974,14 @@ pub async fn follow(app: &AppHandle, meta: Meta, pick: crate::suwayomi::Candidat
 /// Stops following; with `delete`, its downloaded chapters go too.
 pub async fn unfollow(app: &AppHandle, key: &str, delete: bool) -> Result<String, String> {
     let f = find(app, key)?;
-    if delete {
-        let chs = crate::suwayomi::chapters(f.manga_id).await.unwrap_or_default();
-        let ids: Vec<i64> = chs.iter().filter(|c| c.downloaded).map(|c| c.id).collect();
-        crate::suwayomi::delete_chapters(&ids).await?;
+    for (id, _, _) in f.copies() {
+        if delete {
+            let chs = crate::suwayomi::chapters(id).await.unwrap_or_default();
+            let ids: Vec<i64> = chs.iter().filter(|c| c.downloaded).map(|c| c.id).collect();
+            crate::suwayomi::delete_chapters(&ids).await?;
+        }
+        crate::suwayomi::unfollow(id).await?;
     }
-    crate::suwayomi::unfollow(f.manga_id).await?;
     let mut all = followed(app);
     all.retain(|x| x.key != key);
     save_followed(app, &all)?;
@@ -838,13 +1049,16 @@ pub async fn fetch_new(app: &AppHandle) {
     }
     let profiles = all_spots(app);
     let queued: std::collections::HashSet<i64> = crate::suwayomi::queue().await.into_iter().map(|q| q.1).collect();
-    for f in list {
-        let Ok(chs) = crate::suwayomi::chapters(f.manga_id).await else { continue };
+    for f in list.into_iter().filter(|f| f.new_too) {
+        let Ok(chs) = chapter_list(&f).await else { continue };
+        // Only chapters newer than everything here: older ones left out were left out on purpose.
+        let newest_here = chs.iter().filter(|c| c.downloaded).filter_map(|c| c.number).fold(f64::MIN, f64::max);
         let read_by_someone = |id: i64| profiles.iter().filter_map(|p| p.get(&f.key)).any(|s| s.read.contains_key(&id));
         let want: Vec<i64> = chs
             .iter()
             .filter(|c| !c.downloaded && !queued.contains(&c.id) && !read_by_someone(c.id))
             .filter(|c| f.from.is_none_or(|from| c.number.unwrap_or(f64::MAX) >= from))
+            .filter(|c| newest_here == f64::MIN || c.number.is_some_and(|n| n > newest_here))
             .map(|c| c.id)
             .collect();
         if !want.is_empty() && crate::suwayomi::enqueue(&want).await.is_ok() {
@@ -861,12 +1075,79 @@ pub async fn clean_up(app: &AppHandle) {
     let profiles = all_spots(app);
     for f in followed(app) {
         let readers: Vec<&Spot> = profiles.iter().filter_map(|p| p.get(&f.key)).collect();
-        let Ok(chs) = crate::suwayomi::chapters(f.manga_id).await else { continue };
+        let Ok(chs) = chapter_list(&f).await else { continue };
         let doomed = cleanup_pick(&chs, &readers, days, now());
         if !doomed.is_empty() && crate::suwayomi::delete_chapters(&doomed).await.is_ok() {
             crate::log::log(app, crate::model::Level::Ok, format!("Deleted {} read chapter(s) of {}.", doomed.len(), f.title));
         }
     }
+}
+
+// ---------- My List for reading (per profile) ----------
+
+const LIST_MAX: usize = 1000;
+
+fn list_file(dir: &Path, uid: &str) -> PathBuf {
+    dir.join(format!("read-list-{uid}.json"))
+}
+
+/// A card as it may be kept: only the fields a card shows, each cut short.
+pub fn keep_card(c: &Value) -> Option<(String, Value)> {
+    let s = |k: &str, n: usize| c[k].as_str().map(|v| v.chars().take(n).collect::<String>());
+    let key = match (c["anilist"].as_i64(), s("olid", 80)) {
+        (Some(a), _) => format!("al:{a}"),
+        (None, Some(o)) => format!("ol:{o}"),
+        _ => return None,
+    };
+    let url = |k: &str| s(k, 400).filter(|u| u.starts_with("https://") || u.starts_with("/read/"));
+    let names: Vec<String> = c["names"].as_array().map(|a| a.iter().filter_map(|x| x.as_str()).take(12).map(|x| x.chars().take(200).collect()).collect()).unwrap_or_default();
+    let genres: Vec<String> = c["genres"].as_array().map(|a| a.iter().filter_map(|x| x.as_str()).take(12).map(|x| x.chars().take(40).collect()).collect()).unwrap_or_default();
+    Some((
+        key,
+        json!({
+            "kind": s("kind", 10), "anilist": c["anilist"].as_i64(), "olid": s("olid", 80), "title": s("title", 300)?, "names": names,
+            "author": s("author", 200), "cover": url("cover"), "banner": url("banner"), "country": s("country", 4), "format": s("format", 20),
+            "status": s("status", 30), "chapters": c["chapters"].as_i64(), "score": c["score"].as_i64(), "genres": genres,
+            "description": s("description", 4000), "year": c["year"].as_i64(),
+        }),
+    ))
+}
+
+pub fn my_list(app: &AppHandle) -> Result<Vec<Value>, String> {
+    let uid = uid(app)?;
+    let list: Vec<(String, Value)> = load_json(&list_file(&data_dir(app)?, &uid));
+    Ok(list.into_iter().map(|(_, v)| v).collect())
+}
+
+/// Adds a card to the watching profile's reading list, or takes it off.
+pub fn toggle_list(app: &AppHandle, card: &Value, on: bool) -> Result<bool, String> {
+    let uid = uid(app)?;
+    let (key, keep) = keep_card(card).ok_or("That can't go on your list.")?;
+    let path = list_file(&data_dir(app)?, &uid);
+    let mut list: Vec<(String, Value)> = load_json(&path);
+    list.retain(|(k, _)| k != &key);
+    if on {
+        if list.len() >= LIST_MAX {
+            return Err("Your reading list is full.".into());
+        }
+        list.insert(0, (key, keep));
+    }
+    save_json(&path, &list)?;
+    Ok(on)
+}
+
+/// What reading has downloading: each series with chapters queued, and books on their way.
+pub async fn downloads(app: &AppHandle) -> Result<Value, String> {
+    let q = crate::suwayomi::queue().await;
+    let series: Vec<Value> = followed(app)
+        .into_iter()
+        .filter_map(|f| {
+            let mine: Vec<&(i64, i64, f64)> = q.iter().filter(|x| f.has_manga(x.0)).collect();
+            (!mine.is_empty()).then(|| json!({ "key": f.key, "title": f.title, "cover": f.cover, "country": f.country, "chapters": mine.len(), "progress": mine.iter().map(|x| x.2).sum::<f64>() / mine.len() as f64 }))
+        })
+        .collect();
+    let books: Vec<Value> = books(app).await?.into_iter().filter(|b| !b.ready).map(|b| json!(b)).collect();
+    Ok(json!({ "series": series, "books": books }))
 }
 
 // ---------- discovery (AniList) ----------
@@ -962,6 +1243,58 @@ pub async fn rows(app: &AppHandle) -> Result<Value, String> {
     Ok(v)
 }
 
+/// One page of a reading tab's grid: manga, manhwa, manhua or novels, with filters.
+#[derive(Deserialize, Default, Debug)]
+pub struct Explore {
+    pub kind: String,
+    #[serde(default)]
+    pub genres: Vec<String>,
+    pub status: Option<String>,
+    pub sort: Option<String>,
+    #[serde(default)]
+    pub page: u32,
+}
+
+pub fn explore_args(e: &Explore) -> Result<String, String> {
+    let mut a = vec!["type:MANGA".to_string(), "isAdult:false".to_string()];
+    match e.kind.as_str() {
+        "manga" => a.extend(["countryOfOrigin:\"JP\"".into(), "format_in:[MANGA,ONE_SHOT]".into()]),
+        "manhwa" => a.push("countryOfOrigin:\"KR\"".into()),
+        "manhua" => a.push("countryOfOrigin:\"CN\"".into()),
+        "novels" => a.push("format:NOVEL".into()),
+        _ => return Err("Unknown kind.".into()),
+    }
+    let word = |s: &str| !s.is_empty() && s.len() <= 30 && s.chars().all(|c| c.is_ascii_alphanumeric() || c == ' ' || c == '-');
+    let genres: Vec<String> = e.genres.iter().filter(|g| word(g)).take(8).map(|g| format!("\"{g}\"")).collect();
+    if !genres.is_empty() {
+        a.push(format!("genre_in:[{}]", genres.join(",")));
+    }
+    if let Some(s) = e.status.as_deref().filter(|s| matches!(*s, "RELEASING" | "FINISHED" | "HIATUS" | "NOT_YET_RELEASED")) {
+        a.push(format!("status:{s}"));
+    }
+    let sort = match e.sort.as_deref() {
+        Some("trending") => "TRENDING_DESC",
+        Some("score") => "SCORE_DESC",
+        Some("new") => "START_DATE_DESC",
+        Some("title") => "TITLE_ENGLISH",
+        _ => "POPULARITY_DESC",
+    };
+    a.push(format!("sort:{sort}"));
+    Ok(a.join(","))
+}
+
+pub async fn explore(e: &Explore) -> Result<Value, String> {
+    let args = explore_args(e)?;
+    let page = e.page.clamp(1, 200);
+    let q = format!("{{Page(page:{page},perPage:40){{pageInfo{{hasNextPage}} media({args}){{{MEDIA_FIELDS}}}}}}}");
+    let v = crate::media::anilist(&json!({ "query": q })).await?;
+    let p = &v["data"]["Page"];
+    Ok(json!({ "items": p["media"].as_array().map(|a| a.iter().map(card).collect::<Vec<_>>()).unwrap_or_default(), "more": p["pageInfo"]["hasNextPage"] }))
+}
+
+/// AniList's manga genres, for the filter chips (A to Z).
+pub const GENRES: [&str; 18] = ["Action", "Adventure", "Comedy", "Drama", "Ecchi", "Fantasy", "Horror", "Mahou Shoujo", "Mecha", "Music", "Mystery", "Psychological", "Romance", "Sci-Fi", "Slice of Life", "Sports", "Supernatural", "Thriller"];
+
 pub async fn search(term: &str) -> Result<Vec<Value>, String> {
     let term = term.trim();
     if term.is_empty() {
@@ -979,6 +1312,35 @@ mod tests {
 
     fn ch(id: i64, n: f64, downloaded: bool) -> Chapter {
         Chapter { id, name: format!("Chapter {n}"), number: Some(n), scanlator: None, downloaded, pages: 10, uploaded: None }
+    }
+
+    #[test]
+    fn copies_merge_chapter_by_chapter() {
+        let ch = |id: i64, n: f64, dl: bool| Chapter { id, name: format!("Chapter {n}"), number: Some(n), scanlator: None, downloaded: dl, pages: 1, uploaded: None };
+        // Main (sharp, free chapters 1-3), fill (far ahead, 1-5, chapter 2 already here).
+        let main = vec![ch(1, 1.0, false), ch(2, 2.0, false), ch(3, 3.0, false)];
+        let fill = vec![ch(11, 1.0, false), ch(12, 2.0, true), ch(13, 3.0, false), ch(14, 4.0, false), ch(15, 5.0, false)];
+        let m: Vec<(i64, usize)> = merge_copies(vec![main, fill]).into_iter().map(|(c, i)| (c.id, i)).collect();
+        assert_eq!(m, vec![(1, 0), (12, 1), (3, 0), (14, 1), (15, 1)], "sharp where it has it, a copy already here is kept, the rest filled");
+    }
+
+    #[test]
+    fn explore_only_builds_safe_queries() {
+        let e = Explore { kind: "manhua".into(), genres: vec!["Action".into(), "x\"}){evil".into()], status: Some("FINISHED".into()), sort: Some("score".into()), page: 1 };
+        let a = explore_args(&e).unwrap();
+        assert!(a.contains("countryOfOrigin:\"CN\"") && a.contains("genre_in:[\"Action\"]") && a.contains("status:FINISHED") && a.contains("sort:SCORE_DESC"));
+        assert!(!a.contains("evil"));
+        assert!(explore_args(&Explore { kind: "x".into(), ..Default::default() }).is_err());
+    }
+
+    #[test]
+    fn list_cards_keep_only_what_shows() {
+        let (k, v) = keep_card(&json!({ "anilist": 5, "title": "T", "cover": "javascript:alert(1)", "banner": "https://img/x.jpg", "junk": "x" })).unwrap();
+        assert_eq!(k, "al:5");
+        assert!(v["cover"].is_null() && v["banner"] == "https://img/x.jpg" && v.get("junk").is_none());
+        assert!(keep_card(&json!({ "title": "no id" })).is_none());
+        assert!(lang_ok("pt-BR") && lang_ok("en") && !lang_ok("../x") && !lang_ok(""));
+        assert_eq!(lang_name("es"), "Español");
     }
 
     #[test]
