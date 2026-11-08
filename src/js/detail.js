@@ -1,4 +1,5 @@
 // The detail panel: what a title is, Play / Resume / Download, My List, and episodes.
+import { hideButton } from "./hidden.js";
 import { $, ask, canDelete, closeDialog, el, genresAZ, getPref, icon, ICON, invoke, listen, metaBits, setPref, store, toast } from "./api.js";
 import { canWatchNow, isWatchNow, movieLike, play, removeWatchNow, startEpisode, watchNow } from "./player.js";
 import { completedActions, confirmRedownload, isWatched, listable, loadWatched, onMyList, removeContinue, resumable, setMyList } from "./mylist.js";
@@ -904,6 +905,7 @@ export async function openDetail(t, opts = {}) {
   if (t.completed) completedBits(t, actions);
   if (opts.episodes) showEpisodes(seq);
   else if (listable(t) && !watching) actions.append(myListButton(t));
+  actions.append(hideButton(t.subtitle && t.kind === "episode" ? t.title : t.title, () => shut(), t));
   if (t.jf_id && t.kind !== "episode" && !watching) actions.append(subtitlesControl(t).el, canDelete() ? deleteButton(t) : null);
   if (started && seq === openSeq) {
     const off = el("button", { class: "btn soft", onclick: async () => { off.disabled = true; if (await removeContinue(started)) off.remove(); else off.disabled = false; } }, "Remove from Continue watching");

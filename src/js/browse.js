@@ -1,5 +1,6 @@
 // Home, Movies, Series, Anime and My downloads: a hero, genre chips and rows
 // of posters; hover previews; Top 10; and "Explore all" pages that keep loading.
+import { isHidden, markHidden } from "./hidden.js";
 import { $, canDelete, el, genresAZ, getPref, icon, ICON, invoke, listen, metaBits, personKey, store, toast } from "./api.js";
 import { openDetail, playShowNow } from "./detail.js";
 import { canWatchNow, confirmRemove, isWatchNow, movieLike, play, removeWatchNow, watchNow } from "./player.js";
@@ -104,6 +105,7 @@ export function tile(t, wide = false, rank = 0) {
   const rkCap = rank ? el("div", { class: "rk-cap" }, el("strong", { text: t.title }), el("small", { text: [t.year, genresAZ(t.genres || [], 1)[0]].filter(Boolean).join(" · ") })) : null;
   const b = el("button", { class: cls, "aria-label": t.title, dataset: { key: t.key } }, rank ? el("span", { class: "rank", "aria-hidden": "true", text: String(rank) }) : null, art(t, wide), rank ? rkCap : cap);
   b._tsig = `${rank}|${JSON.stringify(t)}`; // what it shows; a kept tab redraws a card only when this changes
+  markHidden(b, t);
   if (isWatchNow(t) && t.status && !rank) b.append(el("div", { class: "cap wn-state", text: t.status }));
   b.addEventListener("click", () => { hidePreview(true); open(t); });
   b.addEventListener("mouseenter", () => schedulePreview(b, t));
@@ -508,6 +510,7 @@ let heroKey = null; // the featured title showing, kept across a redraw
 function hero(picks, keep = null) {
   clearInterval(heroTimer);
   heroShow = null;
+  picks = picks.filter((p) => !isHidden(p.t));
   if (!picks.length) return heroLook(el("section", { class: "hero empty" }));
   const bgUrl = (p) => `url("${p.t.backdrop.replace(/"/g, "%22")}")`;
   let at = Math.max(0, picks.findIndex((p) => p.t.key === keep));
