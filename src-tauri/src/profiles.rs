@@ -193,6 +193,11 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Sen
     tokio::task::spawn_blocking(f).await.map_err(|e| e.to_string())?
 }
 
+/// The PC owner's Jellyfin user id.
+pub fn owner_id(app: &AppHandle) -> Option<String> {
+    owner(app).map(|s| s.user_id)
+}
+
 fn owner(app: &AppHandle) -> Option<Session> {
     app.state::<Media>().session.lock().unwrap().clone()
 }

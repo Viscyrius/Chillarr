@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.13.2 (2026-11-08)
+- New: Style, in the middle of the top bar while reading. Pick how reading looks:
+  - Cinema: big pictures and rows, like the films. Trending is now a Top 10 with the big numbers.
+  - Midnight: dark violet and dense. The newest chapters of what you follow up front, each one a click from the reader, with how long ago it came out; a grid of what's popular with ratings and chapter counts; and a Popular ranking down the side (Trending, Top rated, Most read).
+  - Classic: light and bright. A numbered Top 10 (Trending, Popular, Top rated), Your week (your series by the day their chapters come out, with UP on today's), Popular by genre, and New and ongoing.
+  Each profile keeps its own style.
+- New: hover cards on manga, manhwa and manhua covers, like the films': the cover opens out with the picture, rating, a few lines, Read or See chapters, and My List.
+- New: filters on Manhwa, Manhua, Manga and Novels like the films': genres and tags in or out, status, rating, length and years. 18+ can be hidden, included or shown alone, only on the PC owner's profile (or a Jellyfin admin on the web); other profiles never see 18+ titles.
+- More movement: covers rise in as they load, rankings and updates slide in, switching style fades across, and the tabs and buttons react when pressed.
+
 ## 0.13.1 (2026-11-08)
 - New: Keep up to date, on any series you follow. Chillarr checks the site for new chapters every few minutes instead of every few hours. A site that has trouble is asked less often until it answers again.
 - New: a notification on this PC when new chapters are ready to read, for every series you follow, and when another site gets further ahead than your copy (Change copy on the series switches to it).
