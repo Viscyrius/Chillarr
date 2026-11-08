@@ -14,7 +14,8 @@
   - Lists that switch with tabs fade across instead of jumping.
 - Light mode, everywhere: buttons, the details panel, the series panel and the hover cards no longer keep dark colours. The player and the reader stay dark.
 - On a narrow window the Style picker sits at the top of the page, in one row.
-- New: 18+ titles can also come from HentaiRead. It's only searched for 18+ titles, and only for profiles allowed 18+.
+- New: 18+ titles can also come from HentaiRead. It's only searched for 18+ titles.
+- 18+ in the reading filters can be turned on from any profile (it's still off until you pick it).
 - A TV, phone or browser signed in as a profile with a PIN now asks for that PIN first.
 - Each profile has its own manga and books: what one follows doesn't show on another's, and following something already here doesn't download it again.
 - A profile made on a TV or phone now shows in the PC's profile picker right away.
