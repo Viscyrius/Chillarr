@@ -64,8 +64,21 @@ fn file(dir: &Path) -> PathBuf {
     dir.join("comments.json")
 }
 
-fn load(dir: &Path) -> Store {
-    std::fs::read_to_string(file(dir)).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
+/// Every comment. Only a missing file is an empty store: one that can't be
+/// read right now (another program holding it) is an error, so a post never
+/// saves an empty store over everyone's comments; a damaged one is kept aside
+/// as comments.json.bad.
+fn load(dir: &Path) -> Result<Store, String> {
+    let path = file(dir);
+    let text = match std::fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Store::default()),
+        Err(_) => return Err("Comments couldn't be read just now. Try again in a moment.".into()),
+    };
+    serde_json::from_str(&text).map_err(|_| {
+        let _ = std::fs::rename(&path, path.with_extension("json.bad"));
+        "The comments file was damaged and was set aside. New comments start fresh.".to_string()
+    })
 }
 
 fn save(dir: &Path, s: &Store) -> Result<(), String> {
@@ -245,7 +258,7 @@ pub async fn list(app: &AppHandle, key: &str) -> Result<Vec<View>, String> {
     let key = key.to_string();
     blocking(move || {
         let _io = IO.lock().unwrap();
-        Ok(list_in(&load(&d), &key, me.as_deref(), &names))
+        Ok(list_in(&load(&d)?, &key, me.as_deref(), &names))
     })
     .await
 }
@@ -261,7 +274,7 @@ pub async fn add(app: &AppHandle, key: &str, text: &str) -> Result<View, String>
     let names = names(app);
     blocking(move || {
         let _io = IO.lock().unwrap();
-        let mut s = load(&d);
+        let mut s = load(&d)?;
         let c = add_in(&mut s, &key, &by, &name, text, id, now_secs())?;
         save(&d, &s)?;
         Ok(view(&c, Some(by.as_str()), &names))
@@ -277,7 +290,7 @@ pub async fn edit(app: &AppHandle, key: &str, id: &str, text: &str) -> Result<Vi
     let names = names(app);
     blocking(move || {
         let _io = IO.lock().unwrap();
-        let mut s = load(&d);
+        let mut s = load(&d)?;
         let c = own_mut(&mut s, &key, &id, &by)?;
         if c.text != text {
             c.text = text;
@@ -295,7 +308,7 @@ pub async fn delete(app: &AppHandle, key: &str, id: &str) -> Result<(), String> 
     let (d, key, id) = (dir(app)?, key.to_string(), id.to_string());
     blocking(move || {
         let _io = IO.lock().unwrap();
-        let mut s = load(&d);
+        let mut s = load(&d)?;
         delete_in(&mut s, &key, &id, &by)?;
         save(&d, &s)
     })
@@ -385,9 +398,13 @@ mod tests {
         let mut s = Store::default();
         add_in(&mut s, "anilist:21", "ann", "Ann", "<b>hi</b>".into(), "a".into(), 1).unwrap();
         save(&dir, &s).unwrap();
-        let back = load(&dir);
+        let back = load(&dir).unwrap();
         assert_eq!(back.titles["anilist:21"][0].text, "<b>hi</b>", "kept as typed; the page shows it as text");
-        assert!(load(&dir.join("none")).titles.is_empty());
+        assert!(load(&dir.join("none")).unwrap().titles.is_empty());
+        // A damaged file is set aside, never written over.
+        std::fs::write(dir.join("comments.json"), b"{not json").unwrap();
+        assert!(load(&dir).is_err());
+        assert!(dir.join("comments.json.bad").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
