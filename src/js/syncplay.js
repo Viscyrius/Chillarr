@@ -24,7 +24,10 @@ let stallTimer = null; // a "waiting" that hasn't lasted long enough to tell the
 let creating = false;
 // Catching up by speed: on until it's really in step, so it doesn't flip on and off.
 let easing = false;
-const g = { id: null, name: "", people: [], itemId: null, playlistItemId: null, state: "Idle", cmd: null, startWhenReady: false };
+const g = { id: null, name: "", people: [], itemId: null, playlistItemId: null, state: "Idle", cmd: null, startWhenReady: false, startTicks: 0, title: "" };
+// Join back (#36): this player is opening the party's title to catch up with
+// it. Local only: nothing is sent to the party until it can play from there.
+let rejoin = null;
 
 export const inGroup = () => !!g.id;
 
@@ -126,12 +129,15 @@ function groupUpdate(u) {
 async function playQueue(d) {
   const item = d.Playlist?.[d.PlayingItemIndex];
   if (!item) return;
+  if (g.itemId !== item.ItemId) g.title = "";
   g.playlistItemId = item.PlaylistItemId;
   g.itemId = item.ItemId;
+  g.startTicks = d.StartPositionTicks || 0;
   if (player.currentId() === item.ItemId) { await ready(); return; }
   const tile = await invoke("syncplay_tile", { id: item.ItemId }).catch(() => null);
   if (!tile) { toast("The party is playing something this profile can't see.", true); return; }
-  toast(`The party is watching ${tile.subtitle ? `${tile.title} ${tile.subtitle}` : tile.title}.`);
+  g.title = nameOf(tile);
+  toast(`The party is watching ${g.title}.`);
   player.open(tile, (d.StartPositionTicks || 0) / TICKS);
 }
 
@@ -154,6 +160,8 @@ function command(c) {
     player.pause();
     seekIfOff(pos);
   } else if (c.Command === "Seek") {
+    // The party jumped while this one was joining back: the normal path takes over.
+    rejoin = null;
     player.pause();
     player.seek(pos);
     whenPlayable(() => ready());
@@ -161,6 +169,73 @@ function command(c) {
     if (g.itemId && player.currentId()) player.pause();
   }
 }
+
+const nameOf = (tile) => (tile.subtitle ? `${tile.title} ${tile.subtitle}` : tile.title);
+
+/** Where the party is now, in seconds: its last command's spot plus the time
+ *  since when it's playing (the drift check's sum). */
+function partyAt() {
+  const c = g.cmd;
+  if (!c) return g.startTicks / TICKS;
+  const pos = c.PositionTicks / TICKS;
+  return c.Command === "Unpause" ? pos + Math.max(0, serverNow() - parse(c.When)) / 1000 : pos;
+}
+const partyPlaying = () => g.cmd?.Command === "Unpause";
+
+/** Join back is offered: in a party on a title, and this player isn't on it. */
+const canJoinBack = () => !!g.id && !!g.itemId && g.state !== "Idle" && player.currentId() !== g.itemId;
+
+/** Opens the party's title at the party's spot, in its play or pause state.
+ *  Nobody else is told anything: no Pause, Seek or Unpause goes out. */
+async function joinBack() {
+  // A rejoin that never got going (the player shut while loading) stops blocking.
+  if (rejoin && Date.now() - rejoin.at > 30000) rejoin = null;
+  if (rejoin || !canJoinBack()) return;
+  const item = g.itemId;
+  rejoin = { item, at: Date.now() };
+  draw();
+  const tile = await invoke("syncplay_tile", { id: item }).catch(() => null);
+  if (!tile) {
+    rejoin = null;
+    toast("This profile can't open what the party is watching. It may be in another profile's library, or above this profile's age limit.", true);
+    draw();
+    return;
+  }
+  if (!g.id || g.itemId !== item) { rejoin = null; draw(); return; }
+  g.title = nameOf(tile);
+  if (dlg.open) dlg.close();
+  player.open(tile, partyAt());
+}
+
+/** The rejoining player can play: catch up to where the party got to while it
+ *  loaded, match its play or pause, then say Ready (Jellyfin answers only this
+ *  device), and the normal drift check takes over. */
+function rejoined() {
+  const r = rejoin;
+  if (!g.id || g.itemId !== r.item || player.currentId() !== r.item) { rejoin = null; ready(); return; }
+  seekIfOff(partyAt());
+  whenPlayable(() => {
+    rejoin = null;
+    if (partyPlaying()) { seekIfOff(partyAt()); player.play(); } else player.pause();
+    ready();
+    draw();
+  });
+}
+
+/** The player closed on the party's title: say how to get back in. */
+export function leftPlayer(id) {
+  if (rejoin) { rejoin = null; draw(); return; }
+  if (!g.id || id !== g.itemId) return;
+  toast("You left the movie. Join back any time from Watch together.");
+  draw();
+}
+
+const clock = (t) => {
+  const s = Math.max(0, Math.floor(t));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60;
+  const two = (n) => (n < 10 ? `0${n}` : String(n));
+  return h ? `${h}:${two(m)}:${two(x)}` : `${m}:${two(x)}`;
+};
 
 /** Jumps only when this player is a second or more away from `pos`. */
 function seekIfOff(pos) {
@@ -209,7 +284,8 @@ function startTimers() {
 function leftGroup() {
   const was = g.name;
   chatReset();
-  Object.assign(g, { id: null, name: "", people: [], itemId: null, playlistItemId: null, state: "Idle", cmd: null, startWhenReady: false });
+  Object.assign(g, { id: null, name: "", people: [], itemId: null, playlistItemId: null, state: "Idle", cmd: null, startWhenReady: false, startTicks: 0, title: "" });
+  rejoin = null;
   clearInterval(pingTimer);
   clearInterval(driftTimer);
   clearTimeout(cmdTimer);
@@ -236,7 +312,7 @@ export function startedHere(tile, at, playing = true) {
 }
 
 /** The party's title finished loading here: say so once it can play. */
-export function loadedHere() { whenPlayable(() => ready()); }
+export function loadedHere() { whenPlayable(() => (rejoin ? rejoined() : ready())); }
 
 /** The player stalled or caught up: the party waits for it, then goes on. */
 // Only a wait that lasts is told: the browser says "waiting" for a few
@@ -300,6 +376,7 @@ async function draw() {
     parts.push(
       el("div", { class: "wt-people" }, g.people.map((p) => el("span", { class: "wt-person" }, el("span", { class: "wt-dot" }), p))),
       el("p", { class: "wt-note", text: g.itemId ? "Play, pause and skips happen for everyone. If someone's connection is slow, the party waits for them." : "Pick something to watch: everyone in the party starts it together." }),
+      joinBackButton(),
       el("p", { class: "wt-note", text: "To chat with the party, press C in the player or use the chat button at the top." }),
       invite(),
       el("div", { class: "ask-actions" },
@@ -319,6 +396,27 @@ async function draw() {
     }).catch((e) => list.replaceChildren(el("p", { class: "wt-note", text: String(e) })));
   }
   dlg.replaceChildren(...parts);
+}
+
+/** "Join back: Title, 1:12:40", the time kept current while the panel is open. */
+let joinTick = null;
+function joinBackButton() {
+  clearInterval(joinTick);
+  if (!canJoinBack()) return null;
+  const label = el("span");
+  const paint = () => {
+    const name = g.title ? `${g.title}, ` : "";
+    label.textContent = rejoin ? "Joining back..." : `Join back: ${name}${clock(partyAt())}${partyPlaying() ? "" : " (paused)"}`;
+  };
+  const b = el("button", { class: "btn primary wt-rejoin", disabled: !!rejoin, onclick: joinBack }, icon("M8 5v14l11-7z"), label);
+  paint();
+  joinTick = setInterval(() => { if (!dlg.open || !b.isConnected) { clearInterval(joinTick); return; } paint(); }, 1000);
+  // Its name, for the button, the first time the panel is opened after a join.
+  if (!g.title && g.itemId) {
+    const item = g.itemId;
+    invoke("syncplay_tile", { id: item }).then((t) => { if (t && g.itemId === item) { g.title = nameOf(t); paint(); } }).catch(() => {});
+  }
+  return el("div", { class: "ask-actions wt-rejoin-row", style: "justify-content:flex-start" }, b);
 }
 
 /** How a friend gets in: their own profile, from Chillarr or Jellyfin's apps. */
