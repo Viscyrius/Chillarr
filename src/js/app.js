@@ -2,6 +2,7 @@
 import { $, el, invoke, screenMode, setPerson, store, viewer, WEB, windowFull } from "./api.js";
 import { renderTab, renderSearch, renderExplore, stopBrowse, warmTabs } from "./browse.js";
 import { renderFilter } from "./filter.js";
+import { renderRead, stopRead } from "./read.js";
 import { renderSettings, stopSettings } from "./settings.js";
 import { openSetup } from "./setup.js";
 import { knowPerson, startProfiles, startProfilesWeb } from "./profiles.js";
@@ -11,7 +12,7 @@ import { recentSearches } from "./recent.js";
 import { applyTheme, syncIcons } from "./theme.js";
 
 const view = $("#view");
-const TABS = ["home", "movies", "series", "anime", "downloads", "mylist", "settings", "explore", "filter"];
+const TABS = ["home", "movies", "series", "anime", "read", "downloads", "mylist", "settings", "explore", "filter"];
 let current = "";
 
 /**
@@ -37,8 +38,10 @@ function route(redraw = false) {
   if (!mode) window.scrollTo({ top: 0, behavior: "instant" });
   const want = mode ? place.cards(id) : 0;
   if (tab !== "settings") stopSettings();
+  if (tab !== "read") stopRead();
   let drawn;
   if (tab === "settings") { stopBrowse(); renderSettings(view, hash.split("/")[1]); }
+  else if (tab === "read") { stopBrowse(); drawn = renderRead(view); }
   else if (tab === "filter") {
     const [, kind, json] = hash.split("/");
     let f = {};
