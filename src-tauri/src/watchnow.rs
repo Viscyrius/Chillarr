@@ -451,6 +451,30 @@ impl WatchNow {
         result
     }
 
+    /// Players that went quiet: a player reports where it is every 10 s while it's
+    /// open (paused too), so "watching" with no report for `max_age` seconds is a
+    /// player that closed without saying so (a TV switched off, a phone's tab
+    /// killed). Left set, it held the title's download in Downloads until
+    /// Chillarr restarted (The Dark Knight, 2026-11-08: four hours).
+    pub fn expire_watching(&self, max_age: i64) -> Result<(), String> {
+        let t = now();
+        let uids: Vec<String> = {
+            let all = self.profiles.lock().unwrap_or_else(|e| e.into_inner());
+            all.iter().filter(|(_, s)| s.entries.iter().any(|e| stale_watching(e, t, max_age))).map(|(u, _)| u.clone()).collect()
+        };
+        let mut result = Ok(());
+        for uid in uids {
+            let r = self.with(&uid, |s| {
+                s.entries.iter_mut().filter(|e| stale_watching(e, t, max_age)).for_each(|e| e.watching = false);
+                ((), true)
+            });
+            if r.1.is_err() {
+                result = r.1;
+            }
+        }
+        result
+    }
+
     pub fn set_watching(&self, uid: &str, key: &str, on: bool) -> Result<(), String> {
         self.with(uid, |s| {
             let Some(e) = s.entries.iter_mut().find(|x| x.key == key) else { return ((), false) };
@@ -461,6 +485,15 @@ impl WatchNow {
         .1
     }
 }
+
+/// Marked as playing, but nothing heard from its player for `max_age` seconds.
+pub fn stale_watching(e: &Entry, now: i64, max_age: i64) -> bool {
+    e.watching && now - e.updated_at > max_age
+}
+
+/// How long a player may stay silent before it counts as closed: 60 of its
+/// 10-second reports missed.
+const WATCHING_GONE: i64 = 10 * 60;
 
 /// True only if some entry with this hash is owned, none with it is being
 /// watched, and nothing else wants the torrent.
@@ -1984,6 +2017,7 @@ async fn monitor_episode(app: &tauri::AppHandle, tvdb: i64, season: i64, episode
 pub async fn tick(app: &tauri::AppHandle) {
     use tauri::Manager;
     note(app, app.state::<WatchNow>().keep_owned());
+    note(app, app.state::<WatchNow>().expire_watching(WATCHING_GONE));
     handover(app).await;
     tidy_torrents(app).await;
 }
@@ -2556,6 +2590,22 @@ mod tests {
         let mine = Entry { token: "old".into(), hash: Some("h".into()), owned: true, ..movie() };
         let m = merge_fresh(saved, &mine);
         assert_eq!((m.token.as_str(), m.strm_jf_id.as_deref(), m.hash.as_deref(), m.owned), ("shared", Some("jf"), Some("h"), true));
+    }
+
+    #[test]
+    fn a_silent_player_stops_counting_as_watching() {
+        let t = 1_000_000;
+        let e = Entry { watching: true, updated_at: t - 30, ..movie() };
+        assert!(!stale_watching(&e, t, WATCHING_GONE), "reported 30 s ago: still watching");
+        let old = Entry { watching: true, updated_at: t - WATCHING_GONE - 1, ..movie() };
+        assert!(stale_watching(&old, t, WATCHING_GONE), "nothing for 10 minutes: the player is gone");
+        assert!(!stale_watching(&Entry { watching: false, updated_at: 0, ..movie() }, t, WATCHING_GONE));
+        let dir = tempfile::tempdir().unwrap();
+        let w = WatchNow::load(dir.path().to_path_buf());
+        w.upsert("a", Entry { watching: true, ..movie() }).unwrap();
+        w.with("a", |s| { s.entries.iter_mut().for_each(|x| x.updated_at = now() - WATCHING_GONE - 5); ((), true) }).1.unwrap();
+        w.expire_watching(WATCHING_GONE).unwrap();
+        assert!(w.all().iter().all(|(_, x)| !x.watching), "cleared, so the hand-over and the clean-up can go ahead");
     }
 
     #[test]
