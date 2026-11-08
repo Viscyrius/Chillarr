@@ -7,7 +7,7 @@
 // Chat: everyone in the party can type to each other while it plays. SyncPlay
 // has no messages, so Chillarr carries them (syncplay.rs `say`): the window
 // hears a Tauri event, a web page its bridge stream, the same "together-chat".
-import { $, el, icon, invoke, listen, store, toast } from "./api.js";
+import { $, el, getPref, icon, invoke, listen, setPref, store, toast } from "./api.js";
 import { syncControl as player } from "./player.js";
 
 const TICKS = 1e7;
@@ -99,11 +99,11 @@ function groupUpdate(u) {
       break;
     case "UserJoined":
       if (!g.people.includes(u.Data)) g.people.push(u.Data);
-      toast(`${u.Data} joined the watch party.`);
+      notice(`${u.Data} joined the watch party.`);
       break;
     case "UserLeft":
       g.people = g.people.filter((p) => p !== u.Data);
-      toast(`${u.Data} left the watch party.`);
+      notice(`${u.Data} left the watch party.`);
       break;
     case "GroupLeft":
     case "NotInGroup":
@@ -117,7 +117,7 @@ function groupUpdate(u) {
       g.state = u.Data.State;
       break;
     case "LibraryAccessDenied":
-      toast("Someone in the party can't see this in their Jellyfin library.", true);
+      notice("Someone in the party can't see this in their Jellyfin library.", true);
       break;
   }
   draw();
@@ -354,13 +354,44 @@ const chatList = el("ol", { class: "chat-list", "aria-live": "polite" });
 const chatInput = el("input", { type: "text", class: "chat-input", maxlength: String(CHAT_MAX), placeholder: "Say something", "aria-label": "Message to the party", autocomplete: "off" });
 const chatSend = el("button", { class: "btn small primary", type: "submit" }, "Send");
 const chatForm = el("form", { class: "chat-form" }, chatInput, chatSend);
+// "Show messages while watching": off, nothing comes up over the picture.
+// Messages still arrive and wait in the chat, counted on the chat button.
+// Kept per profile on this device; it only changes this screen.
+const QUIET_PREF = "chillarr-chat-float";
+const quiet = () => getPref(QUIET_PREF) === "0";
+const quietSw = el("input", { type: "checkbox", class: "switch", "aria-label": "Show messages while watching" });
+const chatQuiet = el("label", { class: "chat-quiet" }, quietSw, el("span", { text: "Show messages while watching" }));
 const chatPanel = el("div", { class: "p-chat", role: "dialog", "aria-label": "Party chat", hidden: true },
   el("div", { class: "chat-head" }, el("b", { text: "Party chat" }), el("button", { class: "link-btn", type: "button", onclick: () => toggleChat(false) }, "Hide")),
-  chatList, chatForm);
+  chatList, chatForm, chatQuiet);
 const chatFloat = el("ol", { class: "chat-float", "aria-hidden": "true" });
 $("#player").append(chatPanel, chatFloat);
 chatBtn.addEventListener("click", (e) => { e.stopPropagation(); toggleChat(); });
 chatPanel.addEventListener("click", (e) => e.stopPropagation());
+
+quietSw.addEventListener("change", () => {
+  setPref(QUIET_PREF, quietSw.checked ? "1" : "0");
+  if (!quietSw.checked) chatFloat.replaceChildren();
+});
+// Its keys are its own, not the player's (Space would pause). OK/Enter on a
+// TV remote flips it, Esc or Back shuts the chat.
+quietSw.addEventListener("keydown", (e) => {
+  e.stopPropagation();
+  if (e.key === "Enter" || e.keyCode === 13) { e.preventDefault(); quietSw.click(); }
+  else if (e.key === "Escape" || [461, 10009].includes(e.keyCode)) { e.preventDefault(); toggleChat(false); }
+});
+
+const watching = () => !$("#player").hidden;
+/** Party news (joined, left...): always in the chat log; over the picture only
+ *  when messages may show there. */
+function notice(text, bad = false) {
+  if (g.id) {
+    chatList.append(el("li", { class: "chat-line event" }, el("span", { text })));
+    if (chatList.children.length > 400) chatList.firstChild.remove();
+    if (!chatPanel.hidden) chatList.scrollTop = chatList.scrollHeight;
+  }
+  if (!(quiet() && watching())) toast(text, bad);
+}
 
 const timeOf = (at) => new Date(at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 const line = (m) => el("li", { class: m.from === me ? "chat-line mine" : "chat-line" },
@@ -378,6 +409,7 @@ export function toggleChat(on = chatPanel.hidden) {
   chatPanel.hidden = !on;
   chatFloat.hidden = on;
   if (on) {
+    quietSw.checked = !quiet();
     unread = 0;
     drawBadge();
     chatFloat.replaceChildren();
@@ -399,13 +431,15 @@ listen("together-chat", (e) => {
   const m = e.payload;
   if (!m || !g.id || m.group !== g.id || said.some((x) => x.id === m.id)) return;
   said.push(m);
-  if (said.length > 200) { said.shift(); chatList.firstChild?.remove(); }
+  if (said.length > 200) said.shift();
+  if (chatList.children.length > 400) chatList.firstChild.remove();
   const near = chatList.scrollHeight - chatList.scrollTop - chatList.clientHeight < 40;
   chatList.append(line(m));
   if (near || m.from === me) chatList.scrollTop = chatList.scrollHeight;
   if (!chatPanel.hidden || m.from === me) return;
   unread++;
   drawBadge();
+  if (quiet()) return;
   // While it's shut: the message floats up over the picture, then fades.
   const f = line(m);
   chatFloat.append(f);
