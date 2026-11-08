@@ -443,7 +443,6 @@ img, svg { -webkit-user-drag: none; }
 .btn:active:not(:disabled) { transform: translateY(0) scale(0.96); transition-duration: 0.08s; }
 .icon-btn, .link-btn, .p-btn, .arrow, .settings-nav button, .close { transition: background 0.2s, color 0.2s, transform 0.25s var(--spring), opacity 0.2s; }
 .icon-btn svg { transition: transform 0.5s var(--out); }
-.icon-btn:hover svg { transform: rotate(40deg); }
 .p-btn:active, .close:active { transform: scale(0.9); }
 
 /* Dialogs open and close softly */
@@ -2267,4 +2266,26 @@ body[data-mode="read"][data-rstyle="classic"] .read-detail, body[data-mode="read
 
 @media (prefers-reduced-motion: reduce) {
   .rk, .mn-up, .cl-banner, .cl-banner::after, .cl-up, .read-style-pill, #view.rs-swap, .tabbed-body { animation: none; transition: none; }
+}
+
+/* ---------- top bar icons: each moves its own way ---------- */
+.icon-btn:hover { transform: translateY(-1px); }
+.icon-btn:active { transform: scale(0.88); transition-duration: 0.08s; }
+.icon-btn::before { content: ""; position: absolute; top: 0; right: 0; bottom: 0; left: 0; border-radius: inherit; box-shadow: 0 0 0 0 rgba(var(--accent-rgb), 0.35); transition: box-shadow 0.35s var(--out); pointer-events: none; }
+.icon-btn:focus-visible::before, .icon-btn:active::before { box-shadow: 0 0 0 4px rgba(var(--accent-rgb), 0.22); }
+/* Settings: the gear turns. */
+a.icon-btn[href="#settings"]:hover svg { transform: rotate(60deg); }
+/* Watching and reading: the icon wiggles and pops, and glows in the accent. */
+.mode-btn:hover { color: var(--accent-hi, var(--accent)); }
+.mode-btn:hover svg { animation: mode-wiggle 0.7s var(--spring); }
+@keyframes mode-wiggle { 0% { transform: none; } 25% { transform: rotate(-12deg) scale(1.12); } 50% { transform: rotate(9deg) scale(1.12); } 75% { transform: rotate(-4deg) scale(1.05); } 100% { transform: none; } }
+/* Watch together: the two people hop. */
+.together-btn:hover svg { animation: together-hop 0.6s var(--spring); }
+@keyframes together-hop { 0%, 100% { transform: none; } 35% { transform: translateY(-3px) scale(1.06); } 65% { transform: translateY(1px) scale(0.98); } }
+/* Full screen: the corners spread out and back. */
+#fs-btn:hover svg { animation: fs-spread 0.55s var(--out); }
+@keyframes fs-spread { 0%, 100% { transform: none; } 45% { transform: scale(1.22); } }
+@media (prefers-reduced-motion: reduce) {
+  .icon-btn:hover, .icon-btn:active { transform: none; }
+  .mode-btn:hover svg, .together-btn:hover svg, #fs-btn:hover svg { animation: none; }
 }

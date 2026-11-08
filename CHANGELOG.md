@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.13.3 (2026-11-08)
+- The top bar's buttons move now: the film and book switch wiggles, Watch together's people hop, Full screen's corners spread, the Settings gear turns, and every one lifts on hover and gives a little when pressed. The People button no longer tips sideways on hover.
+
 ## 0.13.2 (2026-11-08)
 - New: Style, in the middle of the top bar while reading. Pick how reading looks:
   - Cinema: big pictures and rows, like the films. Trending is now a Top 10 with the big numbers.
