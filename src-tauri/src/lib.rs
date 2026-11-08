@@ -3,6 +3,7 @@ mod downloads_home;
 mod zipread;
 mod read_core;
 mod read;
+mod read_storage;
 mod suwayomi;
 mod manga_net;
 mod books;
@@ -812,6 +813,26 @@ async fn read_book_remove(app: AppHandle, key: String) -> Result<String, String>
 }
 
 #[tauri::command]
+async fn read_storage(app: AppHandle) -> Result<read_storage::Overview, String> {
+    read_storage::overview(&app).await
+}
+
+#[tauri::command]
+async fn read_delete_plan(app: AppHandle, key: String, ids: Option<Vec<i64>>) -> Result<read_storage::Plan, String> {
+    read_storage::plan(&app, &key, ids).await
+}
+
+#[tauri::command]
+async fn read_delete_chapters(app: AppHandle, key: String, ids: Option<Vec<i64>>, others_ok: Option<bool>) -> Result<String, String> {
+    read_storage::delete(&app, &key, ids, others_ok.unwrap_or(false)).await
+}
+
+#[tauri::command]
+async fn read_book_delete_file(app: AppHandle, key: String, others_ok: Option<bool>) -> Result<String, String> {
+    read_storage::delete_book(&app, &key, others_ok.unwrap_or(false)).await
+}
+
+#[tauri::command]
 async fn read_books(app: AppHandle) -> Result<Vec<read::BookShelf>, String> {
     read::books(&app).await
 }
@@ -1108,6 +1129,10 @@ pub fn run() {
             read_book_copies,
             read_book_get,
             read_book_remove,
+            read_storage,
+            read_delete_plan,
+            read_delete_chapters,
+            read_book_delete_file,
             read_books,
             read_book_open,
             read_set_cleanup,
