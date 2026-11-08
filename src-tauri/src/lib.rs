@@ -4,6 +4,7 @@ mod zipread;
 mod read_core;
 mod read;
 mod read_storage;
+mod readparty;
 mod suwayomi;
 mod manga_net;
 mod books;
@@ -792,6 +793,28 @@ async fn manga_sites() -> Result<serde_json::Value, String> {
     suwayomi::sites().await
 }
 
+// Read Party (readparty.rs): reading a series together.
+#[tauri::command]
+fn readparty_start(app: AppHandle, key: String, chapter: i64, page: u32) -> Result<readparty::State, String> {
+    readparty::start(&app, &key, chapter, page)
+}
+#[tauri::command]
+fn readparty_join(app: AppHandle, code: String) -> Result<readparty::State, String> {
+    readparty::join(&app, &code)
+}
+#[tauri::command]
+fn readparty_state(app: AppHandle, code: String) -> Result<readparty::State, String> {
+    readparty::state(&app, &code)
+}
+#[tauri::command]
+fn readparty_move(app: AppHandle, code: String, chapter: i64, page: u32) -> Result<readparty::State, String> {
+    readparty::moved(&app, &code, chapter, page)
+}
+#[tauri::command]
+fn readparty_leave(app: AppHandle, code: String) -> Result<(), String> {
+    readparty::leave(&app, &code)
+}
+
 /// One page of a book row's See all.
 #[tauri::command]
 async fn read_book_more(id: String, page: u32) -> Result<serde_json::Value, String> {
@@ -1132,6 +1155,11 @@ pub fn run() {
             read_book_rows,
             read_book_more,
             manga_sites,
+            readparty_start,
+            readparty_join,
+            readparty_state,
+            readparty_move,
+            readparty_leave,
             read_book_search,
             read_book_copies,
             read_book_get,

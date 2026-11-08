@@ -20,6 +20,7 @@
 // (Chrome 61; scrolling is eased by hand), CSS transitions on transform and
 // opacity only. Motion is cut when the system asks for less.
 import { el, icon, ICON, invoke, toast, WEB, getPref, setPref, screenMode, windowFull } from "./api.js";
+import { attachReader, detachReader, moved as partyMoved, panel as partyPanel, partyIcon } from "./readparty.js";
 
 const MODES = [
   { id: "webtoon", label: "Scroll" },
@@ -57,6 +58,20 @@ export async function openReader(key, chapter, onClose = null) {
   if (!r) build(onClose);
   r.key = key;
   load(opened, root);
+  // Read Party: where this reader is, and how a party moves it.
+  attachReader({ where: () => (r && r.o && r.o.chapter ? { key: r.key, chapter: r.o.chapter.id, page: r.page } : null), go: partyGo });
+}
+
+/** A reading party moved: to that page, or that chapter first. */
+async function partyGo(chapter, page) {
+  if (!r || !r.o) return;
+  if (r.o.chapter && r.o.chapter.id === chapter) { goTo(Math.max(0, Math.min(page, r.o.pages.length - 1)), true, 0); return; }
+  try {
+    const o = await invoke("read_open", { key: r.key, chapter });
+    if (!r) return;
+    o.page = Math.max(0, Math.min(page, o.pages.length - 1));
+    load(o, await bridgeBase());
+  } catch (e) { toast(String(e), true); }
 }
 
 function build(onClose) {
@@ -73,6 +88,7 @@ function build(onClose) {
   const top = el("div", { class: "rd-bar rd-top" },
     el("button", { class: "rd-btn", "aria-label": "Close", onclick: close }, icon(ICON.left)),
     title, hd, el("div", { class: "rd-modes", role: "group", "aria-label": "Reading direction" }, modeBtns), zoomBox, count,
+    el("button", { class: "rd-btn rp-btn", "aria-label": "Read together", title: "Read together", onclick: () => partyPanel() }, partyIcon()),
     el("button", { class: "rd-btn rd-full", "aria-label": "Full screen", title: "Full screen (F)", onclick: () => toggleFull() }, icon(FULL)));
   const prevCh = el("button", { class: "rd-btn rd-ch", onclick: () => jumpChapter(-1) }, "Previous chapter");
   const nextCh = el("button", { class: "rd-btn rd-ch", onclick: () => jumpChapter(1) }, "Next chapter");
@@ -106,6 +122,7 @@ function close() {
   saveNow();
   // Full screen that the reader turned on goes off with it.
   if (r.fullByMe) setFull(false);
+  detachReader();
   r.io?.disconnect();
   r.endIo?.forEach((o) => o.disconnect());
   clearTimeout(r.hideT);
@@ -757,6 +774,7 @@ function paintCount() {
   r.slider.classList.toggle("rtl", r.mode === "manga");
   r.box.classList.toggle("rtl", r.mode === "manga");
   r.fill.style.transform = `scaleX(${n ? (last + 1) / n : 0})`;
+  partyMoved();
 }
 
 function saveSoon() {
