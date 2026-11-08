@@ -1,6 +1,8 @@
 # Changelog
 
 ## 0.15.1 (2026-11-08)
+- Fixed: manga only searched a few sites. Every big manga site (Weeb Central, MangaDex, Mangakakalot, MangaFire and more) was being skipped as 18+ because it carries some adult titles, so only MANGA Plus and the manhua sites were asked. Black Clover showed 6 chapters and Darling in the Franxx none; now 16 sites have all 392 of Black Clover, 15 have Darling in the Franxx, and One Piece has all 1198. Only sites that are entirely 18+ wait for an 18+ search.
+- Fixed: a sharp copy with chapters missing in the middle now gets them filled in from the fullest copy.
 - New: Hidden. Every profile can hide films, series, anime, manga and books from all its pages, behind a password of its own (not the PIN). Press Hide on a title's page. Settings > Account & devices sets the password, shows hidden things until you lock them (or for an hour), and lists them to show again.
 - Reading: hide a series from Your week (and Latest updates) on your profile, so whoever looks at the screen doesn't see it. Use the button on its card in Your week or "Hide from Your week" on its page. "Show in Your week" brings it back. It is still in your list and opens as usual.
 - Many more manga sites: 73 now, up from 28. Every big English site in the list is searched, plus Comick Live, MangaBall, NiAdd, NovelCool and more.

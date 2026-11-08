@@ -406,12 +406,12 @@ pub async fn sites() -> Result<Value, String> {
     let nodes = v["sources"]["nodes"].as_array().cloned().unwrap_or_default();
     let mut en: Vec<String> = nodes
         .iter()
-        .filter(|s| s["lang"].as_str() == Some("en") && s["isNsfw"] != true)
+        .filter(|s| s["lang"].as_str() == Some("en") && !s["displayName"].as_str().is_some_and(adult_only))
         .filter_map(|s| s["displayName"].as_str().map(|n| n.trim_end_matches(" (EN)").to_string()))
         .collect();
     en.sort_by_key(|n| n.to_lowercase());
     en.dedup();
-    let other = nodes.iter().filter(|s| !matches!(s["lang"].as_str(), Some("en" | "all" | "localsourcelang" | "other")) && s["isNsfw"] != true).count();
+    let other = nodes.iter().filter(|s| !matches!(s["lang"].as_str(), Some("en" | "all" | "localsourcelang" | "other")) && !s["displayName"].as_str().is_some_and(adult_only)).count();
     Ok(json!({ "en": en, "other": other }))
 }
 
@@ -435,12 +435,22 @@ pub async fn ensure_adult() {
 }
 
 /// Which sources a search asks: that language only, and 18+ ones only when `adult`.
+/// A site that is only 18+, by its name.
+pub fn adult_only(name: &str) -> bool {
+    let n = name.to_ascii_lowercase();
+    ["hentai", "doujin", "nhentai", "hitomi", "e-hentai", "18+", "porn", "manhwa18", "xxx"].iter().any(|w| n.contains(w))
+}
+
 pub fn pick_sources(nodes: &[Value], lang: &str, adult: bool) -> Vec<(String, String)> {
     nodes
         .iter()
         .filter(|s| s["lang"].as_str() == Some(lang))
-        // isNsfw when Suwayomi says it; the name otherwise (an older Suwayomi without the field).
-        .filter(|s| adult || !(s["isNsfw"] == true || s["displayName"].as_str().is_some_and(|n| n.to_ascii_lowercase().contains("hentai"))))
+        // Only the adult-only sites sit out a normal search. Not isNsfw: Suwayomi
+        // flags nearly every big manga site (Weeb Central, MangaDex, Mangakakalot,
+        // MangaFire...) because they carry some adult titles, and leaving those
+        // out left MANGA Plus and the manhua sites only: Black Clover found 6
+        // chapters, Darling in the Franxx nothing (measured 2026-11-08).
+        .filter(|s| adult || !s["displayName"].as_str().is_some_and(adult_only))
         .filter_map(|s| Some((s["id"].as_str()?.to_string(), s["displayName"].as_str()?.to_string())))
         .collect()
 }
@@ -510,7 +520,7 @@ pub fn best_pair(c: &[Candidate]) -> Option<(usize, Option<usize>)> {
     let whole = |i: usize| c[i].chapters as f64 >= most / 3.0;
     let far = (0..c.len())
         .filter(|&i| c[i].latest.is_some() && whole(i))
-        .max_by(|&a, &b| c[a].latest.partial_cmp(&c[b].latest).unwrap_or(std::cmp::Ordering::Equal).then(band(c[a].quality).cmp(&band(c[b].quality))).then(b.cmp(&a)))?;
+        .max_by(|&a, &b| c[a].latest.partial_cmp(&c[b].latest).unwrap_or(std::cmp::Ordering::Equal).then(c[a].chapters.cmp(&c[b].chapters)).then(band(c[a].quality).cmp(&band(c[b].quality))).then(b.cmp(&a)))?;
     let sharp = (0..c.len())
         .filter(|&i| c[i].latest.is_some_and(|l| l >= newest / 3.0) && whole(i))
         .max_by(|&a, &b| band(c[a].quality).cmp(&band(c[b].quality)).then(c[a].density.partial_cmp(&c[b].density).unwrap_or(std::cmp::Ordering::Equal)).then(b.cmp(&a)))
@@ -518,8 +528,10 @@ pub fn best_pair(c: &[Candidate]) -> Option<(usize, Option<usize>)> {
     if sharp == far || band(c[sharp].quality) <= band(c[far].quality) {
         return Some((far, None));
     }
-    // The sharp copy has (nearly) everything: nothing to fill.
-    if c[sharp].latest.is_some_and(|l| l >= newest * 0.97) {
+    // The sharp copy has (nearly) everything: nothing to fill. Reaching the
+    // newest isn't enough: one with holes in the middle (700 of One Piece's
+    // 1198) gets them filled from the fullest copy.
+    if c[sharp].latest.is_some_and(|l| l >= newest * 0.97) && c[sharp].chapters as f64 >= c[far].chapters as f64 * 0.9 {
         return Some((sharp, None));
     }
     Some((sharp, Some(far)))
@@ -761,8 +773,11 @@ mod tests {
             json!({ "id": "4", "displayName": "Ruler (ES)", "lang": "es", "isNsfw": false }),
         ];
         let ids = |v: Vec<(String, String)>| v.into_iter().map(|x| x.0).collect::<Vec<_>>();
-        assert_eq!(ids(pick_sources(&nodes, "en", false)), vec!["1"], "18+ left out, flagged or by name");
+        assert_eq!(ids(pick_sources(&nodes, "en", false)), vec!["1"], "adult-only sites left out by name");
         assert_eq!(ids(pick_sources(&nodes, "en", true)), vec!["1", "2", "3"]);
+        // Big sites Suwayomi flags isNsfw (they carry some adult titles) still search.
+        let flagged = vec![json!({ "id": "5", "displayName": "Weeb Central (EN)", "lang": "en", "isNsfw": true }), json!({ "id": "6", "displayName": "MangaDex (EN)", "lang": "en", "isNsfw": true })];
+        assert_eq!(ids(pick_sources(&flagged, "en", false)), vec!["5", "6"]);
         assert_eq!(ids(pick_sources(&nodes, "es", false)), vec!["4"]);
     }
 
@@ -832,6 +847,11 @@ mod tests {
         plus.chapters = 12;
         let v = vec![plus, c("weeb", 1198.0, 720.0)];
         assert_eq!(best_pair(&v), Some((1, None)));
+        // Sharp and up to date but with a hole (700 of 1198): the full copy fills it.
+        let mut holey = c("sharp", 1198.0, 1400.0);
+        holey.chapters = 700;
+        let v = vec![holey, c("weeb", 1198.0, 720.0)];
+        assert_eq!(best_pair(&v), Some((0, Some(1))));
         assert_eq!(best_pair(&[]), None);
     }
 
@@ -857,6 +877,7 @@ mod tests {
             println!("{:24} {:30} ch={:4} latest={:?} width={} q={:.0}", x.source, x.title, x.chapters, x.latest, x.width, x.quality);
         }
         println!("{} candidates in {:?}", c.len(), t.elapsed());
+        println!("best pair: {:?}", best_pair(&c).map(|(m, f)| (c[m].source.clone(), f.map(|f| c[f].source.clone()))));
         assert!(c.iter().all(|x| crate::read_core::best_title_score(&x.title, &names) >= crate::read_core::SAME_TITLE));
     }
 }
