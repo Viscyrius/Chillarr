@@ -177,6 +177,11 @@ fn save_followed(app: &AppHandle, all: &[Followed]) -> Result<(), String> {
     save_json(&followed_file(app)?, &all)
 }
 
+/// A key progress may be saved under: a followed series or a book.
+fn known(app: &AppHandle, key: &str) -> Result<(), String> {
+    if key.starts_with('b') { crate::books::find(app, key).map(|_| ()) } else { find(app, key).map(|_| ()) }
+}
+
 fn find(app: &AppHandle, key: &str) -> Result<Followed, String> {
     followed(app).into_iter().find(|f| f.key == key).ok_or_else(|| "That series isn't in your reading list.".into())
 }
@@ -257,7 +262,10 @@ pub fn chapter_file(dir: &Path, ch: &crate::suwayomi::Chapter) -> Option<PathBuf
 struct Ticket {
     file: PathBuf,
     entries: Arc<Vec<Entry>>,
+    /// A comic's pages in order (empty for a book).
     pages: Vec<usize>,
+    /// "comic", "epub" or "file" (a PDF or other ebook served whole).
+    kind: &'static str,
     born: Instant,
 }
 
@@ -275,6 +283,10 @@ fn new_ticket() -> String {
 
 impl Reading {
     fn issue(&self, file: PathBuf, entries: Arc<Vec<Entry>>, pages: Vec<usize>) -> String {
+        self.issue_kind(file, entries, pages, "comic")
+    }
+
+    fn issue_kind(&self, file: PathBuf, entries: Arc<Vec<Entry>>, pages: Vec<usize>, kind: &'static str) -> String {
         let mut t = self.tickets.lock().unwrap();
         t.retain(|_, v| v.born.elapsed() < TICKET_LIFE);
         while t.len() >= MAX_TICKETS {
@@ -282,7 +294,7 @@ impl Reading {
             t.remove(&old);
         }
         let id = new_ticket();
-        t.insert(id.clone(), Ticket { file, entries, pages, born: Instant::now() });
+        t.insert(id.clone(), Ticket { file, entries, pages, kind, born: Instant::now() });
         id
     }
 }
@@ -356,8 +368,33 @@ pub async fn open(app: &AppHandle, key: &str, chapter: i64) -> Result<Opened, St
     Ok(Opened { ticket, pages: sizes, chapter: ch, prev, next, mode, page, title: f.title })
 }
 
-/// `/read/<ticket>/<page>`: (status, content type, bytes, cache it).
+/// `/read/<ticket>/<page>` (a comic's page), `/read/<ticket>/f/<path>` (a
+/// file inside an EPUB) or `/read/<ticket>/file` (a PDF whole).
 pub fn serve(app: &AppHandle, path: &str) -> (&'static str, &'static str, Vec<u8>) {
+    const GONE: (&str, &str, &[u8]) = ("404 Not Found", "text/plain", b"Open it again.");
+    let path = path.split('?').next().unwrap_or(path);
+    let parts: Vec<&str> = path.trim_start_matches('/').splitn(4, '/').collect();
+    if let ["read", ticket, rest @ ..] = parts.as_slice() {
+        if rest.first() == Some(&"f") || rest.first() == Some(&"file") {
+            let found = {
+                let t = app.state::<Reading>();
+                let t = t.tickets.lock().unwrap();
+                t.get(*ticket).filter(|v| v.born.elapsed() < TICKET_LIFE && v.kind != "comic").map(|v| (v.file.clone(), v.entries.clone(), v.kind))
+            };
+            let Some((file, entries, kind)) = found else { return (GONE.0, GONE.1, GONE.2.to_vec()) };
+            if rest.first() == Some(&"file") {
+                return match std::fs::read(&file) {
+                    Ok(b) => ("200 OK", read_core::mime(&file.to_string_lossy()), b),
+                    Err(_) => ("500 Internal Server Error", "text/plain", b"Couldn't read it.".to_vec()),
+                };
+            }
+            let Some(inner) = rest.get(1).filter(|_| kind == "epub") else { return (GONE.0, GONE.1, GONE.2.to_vec()) };
+            return match crate::books::epub_file(&file, &entries, inner) {
+                Some(b) => ("200 OK", read_core::mime(inner), b),
+                None => ("404 Not Found", "text/plain", b"Not in this book.".to_vec()),
+            };
+        }
+    }
     let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
     let ["read", ticket, n] = parts.as_slice() else { return ("404 Not Found", "text/plain", b"not here".to_vec()) };
     let Ok(n) = n.parse::<usize>() else { return ("404 Not Found", "text/plain", b"not here".to_vec()) };
@@ -376,14 +413,20 @@ pub fn serve(app: &AppHandle, path: &str) -> (&'static str, &'static str, Vec<u8
 /// Where the watching profile is now. A chapter read to its last page counts as read.
 pub fn set_spot(app: &AppHandle, key: &str, chapter: i64, page: usize, pages: usize) -> Result<(), String> {
     let uid = uid(app)?;
-    find(app, key)?;
+    known(app, key)?;
     let mut all = spots(app, &uid);
     let s = all.entry(key.to_string()).or_default();
     s.chapter = chapter;
     s.page = page;
     s.pages = pages;
     s.at = now();
-    if pages > 0 && page + 1 >= pages {
+    if key.starts_with('b') {
+        // A book: chapter = part of the book, page = how far into it (0..1000).
+        // Done when the last part is read to its end (kept under -1).
+        if pages > 0 && chapter as usize + 1 >= pages && page >= 990 {
+            s.read.entry(-1).or_insert(now());
+        }
+    } else if pages > 0 && page + 1 >= pages {
         s.read.entry(chapter).or_insert(now());
     }
     save_spots(app, &uid, &all)
@@ -394,10 +437,88 @@ pub fn set_mode(app: &AppHandle, key: &str, mode: &str) -> Result<(), String> {
         return Err("Unknown reading mode.".into());
     }
     let uid = uid(app)?;
-    find(app, key)?;
+    known(app, key)?;
     let mut all = spots(app, &uid);
     all.entry(key.to_string()).or_default().mode = Some(mode.to_string());
     save_spots(app, &uid, &all)
+}
+
+// ---------- books ----------
+
+#[derive(Serialize)]
+pub struct OpenedBook {
+    pub ticket: String,
+    /// "epub", "pdf" or "other" (AZW3/MOBI: saved, not shown).
+    pub kind: String,
+    pub spine: Vec<String>,
+    pub title: String,
+    pub chapter: usize,
+    /// How far into that spine item, 0..1000.
+    pub at: usize,
+}
+
+pub async fn open_book(app: &AppHandle, key: &str) -> Result<OpenedBook, String> {
+    let uid = uid(app)?;
+    let b = crate::books::find(app, key)?;
+    let file = crate::books::path_of(app, &b).ok_or("That book isn't downloaded yet.")?;
+    let ext = file.extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+    let spot = spots(app, &uid).remove(key);
+    let (chapter, at) = spot.map(|s| (s.chapter.max(0) as usize, s.page)).unwrap_or((0, 0));
+    if ext != "epub" {
+        let ticket = app.state::<Reading>().issue_kind(file, Arc::new(vec![]), vec![], "file");
+        return Ok(OpenedBook { ticket, kind: if ext == "pdf" { "pdf".into() } else { "other".into() }, spine: vec![], title: b.title, chapter: 0, at: 0 });
+    }
+    let (entries, spine) = tokio::task::spawn_blocking({
+        let file = file.clone();
+        move || -> Result<_, String> {
+            let entries = zipread::entries(&file)?;
+            let container = crate::books::epub_file(&file, &entries, "META-INF/container.xml").ok_or("This EPUB is damaged (no container).")?;
+            let (spine, _) = crate::books::epub_spine(&String::from_utf8_lossy(&container), |p| crate::books::epub_file(&file, &entries, p).map(|b| String::from_utf8_lossy(&b).into_owned()))
+                .ok_or("This EPUB is damaged (no reading order).")?;
+            Ok((entries, spine))
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    let chapter = chapter.min(spine.len().saturating_sub(1));
+    let ticket = app.state::<Reading>().issue_kind(file, Arc::new(entries), vec![], "epub");
+    Ok(OpenedBook { ticket, kind: "epub".into(), spine, title: b.title, chapter, at })
+}
+
+#[derive(Serialize)]
+pub struct BookShelf {
+    #[serde(flatten)]
+    pub book: crate::books::Book,
+    pub ready: bool,
+    /// Downloading: how far, 0..1.
+    pub progress: Option<f64>,
+    /// Read so far, 0..1, for this profile.
+    pub read: f64,
+    pub at: i64,
+}
+
+pub async fn books(app: &AppHandle) -> Result<Vec<BookShelf>, String> {
+    let uid = uid(app)?;
+    let s = spots(app, &uid);
+    let torrents = match crate::waiting::qbit(app) {
+        Some(q) => q.list().await.unwrap_or_default(),
+        None => vec![],
+    };
+    let mut out: Vec<BookShelf> = crate::books::all(app)
+        .into_iter()
+        .map(|b| {
+            let spot = s.get(&b.key);
+            let progress = b.hash.as_ref().and_then(|h| torrents.iter().find(|t| t["hash"].as_str() == Some(h.as_str()))).and_then(|t| t["progress"].as_f64());
+            let read = spot
+                .map(|s| if s.read.contains_key(&-1) { 1.0 } else if s.pages > 0 { ((s.chapter as f64) + s.page as f64 / 1000.0) / s.pages as f64 } else { 0.0 })
+                .unwrap_or(0.0)
+                .clamp(0.0, 1.0);
+            let at = spot.map(|s| s.at).unwrap_or(b.added);
+            BookShelf { ready: b.file.is_some(), progress, read, at, book: b }
+        })
+        .collect();
+    out.sort_by(|a, b| b.at.cmp(&a.at));
+    Ok(out)
 }
 
 // ---------- the library as the pages show it ----------
@@ -513,7 +634,7 @@ pub async fn detail(app: &AppHandle, key: &str) -> Result<Detail, String> {
 /// Marks chapters read or unread for the watching profile.
 pub fn mark(app: &AppHandle, key: &str, chapters: &[i64], read: bool) -> Result<(), String> {
     let uid = uid(app)?;
-    find(app, key)?;
+    known(app, key)?;
     let mut all = spots(app, &uid);
     let s = all.entry(key.to_string()).or_default();
     for c in chapters {

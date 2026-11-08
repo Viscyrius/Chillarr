@@ -299,8 +299,9 @@ fn need(cmd: &str) -> Option<Need> {
         | "remote_device"
         // Reading (read.rs): each profile its own progress; following a
         // series downloads it, like Download does for a film.
-        | "read_rows" | "read_search" | "read_library" | "read_detail" | "read_sources" | "read_follow" | "read_open" | "read_progress" | "read_mode" | "read_mark" => Need::Viewer,
-        "read_unfollow" => Need::Delete,
+        | "read_rows" | "read_search" | "read_library" | "read_detail" | "read_sources" | "read_follow" | "read_open" | "read_progress" | "read_mode" | "read_mark"
+        | "read_book_rows" | "read_book_search" | "read_book_copies" | "read_book_get" | "read_books" | "read_book_open" => Need::Viewer,
+        "read_unfollow" | "read_book_remove" => Need::Delete,
         "media_delete" | "media_delete_episodes" | "media_stop_download" | "media_stop_waiting" => Need::Delete,
         "storage_overview" | "storage_set_cleanup" | "library_scan" | "library_stats" | "seeding" | "set_seeding" | "get_settings" | "shelf_status" | "meili_status" | "subs_status" => Need::Admin,
         _ => return None,
@@ -360,6 +361,13 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
         }
         "media_rows" => res(media::rows(app, &arg::<String>(a, "tab")?).await),
         "read_rows" => res(crate::read::rows(app).await),
+        "read_book_rows" => ok(crate::books::rows().await),
+        "read_book_search" => res(crate::books::search(&arg::<String>(a, "term")?).await),
+        "read_book_copies" => res(crate::books::copies(app, &arg(a, "meta")?).await),
+        "read_book_get" => res(crate::books::get(app, arg(a, "meta")?, arg(a, "pick")?).await),
+        "read_book_remove" => res(crate::books::remove(app, &arg::<String>(a, "key")?).await),
+        "read_books" => res(crate::read::books(app).await),
+        "read_book_open" => res(crate::read::open_book(app, &arg::<String>(a, "key")?).await),
         "read_search" => res(crate::read::search(&arg::<String>(a, "term")?).await),
         "read_library" => res(crate::read::library(app).await),
         "read_detail" => res(crate::read::detail(app, &arg::<String>(a, "key")?).await),

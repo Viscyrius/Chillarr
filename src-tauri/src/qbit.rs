@@ -280,6 +280,16 @@ impl Qbit {
         self.call("torrents/delete", Some(&[("hashes", joined.as_str()), ("deleteFiles", if files { "true" } else { "false" })])).await.map(|_| ())
     }
 
+    /// Adds a torrent by magnet or download link, in `category`.
+    pub async fn add_url(&self, url: &str, category: &str) -> Result<(), QbError> {
+        let r = self.call("torrents/add", Some(&[("urls", url), ("category", category)])).await?;
+        // qBittorrent answers "Fails." (200) when it couldn't take it.
+        if r.trim().eq_ignore_ascii_case("fails.") {
+            return Err(QbError::Other("qBittorrent couldn't add it".into()));
+        }
+        Ok(())
+    }
+
     /// Moves torrents (and their files) to another folder.
     pub async fn set_location(&self, hashes: &[String], location: &str) -> Result<(), QbError> {
         if hashes.is_empty() {

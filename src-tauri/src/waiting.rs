@@ -1029,6 +1029,7 @@ pub fn spawn(app: AppHandle) {
             crate::transcodes::keep_tidy(&app).await;
             crate::trickplay::ensure(&app).await;
             tidy_imported(&app).await;
+            crate::books::tick(&app).await;
             crate::watchnow::tick(&app).await;
             tokio::time::sleep(TICK).await;
         }

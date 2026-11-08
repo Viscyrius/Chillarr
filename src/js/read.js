@@ -4,13 +4,17 @@
 // first and downloads the one you pick; new chapters then come by themselves.
 import { ask, el, icon, ICON, invoke, toast } from "./api.js";
 import { openReader } from "./reader.js";
+import { openBook } from "./bookreader.js";
 
 const KIND = { KR: "Manhwa", CN: "Manhua", TW: "Manhua", JP: "Manga" };
-const kindOf = (c) => (c.format === "NOVEL" ? "Novel" : KIND[c.country] || "Comic");
+const kindOf = (c) => (c.kind === "book" ? "Book" : c.format === "NOVEL" ? "Light novel" : KIND[c.country] || "Comic");
+/** Books and light novels open the book panel; the rest are comics. */
+const isBook = (c) => c.kind === "book" || c.format === "NOVEL";
 const STATUS = { RELEASING: "Ongoing", FINISHED: "Finished", HIATUS: "On hiatus", CANCELLED: "Cancelled", NOT_YET_RELEASED: "Coming soon" };
 
 let seq = 0;
 let followedByAnilist = new Map();
+let myBooks = [];
 
 /* ---------- cards and rows ---------- */
 
@@ -33,7 +37,18 @@ function card(c, shelf = null) {
   const sub = shelf ? shelf.resume_label || (shelf.finished ? "Finished" : shelf.downloaded ? "All read" : "Downloading") : c.year ? String(c.year) : "";
   const b = el("button", { class: "tile", "aria-label": c.title }, box,
     el("div", { class: "cap" }, el("strong", { text: c.title }), sub ? ` · ${sub}` : ""));
-  b.addEventListener("click", () => (shelf ? openSeries({ key: shelf.key }) : openSeries({ card: c })));
+  b.addEventListener("click", () => (shelf ? openSeries({ key: shelf.key }) : isBook(c) ? openBookPanel(c) : openSeries({ card: c })));
+  return b;
+}
+
+/** A card for a book on your list. */
+function bookCard(x) {
+  const box = cover(x.cover, x.title);
+  box.append(el("span", { class: "badge", text: "Book" }));
+  if (x.read > 0 && x.read < 1) box.append(el("div", { class: "bar" }, el("span", { style: `width:${Math.round(x.read * 100)}%` })));
+  const sub = x.problem ? "Needs a look" : !x.ready ? (x.progress != null ? `Downloading ${Math.round(x.progress * 100)}%` : "Starting") : x.read >= 1 ? "Finished" : x.read > 0 ? `${Math.round(x.read * 100)}% read` : x.author || "";
+  const b = el("button", { class: "tile", "aria-label": x.title }, box, el("div", { class: "cap" }, el("strong", { text: x.title }), sub ? ` · ${sub}` : ""));
+  b.addEventListener("click", () => openBookPanel({ kind: "book", title: x.title, author: x.author, cover: x.cover, description: x.description, olid: x.olid, anilist: x.anilist }, x));
   return b;
 }
 
@@ -69,9 +84,15 @@ export async function renderRead(view) {
     if (!term) { results.replaceChildren(); return; }
     t = setTimeout(async () => {
       const mine = ++asked;
-      const found = await invoke("read_search", { term }).catch((e) => { toast(String(e), true); return []; });
+      const [found, books] = await Promise.all([
+        invoke("read_search", { term }).catch((e) => { toast(String(e), true); return []; }),
+        invoke("read_book_search", { term }).catch(() => []),
+      ]);
       if (mine !== asked || my !== seq) return;
-      results.replaceChildren(found.length ? row("search", `Results for "${term}"`, found.map((c) => card(c))) : el("p", { class: "note", text: "Nothing found." }));
+      const out = [];
+      if (found.length) out.push(row("search", `Manga, manhwa and novels for "${term}"`, found.map((c) => card(c))));
+      if (books.length) out.push(row("search-books", `Books for "${term}"`, books.map((c) => card(c))));
+      results.replaceChildren(...(out.length ? out : [el("p", { class: "note", text: "Nothing found." })]));
     }, 350);
   });
   fillLibrary(lib, my);
@@ -79,6 +100,11 @@ export async function renderRead(view) {
     const got = await invoke("read_rows");
     if (my !== seq) return;
     rows.replaceChildren(...got.filter((r) => r.items.length).map((r) => row(r.id, r.title, r.items.map((c) => card(c)))));
+    // Books come from Open Library, slower: added once they're in.
+    invoke("read_book_rows").then((bk) => {
+      if (my !== seq) return;
+      rows.append(...bk.filter((r) => r.items.length).map((r) => row(r.id, r.title, r.items.map((c) => card(c)))));
+    }).catch(() => {});
   } catch (e) {
     if (my !== seq) return;
     rows.replaceChildren(el("p", { class: "note", text: String(e) }));
@@ -87,13 +113,15 @@ export async function renderRead(view) {
 }
 
 async function fillLibrary(slot, my) {
-  const list = await invoke("read_library").catch(() => []);
+  const [list, books] = await Promise.all([invoke("read_library").catch(() => []), invoke("read_books").catch(() => [])]);
   if (my !== seq) return;
+  myBooks = books;
   followedByAnilist = new Map(list.filter((s) => s.anilist).map((s) => [s.anilist, s.key]));
   const reading = list.filter((s) => !s.finished);
   const done = list.filter((s) => s.finished);
   const out = [];
   if (reading.length) out.push(row("reading", "Continue reading", reading.map((s) => card(asCard(s), s))));
+  if (books.length) out.push(row("books", "Your books", books.map(bookCard)));
   if (done.length) out.push(row("finished", "Finished", done.map((s) => card(asCard(s), s))));
   slot.replaceChildren(...out);
 }
@@ -232,6 +260,73 @@ async function showFollowed(key, mine, c0) {
   body.append(where, list);
   // Chapters still coming: the list keeps itself current.
   if (d.downloading) poll = setTimeout(() => { if (mine === panelSeq && dlg?.open) showFollowed(key, mine, c0); }, 5000);
+}
+
+/* ---------- the book panel ---------- */
+
+const sameBook = (c, x) => (c.olid && x.olid === c.olid) || (c.anilist && x.anilist === c.anilist) || (x.title || "").toLowerCase() === (c.title || "").toLowerCase();
+const bookMeta = (c) => ({ title: c.title, author: c.author ?? null, cover: c.cover ?? null, description: c.description ?? null, olid: c.olid ?? null, anilist: c.anilist ?? null });
+
+/** A book or light novel: read it if it's here, else find a copy. */
+export async function openBookPanel(c, mine = null) {
+  const my = ++panelSeq;
+  clearTimeout(poll);
+  if (!mine) {
+    myBooks = await invoke("read_books").catch(() => myBooks);
+    if (my !== panelSeq) return;
+    mine = myBooks.find((x) => sameBook(c, x)) || null;
+  }
+  const shown = { ...c, chapters: null, status: null, genres: c.genres || [] };
+  const { actions, body } = shell(shown);
+  if (c.author) actions.parentElement.querySelector(".meta").prepend(el("span", { text: c.author }), el("span", { class: "sep" }));
+  if (mine) {
+    if (mine.ready) {
+      actions.append(el("button", { class: "btn play", onclick: () => { dlg?.close(); openBook(mine.key, () => openBookPanel(c)); } }, icon(ICON.play),
+        mine.read > 0 && mine.read < 1 ? `Resume (${Math.round(mine.read * 100)}%)` : mine.read >= 1 ? "Read again" : "Read"));
+    } else {
+      actions.append(el("span", { class: "status-pill", text: mine.problem || (mine.progress != null ? `Downloading ${Math.round(mine.progress * 100)}%` : "Starting the download") }));
+      poll = setTimeout(() => { if (my === panelSeq && dlg?.open) openBookPanel(c); }, 4000);
+    }
+    actions.append(el("button", { class: "btn soft", onclick: () => removeBook(mine) }, "Remove"));
+    if (mine.problem) { const list = el("section", { class: "read-sources" }); body.append(list); bookCopies(c, list, el("button", {}, "x"), my); }
+    return;
+  }
+  const find = el("button", { class: "btn primary" }, icon(ICON.download), "Find copies");
+  actions.append(find);
+  const list = el("section", { class: "read-sources" });
+  body.append(list);
+  find.addEventListener("click", () => bookCopies(c, list, find, my));
+}
+
+async function bookCopies(c, list, btn, my) {
+  btn.disabled = true;
+  btn.lastChild.textContent = "Looking...";
+  list.replaceChildren(el("p", { class: "note read-wait", text: "Searching the download sites..." }));
+  let found;
+  try { found = await invoke("read_book_copies", { meta: bookMeta(c) }); }
+  catch (e) { if (my !== panelSeq) return; list.replaceChildren(el("p", { class: "note", text: String(e) })); btn.disabled = false; btn.lastChild.textContent = "Try again"; return; }
+  if (my !== panelSeq) return;
+  btn.remove();
+  if (!found.length) { list.replaceChildren(el("p", { class: "note", text: "No copy of this book was found. Try again another day, or search with another title." })); return; }
+  const mb = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+  list.replaceChildren(el("div", { class: "read-sources-head" }, el("h3", { text: "Pick a copy" })),
+    ...found.slice(0, 8).map((x, i) => {
+      const go = el("button", { class: i === 0 ? "btn primary" : "btn soft" }, icon(ICON.download), "Download");
+      go.addEventListener("click", async () => {
+        go.disabled = true;
+        try { toast(await invoke("read_book_get", { meta: bookMeta(c), pick: x })); openBookPanel(c); window.dispatchEvent(new Event("chillarr:refresh")); }
+        catch (e) { toast(String(e), true); go.disabled = false; }
+      });
+      return el("div", { class: "read-source" + (i === 0 ? " best" : "") },
+        el("div", { class: "read-source-text" }, el("strong", { text: (x.format || "ebook").toUpperCase() }), i === 0 ? el("span", { class: "read-best", text: "Best" }) : null,
+          el("small", { text: `${mb(x.size)} · ${x.seeders} sharing · ${x.indexer}` }), el("small", { class: "read-alt", text: x.title })), go);
+    }));
+}
+
+async function removeBook(x) {
+  if (!(await ask(`Remove ${x.title}?`, "The book's file is deleted from your PC. You can download it again.", [], "Remove", "Cancel"))) return;
+  try { toast(await invoke("read_book_remove", { key: x.key })); dlg?.close(); window.dispatchEvent(new Event("chillarr:refresh")); }
+  catch (e) { toast(String(e), true); }
 }
 
 const chLabel = (r) => (r.number != null ? `Chapter ${fmtNum(r.number)}` : r.name || "Chapter");

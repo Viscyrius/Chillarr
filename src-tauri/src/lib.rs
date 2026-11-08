@@ -4,6 +4,7 @@ mod zipread;
 mod read_core;
 mod read;
 mod suwayomi;
+mod books;
 mod bridge;
 mod viewer;
 mod seal;
@@ -682,6 +683,41 @@ fn read_mark(app: AppHandle, key: String, chapters: Vec<i64>, read: bool) -> Res
 }
 
 #[tauri::command]
+async fn read_book_rows() -> Vec<serde_json::Value> {
+    books::rows().await
+}
+
+#[tauri::command]
+async fn read_book_search(term: String) -> Result<Vec<serde_json::Value>, String> {
+    books::search(&term).await
+}
+
+#[tauri::command]
+async fn read_book_copies(app: AppHandle, meta: books::BookMeta) -> Result<Vec<books::Release>, String> {
+    books::copies(&app, &meta).await
+}
+
+#[tauri::command]
+async fn read_book_get(app: AppHandle, meta: books::BookMeta, pick: books::Release) -> Result<String, String> {
+    books::get(&app, meta, pick).await
+}
+
+#[tauri::command]
+async fn read_book_remove(app: AppHandle, key: String) -> Result<String, String> {
+    books::remove(&app, &key).await
+}
+
+#[tauri::command]
+async fn read_books(app: AppHandle) -> Result<Vec<read::BookShelf>, String> {
+    read::books(&app).await
+}
+
+#[tauri::command]
+async fn read_book_open(app: AppHandle, key: String) -> Result<read::OpenedBook, String> {
+    read::open_book(&app, &key).await
+}
+
+#[tauri::command]
 fn read_folder(app: AppHandle) -> Option<String> {
     read::root(&app).map(|p| p.to_string_lossy().to_string())
 }
@@ -928,6 +964,13 @@ pub fn run() {
             read_mark,
             read_folder,
             read_set_folder,
+            read_book_rows,
+            read_book_search,
+            read_book_copies,
+            read_book_get,
+            read_book_remove,
+            read_books,
+            read_book_open,
             read_set_cleanup,
             window_fullscreen,
             open_link,
