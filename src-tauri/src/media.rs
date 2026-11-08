@@ -883,23 +883,23 @@ async fn fetch_anime_recs(app: &AppHandle, anilist: Option<i64>, title: &str, ke
     tiles
 }
 
-/// The Anime tab's genre rows: (AniList category, row title). Harem and
-/// School are AniList tags; the rest are its genres.
+/// The Anime tab's genre rows, A to Z by title: (AniList category, row
+/// title). Harem and School are AniList tags; the rest are its genres.
 const ANIME_GENRES: [(&str, &str); 14] = [
     ("genre:Action", "Action"),
-    ("genre:Ecchi", "Ecchi"),
-    ("tag:Female Harem", "Harem"),
-    ("genre:Romance", "Romance"),
+    ("genre:Adventure", "Adventure"),
     ("genre:Comedy", "Comedy"),
+    ("genre:Drama", "Drama"),
+    ("genre:Ecchi", "Ecchi"),
     ("genre:Fantasy", "Fantasy"),
-    ("genre:Supernatural", "Supernatural"),
+    ("tag:Female Harem", "Harem"),
+    ("genre:Mystery", "Mystery"),
+    ("genre:Romance", "Romance"),
     ("tag:School", "School"),
     ("genre:Sci-Fi", "Sci-Fi"),
     ("genre:Slice of Life", "Slice of Life"),
-    ("genre:Drama", "Drama"),
-    ("genre:Adventure", "Adventure"),
-    ("genre:Mystery", "Mystery"),
     ("genre:Sports", "Sports"),
+    ("genre:Supernatural", "Supernatural"),
 ];
 
 /// What Radarr/Sonarr already track and where it stands: (tmdb, tvdb, title, label).
@@ -1076,7 +1076,9 @@ pub async fn rows(app: &AppHandle, tab: &str) -> Result<Vec<Row>, String> {
     let (popular, top10, newr, top, genres): (Vec<Tile>, Vec<Tile>, Vec<Tile>, Vec<Tile>, Vec<(String, Vec<Tile>)>) = if home || tab == "movies" {
         let media = app.state::<Media>();
         let c = media.catalog.lock().unwrap();
-        let genres: Vec<(String, Vec<Tile>)> = c.genres(8).into_iter().take(if home { 4 } else { 14 }).map(|g| { let t = c.by_genre(&g, 30); (g, t) }).collect();
+        // The biggest genres get a row; the rows go A to Z.
+        let mut genres: Vec<(String, Vec<Tile>)> = c.genres(8).into_iter().take(if home { 4 } else { 14 }).map(|g| { let t = c.by_genre(&g, 30); (g, t) }).collect();
+        tiles::sort_genres(&mut genres, |g| &g.0);
         (if home { c.popular(40) } else { vec![] }, c.top10(), c.new_releases(year, 30), c.top_rated(30), genres)
     } else {
         Default::default()
@@ -1084,7 +1086,8 @@ pub async fn rows(app: &AppHandle, tab: &str) -> Result<Vec<Row>, String> {
     let (mut s_pop, s_top, s_genres): (Vec<Tile>, Vec<Tile>, Vec<(String, Vec<Tile>)>) = if home || tab == "series" {
         let media = app.state::<Media>();
         let sh = media.shows.lock().unwrap();
-        let g: Vec<(String, Vec<Tile>)> = if home { vec![] } else { sh.genres(5).into_iter().take(12).map(|x| { let t = sh.by_genre(&x, 30); (x, t) }).collect() };
+        let mut g: Vec<(String, Vec<Tile>)> = if home { vec![] } else { sh.genres(5).into_iter().take(12).map(|x| { let t = sh.by_genre(&x, 30); (x, t) }).collect() };
+        tiles::sort_genres(&mut g, |x| &x.0);
         (sh.popular(30), if home { vec![] } else { sh.top_rated(30) }, g)
     } else {
         Default::default()
@@ -1211,13 +1214,15 @@ pub(crate) async fn explore_library(app: &AppHandle) -> Vec<Tile> {
 /// Hentai is left out: rows ask AniList for non-adult titles only.
 const ANILIST_GENRES: [&str; 18] = ["Action", "Adventure", "Comedy", "Drama", "Ecchi", "Fantasy", "Horror", "Mahou Shoujo", "Mecha", "Music", "Mystery", "Psychological", "Romance", "Sci-Fi", "Slice of Life", "Sports", "Supernatural", "Thriller"];
 
-/// Genres the Filters panel offers for a kind.
+/// Genres the Filters panel offers for a kind, A to Z.
 pub fn filter_genres(app: &AppHandle, kind: &str) -> Vec<String> {
-    match kind {
+    let mut out = match kind {
         "anime" => ANILIST_GENRES.iter().map(|g| g.to_string()).collect(),
         "series" => app.state::<Media>().shows.lock().unwrap().genres(3),
         _ => app.state::<Media>().catalog.lock().unwrap().genres(3),
-    }
+    };
+    tiles::sort_genres(&mut out, |g| g);
+    out
 }
 
 /// Studios (movies) or networks and streaming services (series) the Filters
@@ -2109,6 +2114,17 @@ fn blocked_error(e: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn anime_genres_are_listed_a_to_z() {
+        let az = |v: Vec<&str>| {
+            let mut s = v.clone();
+            crate::tiles::sort_genres(&mut s, |g| g);
+            s == v
+        };
+        assert!(az(ANIME_GENRES.iter().map(|(_, t)| *t).collect()), "the Anime tab's rows");
+        assert!(az(ANILIST_GENRES.to_vec()), "the Filters page's anime genres");
+    }
 
     #[test]
     fn only_the_tabs_own_anime_rows_are_saved() {

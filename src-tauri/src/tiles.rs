@@ -243,6 +243,12 @@ pub fn from_jf(v: &Value, base: &str) -> Tile {
     }
 }
 
+/// Genres are always listed A to Z, any case ("Sci-Fi" next to "Science
+/// Fiction"). `name` reads the genre off each item.
+pub fn sort_genres<T>(list: &mut [T], name: impl Fn(&T) -> &str) {
+    list.sort_by_cached_key(|x| name(x).to_lowercase());
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -251,6 +257,13 @@ mod tests {
     fn load(s: &str) -> Value {
         serde_json::from_str(s.trim_start_matches('\u{feff}')).unwrap()
     }
+    #[test]
+    fn genres_sort_a_to_z_any_case() {
+        let mut g = vec!["thriller".to_string(), "Action".into(), "Sci-Fi".into(), "comedy".into(), "Science Fiction".into()];
+        sort_genres(&mut g, |x| x);
+        assert_eq!(g, ["Action", "comedy", "Sci-Fi", "Science Fiction", "thriller"]);
+    }
+
     const RADARR: &str = include_str!("../tests/fixtures/radarr-recommendations.json");
     const TVMAZE: &str = include_str!("../tests/fixtures/tvmaze-shows.json");
     const ANILIST: &str = include_str!("../tests/fixtures/anilist-trending.json");
