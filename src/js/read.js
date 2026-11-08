@@ -37,6 +37,144 @@ function cover(src, title) {
 
 const cardKey = (c) => (c.anilist ? `al:${c.anilist}` : c.olid ? `ol:${c.olid}` : "");
 
+/* ---------- hover cards, like Movies' ----------
+   Resting on a cover opens it like a door: the cover stays where it is, a little
+   larger, and the details swing out beside it (the banner on top, a few lines,
+   the buttons). Same look and timing as the films' cards (browse.js), so both
+   modes feel the same. No cards by touch or on a TV. */
+const PV_INFO_W = 356;
+const PV_H = 418;
+const PV_POSTER_W = Math.round(PV_H * 2 / 3);
+let pv = null;
+let pvTimer = 0;
+let pvLeave = 0;
+
+function pvSchedule(anchor, c, shelf) {
+  if (matchMedia("(hover: none)").matches || document.documentElement.classList.contains("tv")) return;
+  clearTimeout(pvTimer);
+  clearTimeout(pvLeave);
+  if (c.banner) { const im = new Image(); im.src = c.banner; }
+  pvTimer = setTimeout(() => pvShow(anchor, c, shelf), pv ? 140 : 420);
+}
+
+function pvSoon() {
+  clearTimeout(pvTimer);
+  clearTimeout(pvLeave);
+  pvLeave = setTimeout(() => pvHide(), 160);
+}
+
+function pvHide(now = false) {
+  clearTimeout(pvTimer);
+  if (!pv) return;
+  const p = pv;
+  pv = null;
+  p.style.pointerEvents = "none";
+  if (now || !p.animate) { p.remove(); return; }
+  const out = p.animate([{ opacity: 1, transform: "none" }, { opacity: 0, transform: "scale(0.96)" }], { duration: 160, easing: "ease-in", fill: "forwards" });
+  out.onfinish = out.oncancel = () => p.remove();
+}
+
+function pvOpen(c, shelf) {
+  pvHide(true);
+  if (shelf) openSeries({ key: shelf.key });
+  else if (isBook(c)) openBookPanel(c);
+  else openSeries({ card: c });
+}
+
+function pvCard(c, shelf, door) {
+  const act = (fn) => (e) => { e.stopPropagation(); fn(); };
+  const round = (label, path, onclick) => el("button", { class: "pv-btn", "aria-label": label, title: label, onclick: act(onclick) }, icon(path));
+  const pill = (label, path, onclick) => el("button", { class: "pv-pill", onclick: act(onclick) }, icon(path), label);
+  const key = shelf ? shelf.key : c.anilist && followedByAnilist.get(c.anilist);
+  const actions = el("div", { class: "pv-actions" });
+  if (key && !isBook(c)) actions.append(pill(shelf && shelf.resume_label ? `Read ${shelf.resume_label}` : "Read", ICON.play, () => { pvHide(true); openSeries({ key, card: c }); }));
+  else actions.append(pill(isBook(c) ? "Get it" : "See chapters", isBook(c) ? ICON.download : ICON.info, () => pvOpen(c, shelf)));
+  const lk = cardKey(c);
+  if (lk) {
+    const b = round(listKeys.has(lk) ? "On My List" : "My List", listKeys.has(lk) ? ICON.check : ICON.plus, async () => {
+      const on = !listKeys.has(lk);
+      try {
+        await invoke("read_list_set", { card: c, on });
+        if (on) listKeys.add(lk); else listKeys.delete(lk);
+        b.replaceChildren(icon(on ? ICON.check : ICON.plus));
+        b.title = on ? "On My List" : "My List";
+        toast(on ? `Added ${c.title} to My List.` : `Took ${c.title} off My List.`);
+      } catch (err) { toast(String(err), true); }
+    });
+    actions.append(b);
+  }
+  actions.append(el("span", { style: "flex:1" }), round("More info", "m6 9 6 6 6-6", () => pvOpen(c, shelf)));
+  const src = c.banner || c.cover;
+  const pic = src ? el("img", { class: "pv-img", src, alt: "", decoding: "async" }) : el("div", { class: "pv-img noart" });
+  if (src) {
+    if (pic.complete && pic.naturalWidth) pic.classList.add("loaded");
+    else pic.addEventListener("load", () => pic.classList.add("loaded"), { once: true });
+  }
+  const meta = [];
+  if (c.score) meta.push(el("span", { class: "rating", text: `\u2605 ${(c.score / 10).toFixed(1)}` }));
+  if (c.year) meta.push(el("span", { text: String(c.year) }));
+  meta.push(el("span", { class: "kind", text: kindOf(c) }));
+  if (key) meta.push(el("span", { class: "owned", text: shelf && shelf.unread ? `${shelf.unread} new` : "Following" }));
+  else if (STATUS[c.status]) meta.push(el("span", { text: STATUS[c.status] }));
+  if (c.chapters) meta.push(el("span", { text: `${c.chapters} ch` }));
+  const desc = String(c.description || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  const info = el("div", { class: "pv-info" },
+    el("div", { class: "pv-art" }, pic),
+    el("div", { class: "pv-body" },
+      el("strong", { class: "pv-title", text: c.title }),
+      el("div", { class: "pv-meta" }, meta),
+      desc ? el("p", { class: "pv-overview", text: desc }) : null,
+      c.genres && c.genres.length ? el("div", { class: "pv-genres" }, c.genres.slice(0, 3).map((g) => el("span", { text: g }))) : null,
+      actions));
+  const poster = door ? el("div", { class: "pv-poster" }, el("img", { src: c.cover, alt: "", decoding: "async" })) : null;
+  return el("div", { class: door ? "preview door read-pv" : "preview read-pv", role: "dialog", "aria-label": c.title }, ...[poster, info].filter(Boolean));
+}
+
+function pvShow(anchor, c, shelf) {
+  const art = anchor.querySelector(".art");
+  if (!art || !anchor.isConnected || !anchor.matches(":hover") || (dlg && dlg.open) || document.querySelector(".reader")) return;
+  pvHide(true);
+  const r = art.getBoundingClientRect();
+  const door = !!c.cover && r.height > r.width && innerWidth >= PV_POSTER_W + PV_INFO_W + 40;
+  const w = door ? PV_POSTER_W + PV_INFO_W : Math.min(Math.max(r.width * 1.5, 340), PV_INFO_W + 40);
+  const h = door ? PV_H : w * 9 / 16 + (PV_H - PV_INFO_W * 9 / 16);
+  const cx = r.left + r.width / 2;
+  const flip = door && cx + PV_POSTER_W / 2 + PV_INFO_W > innerWidth - 12;
+  let left = door ? (flip ? cx + PV_POSTER_W / 2 - w : cx - PV_POSTER_W / 2) : cx - w / 2;
+  left = Math.min(Math.max(12, left), innerWidth - w - 12);
+  const top = Math.min(Math.max(76, r.top + r.height / 2 - h / 2), innerHeight - h - 12);
+  const card = pvCard(c, shelf, door);
+  if (flip) card.classList.add("flip");
+  card.style.cssText = `left:${left}px;top:${top}px;width:${w}px;height:${h}px;--pw:${PV_POSTER_W}px`;
+  card.addEventListener("mouseenter", () => clearTimeout(pvLeave));
+  card.addEventListener("mouseleave", () => pvSoon());
+  card.addEventListener("click", () => pvOpen(c, shelf));
+  document.body.append(card);
+  const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (card.animate && !still) {
+    if (door) {
+      const px = flip ? w - PV_POSTER_W : 0;
+      const s = Math.max(0.5, r.width / PV_POSTER_W);
+      const dx = cx - (left + px + PV_POSTER_W / 2);
+      const dy = r.top + r.height / 2 - (top + h / 2);
+      card.style.transformOrigin = `${px + PV_POSTER_W / 2}px ${h / 2}px`;
+      const shut = flip ? `inset(0 0 0 ${w - PV_POSTER_W}px round 10px)` : `inset(0 ${w - PV_POSTER_W}px 0 0 round 10px)`;
+      card.animate([{ transform: `translate(${dx}px, ${dy}px) scale(${s})`, clipPath: shut }, { transform: "none", clipPath: "inset(0 0 0 0 round 10px)" }],
+        { duration: 340, easing: "cubic-bezier(0.16, 1, 0.3, 1)" });
+    } else {
+      const dx = cx - (left + w / 2);
+      const dy = r.top + r.height / 2 - (top + h / 2);
+      card.animate([{ opacity: 0, transform: `translate(${dx}px, ${dy}px) scale(${Math.max(0.5, r.width / w)})` }, { opacity: 1, transform: "none" }],
+        { duration: 300, easing: "cubic-bezier(0.16, 1, 0.3, 1)" });
+    }
+  }
+  pv = card;
+}
+
+// A scroll, a tab change or a panel opening closes the card.
+window.addEventListener("scroll", () => { if (pv) pvHide(); }, { passive: true, capture: true });
+window.addEventListener("hashchange", () => pvHide(true));
+
 /** A card for an AniList or Open Library title, or a series you follow (`shelf`). */
 function card(c, shelf = null) {
   const box = cover(c.cover, c.title);
@@ -46,10 +184,28 @@ function card(c, shelf = null) {
   if (lang) box.append(el("span", { class: "badge read-lang", text: lang.toUpperCase() }));
   if (shelf && shelf.unread) box.append(el("span", { class: "badge get read-new", text: `${shelf.unread} new` }));
   const sub = shelf ? shelf.resume_label || (shelf.finished ? "Finished" : shelf.downloaded ? "All read" : "Downloading") : c.author || (c.year ? String(c.year) : "");
+  // What the Midnight and Classic styles add (styles.css shows each only in its style).
+  if (c.score) box.append(el("span", { class: "rc-score", text: `\u2605 ${(c.score / 10).toFixed(1)}` }));
+  const chs = shelf ? shelf.chapters : c.chapters;
+  const extra = el("div", { class: "rc-extra" },
+    ...[c.genres && c.genres.length ? el("span", { class: "rc-genre", text: c.genres[0] }) : null,
+      chs ? el("span", { class: "rc-ch", text: `${chs} chapters` }) : null].filter(Boolean));
   const b = el("button", { class: "tile", "aria-label": c.title }, box,
-    el("div", { class: "cap" }, el("strong", { text: c.title }), sub ? ` · ${sub}` : ""));
-  b.addEventListener("click", () => (shelf ? openSeries({ key: shelf.key }) : isBook(c) ? openBookPanel(c) : openSeries({ card: c })));
+    el("div", { class: "cap" }, el("strong", { text: c.title }), sub ? ` · ${sub}` : ""), extra);
+  b.addEventListener("click", () => pvOpen(c, shelf));
+  b.addEventListener("mouseenter", () => pvSchedule(b, c, shelf));
+  b.addEventListener("mouseleave", () => pvSoon());
   return b;
+}
+
+/** A Top 10 card: the big outlined number beside the cover, like the films' Top 10. */
+function topTen(c, rank) {
+  const t = card(c);
+  t.classList.add("top10");
+  t.prepend(el("span", { class: "rank", "aria-hidden": "true", text: String(rank) }));
+  t.querySelector(".cap")?.remove();
+  t.querySelector(".rc-extra")?.remove();
+  return t;
 }
 
 /** A card for a book on your list. */
@@ -93,6 +249,10 @@ async function know() {
 /** Draws one reading tab: r-home, r-manga, r-manhwa, r-manhua, r-novels, r-books, r-mylist, r-downloads. */
 export async function renderRead(view, tab) {
   const my = ++seq;
+  currentView = view;
+  currentTab = tab;
+  document.body.dataset.rstyle = styleNow();
+  pvHide(true);
   if (TAB_TITLE[tab]) return explorePage(view, tab, my);
   if (tab === "r-books") return booksPage(view, my);
   if (tab === "r-mylist") return listPage(view, my);
@@ -189,7 +349,209 @@ function heroPicks(cards) {
   return [...mine, ...out.filter((c) => !followedByAnilist.has(c.anilist))].slice(0, 6);
 }
 
+/* ---------- styles: how reading looks ----------
+   Cinema: big pictures and rows, like the films. Midnight: dark and dense, the
+   newest chapters of what you follow up front, a ranking down the side.
+   Classic: light, a numbered top 10, your series by the day they update, and
+   popular by genre. Kept per profile; the picker sits in the middle of the top
+   bar while reading (on a narrow screen, at the top of Home). */
+const STYLES = [["cinema", "Cinema"], ["midnight", "Midnight"], ["classic", "Classic"]];
+const styleNow = () => { const s = getPref("read-style"); return STYLES.some(([k]) => k === s) ? s : "cinema"; };
+let currentView = null;
+let currentTab = "r-home";
+
+function styleButtons(onPick) {
+  const now = styleNow();
+  return STYLES.map(([k, label]) => el("button", { class: k === now ? "on" : "", dataset: { style: k }, "aria-pressed": String(k === now), onclick: () => onPick(k) }, label));
+}
+
+function setStyle(k) {
+  if (k === styleNow()) return;
+  setPref("read-style", k);
+  document.body.dataset.rstyle = k;
+  drawPickers();
+  if (!currentView || !document.body.contains(currentView)) return;
+  // The page fades across to the new look.
+  const v = currentView;
+  v.classList.add("rs-swap");
+  setTimeout(() => { renderRead(v, currentTab); requestAnimationFrame(() => v.classList.remove("rs-swap")); }, matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 180);
+}
+
+let topPicker = null;
+function drawPickers() {
+  if (!topPicker) {
+    const bar = document.getElementById("topbar");
+    const actions = bar && bar.querySelector(".top-actions");
+    if (!actions) return;
+    topPicker = el("div", { class: "read-style", role: "group", "aria-label": "Style" }, el("span", { class: "read-style-label", text: "Style" }), el("div", { class: "read-style-seg" }));
+    bar.insertBefore(topPicker, actions);
+  }
+  const seg = topPicker.querySelector(".read-style-seg");
+  seg.replaceChildren(...styleButtons(setStyle), el("i", { class: "read-style-pill", "aria-hidden": "true" }));
+  // The pill slides under the picked one.
+  requestAnimationFrame(() => {
+    const on = seg.querySelector("button.on");
+    const pill = seg.querySelector(".read-style-pill");
+    if (on && pill) { pill.style.width = `${on.offsetWidth}px`; pill.style.transform = `translateX(${on.offsetLeft - 3}px)`; }
+  });
+  for (const s of document.querySelectorAll(".read-style-inline .chips")) s.replaceChildren(...styleButtons(setStyle).map((b) => { b.className = "chip" + (b.className ? " on" : ""); return b; }));
+}
+
+/** The style picker at the top of Home, for screens too narrow for the top bar's. */
+const inlinePicker = () => el("div", { class: "read-style-inline" }, el("span", { text: "Style" }), el("div", { class: "chips" }));
+
+/** "2 hours ago" for an upload time (Suwayomi gives milliseconds since 1970, as text). */
+function ago(ms) {
+  const t = Number(ms);
+  if (!t) return "";
+  const s = Math.max(0, (Date.now() - t) / 1000);
+  if (s < 90) return "Just now";
+  const m = s / 60, h = m / 60, d = h / 24;
+  if (m < 60) return `${Math.round(m)} min ago`;
+  if (h < 24) return `${Math.round(h)} hour${Math.round(h) === 1 ? "" : "s"} ago`;
+  if (d < 7) return `${Math.round(d)} day${Math.round(d) === 1 ? "" : "s"} ago`;
+  if (d < 30) return `${Math.round(d / 7)} week${Math.round(d / 7) === 1 ? "" : "s"} ago`;
+  return new Date(t).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
+
+/** Each followed series with its chapters (for updates and the week), newest first. */
+async function followedWithChapters(series) {
+  const got = await Promise.all(series.slice(0, 16).map((s) => invoke("read_detail", { key: s.key }).then((d) => ({ s, d })).catch(() => null)));
+  return got.filter(Boolean).map(({ s, d }) => {
+    const chs = d.chapters.filter((c) => c.downloaded || c.uploaded).slice().sort((a, b) => (b.number ?? 0) - (a.number ?? 0));
+    const newest = Math.max(0, ...d.chapters.map((c) => Number(c.uploaded) || 0));
+    return { s, d, chs, newest, card: { ...asCard(s), banner: d.followed && d.followed.banner, description: d.followed && d.followed.description, genres: d.followed && d.followed.genres } };
+  }).sort((a, b) => b.newest - a.newest);
+}
+
+/** A numbered ranking row (Midnight's side list, Classic's top 10). */
+function rankRow(c, i) {
+  const b = el("button", { class: "rk", style: `--i:${i}`, onclick: () => pvOpen(c, null) },
+    el("span", { class: "rk-n", text: String(i + 1).padStart(2, "0") }),
+    c.cover ? el("img", { class: "rk-img", src: c.cover, alt: "", loading: "lazy", decoding: "async" }) : el("span", { class: "rk-img" }),
+    el("span", { class: "rk-text" },
+      el("strong", { text: c.title }),
+      el("small", { text: [(c.genres || []).slice(0, 2).join(", "), kindOf(c)].filter(Boolean).join(" \u00b7 ") })),
+    c.score ? el("span", { class: "rk-score", text: `\u2605 ${(c.score / 10).toFixed(1)}` }) : null);
+  return b;
+}
+
+/** Tabs that swap a list: [[label, loader]], each loader returning cards. */
+function tabbed(cls, tabs, draw) {
+  const head = el("div", { class: "tabbed-tabs", role: "tablist" });
+  const body = el("div", { class: "tabbed-body" });
+  const cache = new Map();
+  const pick = async (i) => {
+    [...head.children].forEach((b, j) => { b.classList.toggle("on", j === i); b.setAttribute("aria-selected", String(j === i)); });
+    body.classList.add("swap");
+    let items = cache.get(i);
+    if (!items) {
+      try { items = await tabs[i][1](); } catch (e) { items = []; }
+      cache.set(i, items);
+    }
+    body.replaceChildren(...draw(items));
+    requestAnimationFrame(() => body.classList.remove("swap"));
+  };
+  head.append(...tabs.map(([label], i) => el("button", { role: "tab", onclick: () => pick(i) }, label)));
+  pick(0);
+  return el("div", { class: `tabbed ${cls}` }, head, body);
+}
+
+const exploreItems = (e) => invoke("read_explore", { e: { page: 1, ...e } }).then((g) => g.items || []);
+
+async function midnightHome(view, my) {
+  const top = el("div", { class: "read-hero-slot" });
+  const updates = el("section", { class: "mn-block" });
+  const popular = el("section", { class: "mn-block" });
+  const rows = el("div");
+  const side = el("aside", { class: "mn-side" });
+  view.replaceChildren(top, el("div", { class: "read-page mn-home" }, inlinePicker(), el("div", { class: "mn-cols" }, el("div", { class: "mn-main" }, updates, popular, rows), side)));
+  drawPickers();
+  const [{ lib: series }, got] = await Promise.all([know(), invoke("read_rows").catch(() => [])]);
+  if (my !== seq) return;
+  const h = readHero(heroPicks(got.flatMap((r) => r.items)));
+  if (h) { h.classList.add("compact"); top.replaceWith(h); }
+  const trending = (got.find((r) => r.id === "trending") || got[0] || { items: [] }).items;
+  side.append(el("h2", { class: "mn-h", text: "Popular" }), tabbed("mn-rank", [
+    ["Trending", async () => trending.slice(0, 10)],
+    ["Top rated", () => exploreItems({ kind: "all", sort: "score" }).then((x) => x.slice(0, 10))],
+    ["Most read", () => exploreItems({ kind: "all", sort: "popular" }).then((x) => x.slice(0, 10))],
+  ], (items) => items.map(rankRow)));
+  popular.append(el("h2", { class: "mn-h", text: "Popular now" }), el("div", { class: "grid read-grid mn-grid" }, trending.slice(0, 18).map((c, i) => { const t = card(c); t.style.setProperty("--i", String(i)); t.classList.add("rise"); return t; })));
+  rows.append(...got.filter((r) => r.items.length && r !== got.find((x) => x.id === "trending")).map((r) => row(r.id, r.title, r.items.map((c) => card(c)))));
+  if (series.length) {
+    updates.append(el("h2", { class: "mn-h", text: "Latest updates" }), el("div", { class: "skel skel-row" }));
+    const list = await followedWithChapters(series);
+    if (my !== seq) return;
+    updates.replaceChildren(el("h2", { class: "mn-h", text: "Latest updates" }), el("div", { class: "mn-updates" }, list.map((x, i) =>
+      el("div", { class: "mn-up", style: `--i:${i}` },
+        el("button", { class: "mn-up-cover", "aria-label": x.s.title, onclick: () => openSeries({ key: x.s.key, card: x.card }) }, x.s.cover ? el("img", { src: x.s.cover, alt: "", loading: "lazy" }) : null),
+        el("div", { class: "mn-up-text" },
+          el("button", { class: "mn-up-title", onclick: () => openSeries({ key: x.s.key, card: x.card }), text: x.s.title }),
+          ...x.chs.slice(0, 3).map((c) => el("button", { class: "mn-ch" + (c.read ? " read" : ""), disabled: !c.downloaded, onclick: () => read(x.s.key, c.id, x.card) },
+            el("span", { text: chLabel(c) }), el("small", { text: c.downloaded ? ago(c.uploaded) : "Not here yet" }))))))));
+  }
+  return true;
+}
+
+const WEEK = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const CLASSIC_GENRES = ["Action", "Fantasy", "Romance", "Drama", "Comedy", "Thriller", "Slice of Life", "Supernatural"];
+
+/** A Classic card: big cover, the genre in colour, the title, and an UP badge when it updated today. */
+function classicCard(c, i, opts = {}) {
+  const t = card(c, opts.shelf || null);
+  t.classList.add("rise", "cl-card");
+  t.style.setProperty("--i", String(i));
+  if (opts.rank) t.querySelector(".art").append(el("span", { class: "cl-rank", text: String(opts.rank) }));
+  if (opts.up) t.querySelector(".art").append(el("span", { class: "cl-up", text: "UP" }));
+  return t;
+}
+
+async function classicHome(view, my) {
+  const ranks = el("section", { class: "cl-block" });
+  const week = el("section", { class: "cl-block" });
+  const byGenre = el("section", { class: "cl-block" });
+  const fresh = el("section", { class: "cl-block" });
+  view.replaceChildren(el("div", { class: "read-page cl-home" }, inlinePicker(), el("div", { class: "cl-banner" }, el("h1", { text: "Reading" }), el("p", { text: "What everyone's reading, and what's new in yours." })), ranks, week, byGenre, fresh));
+  drawPickers();
+  const [{ lib: series }, got] = await Promise.all([know(), invoke("read_rows").catch(() => [])]);
+  if (my !== seq) return;
+  const trending = (got.find((r) => r.id === "trending") || got[0] || { items: [] }).items;
+  ranks.append(el("h2", { class: "cl-h", text: "Trending and popular" }), tabbed("cl-top", [
+    ["Trending", async () => trending.slice(0, 10)],
+    ["Popular", () => exploreItems({ kind: "all", sort: "popular" }).then((x) => x.slice(0, 10))],
+    ["Top rated", () => exploreItems({ kind: "all", sort: "score" }).then((x) => x.slice(0, 10))],
+  ], (items) => [el("div", { class: "cl-grid" }, items.map((c, i) => classicCard(c, i, { rank: i + 1 })))]));
+  byGenre.append(el("h2", { class: "cl-h", text: "Popular by genre" }), tabbed("cl-genres",
+    CLASSIC_GENRES.map((g) => [g, () => exploreItems({ kind: "all", genres: [g], sort: "popular" }).then((x) => x.slice(0, 10))]),
+    (items) => [el("div", { class: "cl-grid" }, items.map((c, i) => classicCard(c, i)))]));
+  fresh.append(el("h2", { class: "cl-h", text: "New and ongoing" }), el("div", { class: "skel skel-row" }));
+  exploreItems({ kind: "all", status: "RELEASING", sort: "new" }).then((x) => {
+    if (my !== seq) return;
+    fresh.replaceChildren(el("h2", { class: "cl-h", text: "New and ongoing" }), el("div", { class: "cl-grid" }, x.filter((c) => c.cover).slice(0, 10).map((c, i) => classicCard(c, i))));
+  }).catch(() => fresh.remove());
+  if (series.length) {
+    const list = await followedWithChapters(series);
+    if (my !== seq) return;
+    const today = new Date().getDay();
+    const day = (x) => (x.newest ? new Date(x.newest).getDay() : -1);
+    const tabs = WEEK.map((d, i) => [i === today ? `${d} (today)` : d, async () => list.filter((x) => day(x) === i)]);
+    // Today first, then the days after it.
+    const order = [...WEEK.keys()].map((k) => (today + k) % 7);
+    week.append(el("h2", { class: "cl-h", text: "Your week" }), el("p", { class: "cl-sub", text: "Your series by the day their chapters usually come out." }),
+      tabbed("cl-week", order.map((i) => tabs[i]), (items) => (items.length
+        ? [el("div", { class: "cl-grid" }, items.map((x, i) => classicCard(x.card, i, { shelf: x.s, up: Date.now() - x.newest < 86400000 })))]
+        : [el("p", { class: "cl-empty", text: "Nothing of yours comes out that day." })])));
+  }
+  return true;
+}
+
 async function homePage(view, my) {
+  const style = styleNow();
+  document.body.dataset.rstyle = style;
+  if (style === "midnight") return midnightHome(view, my);
+  if (style === "classic") return classicHome(view, my);
+  drawPickers();
   const lib = el("div");
   const rows = el("div", {}, ...skel());
   const top = el("div", { class: "read-hero-slot" });
@@ -209,7 +571,9 @@ async function homePage(view, my) {
     if (my !== seq) return;
     const h = readHero(heroPicks(got.flatMap((r) => r.items)));
     if (h) { top.replaceWith(h); view.querySelector(".read-page").classList.add("under-hero"); }
-    rows.replaceChildren(...got.filter((r) => r.items.length).map((r) => row(r.id, r.title, r.items.map((c) => card(c)))));
+    rows.replaceChildren(...got.filter((r) => r.items.length).map((r) => (r.id === "trending"
+      ? row("top10", "Top 10 today", r.items.slice(0, 10).map((c, i) => topTen(c, i + 1)))
+      : row(r.id, r.title, r.items.map((c) => card(c))))));
     invoke("read_book_rows").then((bk) => {
       if (my !== seq) return;
       rows.append(...bk.filter((r) => r.items.length).slice(0, 2).map((r) => row(r.id, r.title, r.items.map((c) => card(c)))));
@@ -221,33 +585,99 @@ async function homePage(view, my) {
 }
 
 /** Manga, Manhwa, Manhua, Light novels: a grid with filters, more as you scroll. */
+/* Filters, like Movies': genres and tags in or out (click once for only these,
+   again to leave them out, again to clear), status, rating, years, length and,
+   for the PC owner or a Jellyfin admin, 18+. Kept per profile, per tab. */
+const BLANK_FILTER = { genres: [], not_genres: [], tags: [], not_tags: [], status: null, sort: "popular", min_score: null, year_from: null, year_to: null, length: 0, adult: "hide" };
+const LENGTHS = [[null, null, "Any length"], [null, 50, "Up to 50"], [50, 150, "50 to 150"], [150, null, "150 or more"]];
+const SCORES = [[null, "Any"], [60, "6+"], [70, "7+"], [80, "8+"], [90, "9+"]];
+const STATUSES = [[null, "Any"], ["RELEASING", "Ongoing"], ["FINISHED", "Finished"], ["HIATUS", "On hiatus"], ["NOT_YET_RELEASED", "Coming soon"]];
+const SORTS = [["popular", "Most popular"], ["trending", "Trending"], ["score", "Top rated"], ["new", "Newest"], ["title", "A to Z"]];
+let filterInfo = null;
+
+function filterCount(f) {
+  return f.genres.length + f.not_genres.length + f.tags.length + f.not_tags.length + (f.status ? 1 : 0) + (f.min_score ? 1 : 0)
+    + (f.year_from || f.year_to ? 1 : 0) + (f.length ? 1 : 0) + (f.adult !== "hide" ? 1 : 0);
+}
+
 async function explorePage(view, tab, my) {
   clearInterval(heroTimer);
   const kind = tab.slice(2);
   const saved = (() => { try { return JSON.parse(getPref(`read-filter-${kind}`) || "{}"); } catch (e) { return {}; } })();
-  const f = { genres: saved.genres || [], status: saved.status || null, sort: saved.sort || "popular" };
-  const genres = await invoke("read_genres").catch(() => []);
+  const f = { ...BLANK_FILTER, ...saved };
+  const [genres, info] = await Promise.all([invoke("read_genres").catch(() => []), filterInfo || invoke("read_filter_info").catch(() => ({ tags: [], adult: false }))]);
+  filterInfo = info;
   if (my !== seq) return;
+  // Only the PC owner or a Jellyfin admin gets 18+; the PC refuses it for anyone else too.
+  if (!info.adult) f.adult = "hide";
   const grid = el("div", { class: "grid read-grid" });
   const more = el("div", { class: "read-more" });
-  const chips = el("div", { class: "chips read-chips" });
-  const select = (label, value, options, set) => {
-    const s = el("select", { class: "quality", "aria-label": label }, options.map(([v, t]) => el("option", { value: v, text: t, selected: (value || "") === v })));
-    s.addEventListener("change", () => { set(s.value || null); restart(); });
-    return s;
+  const panel = el("div", { class: "fl-bar read-fl" });
+  let open = getPref("read-filters-open") === "1";
+  let moreOpen = false;
+  const countBadge = el("span", { class: "read-fl-count" });
+  const toggle = el("button", { class: "btn soft read-fl-toggle", "aria-expanded": String(open), onclick: () => {
+    open = !open;
+    setPref("read-filters-open", open ? "1" : "0");
+    toggle.setAttribute("aria-expanded", String(open));
+    panel.classList.toggle("shut", !open);
+  } }, icon("M4 6h16M7 12h10M10 18h4"), "Filters", countBadge);
+  const order = el("select", { class: "quality", "aria-label": "Order" }, SORTS.map(([v, t]) => el("option", { value: v, text: t, selected: f.sort === v })));
+  order.addEventListener("change", () => change((x) => (x.sort = order.value)));
+  panel.classList.toggle("shut", !open);
+
+  function change(mut) {
+    mut(f);
+    drawPanel();
+    restart();
+  }
+  const cycle = (inKey, outKey, v) => change((x) => {
+    if (x[inKey].includes(v)) { x[inKey] = x[inKey].filter((g) => g !== v); x[outKey] = [...x[outKey], v]; }
+    else if (x[outKey].includes(v)) x[outKey] = x[outKey].filter((g) => g !== v);
+    else x[inKey] = [...x[inKey], v];
+  });
+  const triChip = (v, inKey, outKey) => {
+    const on = f[inKey].includes(v), out = f[outKey].includes(v);
+    return el("button", { class: `chip${on ? " on" : ""}${out ? " out" : ""}`, "aria-pressed": on ? "true" : out ? "mixed" : "false",
+      title: on ? "Showing only these. Click to leave them out." : out ? "Leaving these out. Click to clear." : "Click to show only these",
+      onclick: () => cycle(inKey, outKey, v) }, ...[out ? icon("M5 12h14") : on ? icon(ICON.check) : null, v].filter(Boolean));
   };
-  const drawChips = () => chips.replaceChildren(...genres.map((g) => {
-    const on = f.genres.includes(g);
-    return el("button", { class: "chip" + (on ? " on" : ""), "aria-pressed": on ? "true" : "false", onclick: () => {
-      f.genres = on ? f.genres.filter((x) => x !== g) : [...f.genres, g];
-      drawChips(); restart();
-    } }, g);
-  }));
-  drawChips();
-  const bar = el("div", { class: "read-filters" },
-    select("Status", f.status, [["", "Any status"], ["RELEASING", "Ongoing"], ["FINISHED", "Finished"], ["HIATUS", "On hiatus"]], (v) => (f.status = v)),
-    select("Order", f.sort, [["popular", "Most popular"], ["trending", "Trending"], ["score", "Top rated"], ["new", "Newest"], ["title", "A to Z"]], (v) => (f.sort = v || "popular")));
-  view.replaceChildren(page(head(TAB_TITLE[tab], bar), chips, grid, more));
+  const oneOf = (options, isOn, pick) => el("div", { class: "chips" }, options.map((o) =>
+    el("button", { class: `chip${isOn(o) ? " on" : ""}`, onclick: () => change((x) => pick(x, o)) }, o[o.length - 1])));
+  const field = (label, ...kids) => el("div", { class: "fl-field" }, el("h3", { text: label }), ...kids);
+  const yearBox = (key, label) => {
+    const i = el("input", { class: "read-from", type: "number", min: "1900", max: "2100", step: "1", placeholder: label, "aria-label": label, value: f[key] ? String(f[key]) : "" });
+    i.addEventListener("change", () => change((x) => { const n = parseInt(i.value, 10); x[key] = n >= 1900 && n <= 2100 ? n : null; }));
+    return i;
+  };
+  function drawPanel() {
+    const n = filterCount(f);
+    countBadge.textContent = n ? String(n) : "";
+    countBadge.hidden = !n;
+    const gs = f.adult !== "hide" && info.adult ? [...genres, "Hentai"] : genres;
+    const parts = [
+      field("Genres", el("div", { class: "chips" }, gs.map((g) => triChip(g, "genres", "not_genres")))),
+      el("div", { class: "fl-row" },
+        field("Status", oneOf(STATUSES, (o) => f.status === o[0], (x, o) => (x.status = o[0]))),
+        field("Rating", oneOf(SCORES, (o) => f.min_score === o[0], (x, o) => (x.min_score = o[0])))),
+      el("button", { class: "linkish fl-more" + (moreOpen ? " open" : ""), onclick: () => { moreOpen = !moreOpen; drawPanel(); } }, "More filters", icon("m6 9 6 6 6-6")),
+    ];
+    if (moreOpen) {
+      parts.push(
+        field("Tags", el("div", { class: "chips" }, info.tags.map((t) => triChip(t, "tags", "not_tags")))),
+        el("div", { class: "fl-row" },
+          field("Length", oneOf(LENGTHS.map((l, i) => [i, l[2]]), (o) => f.length === o[0], (x, o) => (x.length = o[0]))),
+          field("Years", el("div", { class: "read-years" }, yearBox("year_from", "From"), el("span", { text: "to" }), yearBox("year_to", "To")))));
+      if (info.adult) {
+        parts.push(field("18+", oneOf([["hide", "Hidden"], ["include", "Include"], ["only", "Only 18+"]], (o) => f.adult === o[0], (x, o) => (x.adult = o[0])),
+          el("small", { class: "read-fl-hint", text: "Only on your own profile. Other profiles never see 18+ titles." })));
+      }
+    }
+    if (n) parts.push(el("button", { class: "linkish read-fl-clear", onclick: () => change((x) => Object.assign(x, { ...BLANK_FILTER, sort: x.sort })) }, "Clear filters"));
+    panel.replaceChildren(...parts);
+  }
+  drawPanel();
+  view.replaceChildren(page(head(TAB_TITLE[tab], el("div", { class: "read-filters" }, toggle, order)), panel, grid, more));
   await know();
   let pageNo = 0, done = false, busy = false, run = 0;
   async function next() {
@@ -256,9 +686,14 @@ async function explorePage(view, tab, my) {
     const mine = run;
     more.replaceChildren(el("div", { class: "skel skel-row" }));
     try {
-      const got = await invoke("read_explore", { e: { kind, genres: f.genres, status: f.status, sort: f.sort, page: ++pageNo } });
+      const [cmin, cmax] = LENGTHS[f.length] || LENGTHS[0];
+      const got = await invoke("read_explore", { e: { kind, genres: f.genres, not_genres: f.not_genres, tags: f.tags, not_tags: f.not_tags, status: f.status, sort: f.sort,
+        min_score: f.min_score, year_from: f.year_from, year_to: f.year_to, chapters_min: cmin, chapters_max: cmax, adult: f.adult, page: ++pageNo } });
       if (my !== seq || mine !== run) return;
-      grid.append(...(got.items || []).map((c) => card(c)));
+      // Each new page's covers come in one after another.
+      const start = grid.childElementCount;
+      grid.append(...(got.items || []).map((c, k) => { const t = card(c); t.style.setProperty("--i", String(Math.min(k, 20))); t.classList.add("rise"); return t; }));
+      if (!start) grid.scrollTop = 0;
       done = !got.more;
       more.replaceChildren(done ? note(grid.childElementCount ? "That's everything." : "Nothing matches these filters.") : "");
       // Still at the bottom (a tall screen, or the page came in while it was

@@ -730,8 +730,14 @@ fn read_list_set(app: AppHandle, card: serde_json::Value, on: bool) -> Result<bo
 }
 
 #[tauri::command]
-async fn read_explore(e: read::Explore) -> Result<serde_json::Value, String> {
-    read::explore(&e).await
+async fn read_explore(app: AppHandle, e: read::Explore) -> Result<serde_json::Value, String> {
+    read::explore(&app, &e).await
+}
+
+/// Tags for More filters, and whether this profile may see 18+.
+#[tauri::command]
+fn read_filter_info(app: AppHandle) -> serde_json::Value {
+    serde_json::json!({ "tags": read::TAGS.to_vec(), "adult": read::adult_ok(&app) })
 }
 
 #[tauri::command]
@@ -1082,6 +1088,7 @@ pub fn run() {
             read_list_set,
             read_explore,
             read_genres,
+            read_filter_info,
             read_downloads,
             read_book_rows,
             read_book_search,

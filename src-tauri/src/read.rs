@@ -1332,31 +1332,92 @@ pub async fn rows(app: &AppHandle) -> Result<Value, String> {
     Ok(v)
 }
 
-/// One page of a reading tab's grid: manga, manhwa, manhua or novels, with filters.
+/// One page of a reading tab's grid: manga, manhwa, manhua, novels or all comics,
+/// with filters like Movies': genres and tags in or out, status, rating, years,
+/// length, and 18+ (hidden, included or only, for those allowed).
 #[derive(Deserialize, Default, Debug)]
 pub struct Explore {
     pub kind: String,
     #[serde(default)]
     pub genres: Vec<String>,
+    #[serde(default)]
+    pub not_genres: Vec<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub not_tags: Vec<String>,
     pub status: Option<String>,
     pub sort: Option<String>,
+    /// 0..100, AniList's average score.
+    #[serde(default)]
+    pub min_score: Option<u32>,
+    #[serde(default)]
+    pub year_from: Option<u32>,
+    #[serde(default)]
+    pub year_to: Option<u32>,
+    #[serde(default)]
+    pub chapters_min: Option<u32>,
+    #[serde(default)]
+    pub chapters_max: Option<u32>,
+    /// "hide" (the default), "include" or "only".
+    #[serde(default)]
+    pub adult: Option<String>,
     #[serde(default)]
     pub page: u32,
 }
 
-pub fn explore_args(e: &Explore) -> Result<String, String> {
-    let mut a = vec!["type:MANGA".to_string(), "isAdult:false".to_string()];
+/// 18+ in reading: the PC owner's own profile in the window, or a Jellyfin admin
+/// on the web. Everyone else always gets it hidden, whatever they ask for.
+pub fn adult_ok(app: &AppHandle) -> bool {
+    if let Some(v) = crate::viewer::current() {
+        return v.admin;
+    }
+    match (crate::profiles::owner_id(app), crate::media::active_user(app)) {
+        (Some(owner), Some(active)) => owner == active,
+        _ => false,
+    }
+}
+
+pub fn explore_args(e: &Explore, adult_allowed: bool) -> Result<String, String> {
+    let mut a = vec!["type:MANGA".to_string()];
+    match (adult_allowed, e.adult.as_deref()) {
+        (true, Some("include")) => {}
+        (true, Some("only")) => a.push("isAdult:true".into()),
+        _ => a.push("isAdult:false".into()),
+    }
     match e.kind.as_str() {
         "manga" => a.extend(["countryOfOrigin:\"JP\"".into(), "format_in:[MANGA,ONE_SHOT]".into()]),
         "manhwa" => a.push("countryOfOrigin:\"KR\"".into()),
         "manhua" => a.push("countryOfOrigin:\"CN\"".into()),
         "novels" => a.push("format:NOVEL".into()),
+        "all" => a.push("format_in:[MANGA,ONE_SHOT]".into()),
         _ => return Err("Unknown kind.".into()),
     }
-    let word = |s: &str| !s.is_empty() && s.len() <= 30 && s.chars().all(|c| c.is_ascii_alphanumeric() || c == ' ' || c == '-');
-    let genres: Vec<String> = e.genres.iter().filter(|g| word(g)).take(8).map(|g| format!("\"{g}\"")).collect();
-    if !genres.is_empty() {
-        a.push(format!("genre_in:[{}]", genres.join(",")));
+    // Names go into the query as strings: letters, digits, spaces, - and ' only.
+    let word = |s: &str| !s.is_empty() && s.len() <= 40 && s.chars().all(|c| c.is_ascii_alphanumeric() || c == ' ' || c == '-' || c == '\'');
+    let list = |v: &[String]| -> Vec<String> { v.iter().filter(|g| word(g)).take(10).map(|g| format!("\"{g}\"")).collect() };
+    let pairs = [("genre_in", list(&e.genres)), ("genre_not_in", list(&e.not_genres)), ("tag_in", list(&e.tags)), ("tag_not_in", list(&e.not_tags))];
+    for (k, v) in pairs {
+        if !v.is_empty() {
+            a.push(format!("{k}:[{}]", v.join(",")));
+        }
+    }
+    if let Some(s) = e.min_score.filter(|s| (1..100).contains(s)) {
+        a.push(format!("averageScore_greater:{}", s - 1));
+    }
+    // Years as AniList's dates (YYYYMMDD), between 1900 and 2100.
+    let year = |y: Option<u32>| y.filter(|y| (1900..=2100).contains(y));
+    if let Some(y) = year(e.year_from) {
+        a.push(format!("startDate_greater:{}", y * 10000));
+    }
+    if let Some(y) = year(e.year_to) {
+        a.push(format!("startDate_lesser:{}", (y + 1) * 10000));
+    }
+    if let Some(n) = e.chapters_min.filter(|n| *n > 0 && *n < 100_000) {
+        a.push(format!("chapters_greater:{}", n - 1));
+    }
+    if let Some(n) = e.chapters_max.filter(|n| *n > 0 && *n < 100_000) {
+        a.push(format!("chapters_lesser:{}", n + 1));
     }
     if let Some(s) = e.status.as_deref().filter(|s| matches!(*s, "RELEASING" | "FINISHED" | "HIATUS" | "NOT_YET_RELEASED")) {
         a.push(format!("status:{s}"));
@@ -1372,14 +1433,20 @@ pub fn explore_args(e: &Explore) -> Result<String, String> {
     Ok(a.join(","))
 }
 
-pub async fn explore(e: &Explore) -> Result<Value, String> {
-    let args = explore_args(e)?;
+pub async fn explore(app: &AppHandle, e: &Explore) -> Result<Value, String> {
+    let args = explore_args(e, adult_ok(app))?;
     let page = e.page.clamp(1, 200);
     let q = format!("{{Page(page:{page},perPage:40){{pageInfo{{hasNextPage}} media({args}){{{MEDIA_FIELDS}}}}}}}");
     let v = crate::media::anilist(&json!({ "query": q })).await?;
     let p = &v["data"]["Page"];
     Ok(json!({ "items": p["media"].as_array().map(|a| a.iter().map(card).collect::<Vec<_>>()).unwrap_or_default(), "more": p["pageInfo"]["hasNextPage"] }))
 }
+
+/// Tags people filter manga by most (AniList's names), for More filters.
+pub const TAGS: [&str; 40] = ["Isekai", "Reincarnation", "Regression", "Time Skip", "Revenge", "Murim", "Cultivation", "Martial Arts", "Dungeon", "Super Power",
+    "Magic", "Swordplay", "Demons", "Gods", "Mythology", "Royal Affairs", "Nobility", "Villainess", "Female Protagonist", "Male Protagonist",
+    "Anti-Hero", "Overpowered Main Characters", "Female Harem", "Male Harem", "School", "Office Lilies", "Love Triangle", "Age Gap", "Boys' Love", "Yuri",
+    "Tragedy", "Survival", "Post-Apocalyptic", "Video Games", "Virtual World", "Zombie", "Vampire", "Historical", "Full Color", "Long Strip"];
 
 /// AniList's manga genres, for the filter chips (A to Z).
 pub const GENRES: [&str; 18] = ["Action", "Adventure", "Comedy", "Drama", "Ecchi", "Fantasy", "Horror", "Mahou Shoujo", "Mecha", "Music", "Mystery", "Psychological", "Romance", "Sci-Fi", "Slice of Life", "Sports", "Supernatural", "Thriller"];
@@ -1415,11 +1482,28 @@ mod tests {
 
     #[test]
     fn explore_only_builds_safe_queries() {
-        let e = Explore { kind: "manhua".into(), genres: vec!["Action".into(), "x\"}){evil".into()], status: Some("FINISHED".into()), sort: Some("score".into()), page: 1 };
-        let a = explore_args(&e).unwrap();
+        let e = Explore { kind: "manhua".into(), genres: vec!["Action".into(), "x\"}){evil".into()], status: Some("FINISHED".into()), sort: Some("score".into()), page: 1, ..Default::default() };
+        let a = explore_args(&e, false).unwrap();
         assert!(a.contains("countryOfOrigin:\"CN\"") && a.contains("genre_in:[\"Action\"]") && a.contains("status:FINISHED") && a.contains("sort:SCORE_DESC"));
         assert!(!a.contains("evil"));
-        assert!(explore_args(&Explore { kind: "x".into(), ..Default::default() }).is_err());
+        assert!(explore_args(&Explore { kind: "x".into(), ..Default::default() }, false).is_err());
+        // Out, tags, rating, years, length.
+        let e = Explore { kind: "all".into(), not_genres: vec!["Romance".into()], tags: vec!["Boys' Love".into()], not_tags: vec!["Isekai".into()], min_score: Some(80), year_from: Some(2018), year_to: Some(2020), chapters_min: Some(50), chapters_max: Some(150), ..Default::default() };
+        let a = explore_args(&e, false).unwrap();
+        for want in ["genre_not_in:[\"Romance\"]", "tag_in:[\"Boys\' Love\"]", "tag_not_in:[\"Isekai\"]", "averageScore_greater:79", "startDate_greater:20180000", "startDate_lesser:20210000", "chapters_greater:49", "chapters_lesser:151", "format_in:[MANGA,ONE_SHOT]"] {
+            assert!(a.contains(want), "{want} in {a}");
+        }
+    }
+
+    #[test]
+    fn adult_only_for_those_allowed() {
+        let ask = |adult: &str| Explore { kind: "manhwa".into(), adult: Some(adult.into()), ..Default::default() };
+        assert!(explore_args(&ask("include"), false).unwrap().contains("isAdult:false"), "not allowed: hidden whatever is asked");
+        assert!(explore_args(&ask("only"), false).unwrap().contains("isAdult:false"));
+        assert!(!explore_args(&ask("include"), true).unwrap().contains("isAdult"), "allowed, included: both");
+        assert!(explore_args(&ask("only"), true).unwrap().contains("isAdult:true"));
+        assert!(explore_args(&ask("hide"), true).unwrap().contains("isAdult:false"));
+        assert!(explore_args(&Explore { kind: "manhwa".into(), ..Default::default() }, true).unwrap().contains("isAdult:false"), "off unless asked");
     }
 
     #[test]
