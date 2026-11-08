@@ -530,6 +530,11 @@ pub struct Chapter {
     pub uploaded: Option<String>,
 }
 
+/// Asks the site for the series' chapter list now (new chapters show up in `chapters`).
+pub async fn refresh(manga_id: i64) -> Result<(), String> {
+    gql("mutation($id:Int!){fetchMangaAndChapters(input:{id:$id,fetchManga:false,fetchChapters:true}){chapters{id}}}", json!({ "id": manga_id })).await.map(|_| ())
+}
+
 pub async fn chapters(manga_id: i64) -> Result<Vec<Chapter>, String> {
     let v = gql(
         "query($id:Int!){manga(id:$id){chapters{nodes{id name chapterNumber scanlator isDownloaded pageCount uploadDate}}}}",

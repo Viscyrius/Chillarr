@@ -34,6 +34,7 @@ mod meili;
 mod night;
 mod search_tap;
 mod sharpen;
+mod keepup;
 mod procs;
 mod qbit;
 mod settings;
@@ -709,6 +710,11 @@ async fn read_get_chapters(app: AppHandle, key: String, ids: Vec<i64>) -> Result
 }
 
 #[tauri::command]
+fn read_keep_up(app: AppHandle, key: String, on: bool) -> Result<bool, String> {
+    read::set_live(&app, &key, on)
+}
+
+#[tauri::command]
 async fn read_stop_chapters(app: AppHandle, key: String) -> Result<String, String> {
     read::stop_chapters(&app, &key).await
 }
@@ -759,8 +765,8 @@ fn read_mode(app: AppHandle, key: String, mode: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn read_mark(app: AppHandle, key: String, chapters: Vec<i64>, read: bool) -> Result<(), String> {
-    read::mark(&app, &key, &chapters, read)
+async fn read_mark(app: AppHandle, key: String, chapters: Vec<i64>, read: bool) -> Result<(), String> {
+    read::mark(&app, &key, &chapters, read).await
 }
 
 #[tauri::command]
@@ -809,11 +815,14 @@ async fn read_set_folder(app: AppHandle, path: String) -> Result<String, String>
 }
 
 #[tauri::command]
-fn read_set_cleanup(app: AppHandle, days: u32) -> Result<(), String> {
+fn read_set_cleanup(app: AppHandle, days: u32, whole: Option<bool>) -> Result<(), String> {
     let st = app.state::<SettingsState>();
     let saved = {
         let mut s = st.current.lock().unwrap();
         s.read_cleanup_days = days.min(365);
+        if let Some(w) = whole {
+            s.read_cleanup_whole = w;
+        }
         s.clone()
     };
     settings::save(&st.path, &saved)
@@ -1068,6 +1077,7 @@ pub fn run() {
             read_copy_chapters,
             read_get_chapters,
             read_stop_chapters,
+            read_keep_up,
             read_list,
             read_list_set,
             read_explore,
@@ -1272,6 +1282,7 @@ pub fn run() {
             watchnow::spawn(app.handle().clone());
             limit::spawn(app.handle().clone());
             sharpen::spawn(app.handle().clone());
+            keepup::spawn(app.handle().clone());
             indexers::spawn(app.handle().clone());
             subfetch::spawn(app.handle().clone());
             search_tap::spawn(app.handle().clone());

@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.13.1 (2026-11-08)
+- New: Keep up to date, on any series you follow. Chillarr checks the site for new chapters every few minutes instead of every few hours. A site that has trouble is asked less often until it answers again.
+- New: a notification on this PC when new chapters are ready to read, for every series you follow, and when another site gets further ahead than your copy (Change copy on the series switches to it).
+- New: mark chapters read in one go: chapters X to Y, or the whole series. Marking moves your place forward too.
+- New: delete a series when it's finished. Settings > Library & storage > Delete chapters after reading now has As you read or When finished: the whole series goes a few days after everyone reading it has read the last chapter.
+- New: the reading pages open with a big featured series at the top, like Movies, with the cover tilted on the right.
+- A series you don't follow shows its chapters as soon as you open it, with nothing ticked. Tick the ones you want, press Download all, or press Follow at the top to just get new ones.
+- Following a series again picks the copy whose chapters you kept, so they're there to read straight away.
+- The series page opens more smoothly, and the reader's bars are more solid over white pages.
+- Sharpen pages now stops the moment a game goes full screen, instead of finishing the chapter it was on.
+- Fixed: after the clean-up deleted chapters you'd read, new-chapter checks could download every chapter you hadn't picked.
+
 ## 0.13.0 (2026-11-08)
 - New: Reading mode. The book button at the top switches Chillarr to reading, with its own tabs (Home, Manhwa, Manhua, Manga, Novels, Books, Downloads, My List) and its own search. The film button switches back. Each profile remembers which one it was in.
 - New: pick the translation you want, then Best or a copy of your own choosing.
