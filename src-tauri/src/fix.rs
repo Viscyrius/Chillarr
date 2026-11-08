@@ -144,11 +144,12 @@ fn missing_card(cfg: &AppConfig) -> CardState {
     CardState {
         id: cfg.id,
         level: Level::Unknown,
-        line: "Not installed".into(),
+        line: if cfg.id.on_demand() { "Not needed yet".into() } else { "Not installed".into() },
         notes,
         open_url: None,
         fixable: false,
-        missing: true,
+        // An on-demand app has no Install button: it sets itself up when used.
+        missing: !cfg.id.on_demand(),
         update: None,
     }
 }

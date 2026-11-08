@@ -879,7 +879,7 @@ fn rows_for(app: &AppHandle, ids: &[AppId]) -> Vec<AppRow> {
 
 fn missing_apps(app: &AppHandle) -> Vec<AppId> {
     let core = app.state::<Core>();
-    AppId::ALL.into_iter().filter(|id| !core.config(*id).is_some_and(|c| crate::discover::is_installed(&c))).collect()
+    AppId::ALL.into_iter().filter(|id| !id.on_demand() && !core.config(*id).is_some_and(|c| crate::discover::is_installed(&c))).collect()
 }
 
 #[derive(Deserialize, Debug, Default)]

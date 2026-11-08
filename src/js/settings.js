@@ -647,7 +647,8 @@ async function apps(panel) {
     }
   };
   panel.append(el("h2", { text: "Apps" }), el("p", { class: "sub", text: "Chillarr finds all of this itself. Change it only if something is wrong." }),
-    el("div", {}, ORDER.map((id) => {
+    // The manga downloader is part of Chillarr: its program and port are Chillarr's own.
+    el("div", {}, ORDER.filter((id) => id !== "Suwayomi").map((id) => {
       const c = configs.find((x) => x.id === id) || {};
       const exe = el("input", { type: "text", value: c.exe || "", placeholder: c.service ? `Windows service "${c.service}"` : "Not found", spellcheck: "false" });
       const port = el("input", { type: "number", min: "1", max: "65535", value: portOf(c.base_url) });
