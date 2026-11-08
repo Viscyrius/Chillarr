@@ -652,7 +652,7 @@ async function load(tile, playlist, startAt, opts = {}) {
   if (inGroup()) {
     // In a watch party the group starts it, at the same moment for everyone.
     video.pause();
-    if (same) { buffering(); video.addEventListener("canplay", caughtUp, { once: true }); }
+    if (same) { buffering(true); video.addEventListener("canplay", caughtUp, { once: true }); }
     else if (opts.fromGroup) loadedHere();
     else startedHere(tile, startAt || 0);
   } else {
