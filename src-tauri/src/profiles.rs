@@ -718,11 +718,29 @@ fn code_ok(code: &str) -> bool {
 // A browser, phone or TV signed in to Jellyfin AS a profile that has a PIN gets
 // nothing until that PIN is typed on it: Jellyfin's sign-in alone (often saved
 // on a shared TV) used to open the profile straight away. Each sign-in (its
-// Jellyfin token) stays unlocked for WEB_UNLOCK_FOR; Chillarr restarting asks
-// again. bridge.rs refuses every command but the unlock and switching away.
+// Jellyfin token) stays unlocked for WEB_UNLOCK_DAYS, kept on disk (sealed, like
+// web-trust.json) so a Chillarr restart doesn't ask every device again: it did,
+// and a friend got the PIN pad back three times in 20 minutes (2026-11-08).
+// bridge.rs refuses every command but the unlock and switching away.
 
-const WEB_UNLOCK_FOR: Duration = Duration::from_secs(12 * 60 * 60);
-static WEB_UNLOCKED: Mutex<Option<HashMap<String, Instant>>> = Mutex::new(None);
+const WEB_UNLOCK_DAYS: i64 = 30;
+/// Hash of (user, token) -> when it was unlocked (seconds). Read from disk once.
+static WEB_UNLOCKED: Mutex<Option<HashMap<String, i64>>> = Mutex::new(None);
+
+fn unlocked_file(app: &AppHandle) -> Option<PathBuf> {
+    crate::media::data_dir(app).map(|d| d.join("web-unlocked.json"))
+}
+
+fn with_unlocked<R>(app: &AppHandle, f: impl FnOnce(&mut HashMap<String, i64>) -> R) -> R {
+    let mut g = WEB_UNLOCKED.lock().unwrap_or_else(|e| e.into_inner());
+    let m = g.get_or_insert_with(|| unlocked_file(app).and_then(|p| crate::seal::read(&p)).and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default());
+    f(m)
+}
+
+/// Still unlocked: within WEB_UNLOCK_DAYS of when the PIN was typed.
+pub fn unlock_fresh(at: i64, now: i64) -> bool {
+    now - at < WEB_UNLOCK_DAYS * 24 * 3600
+}
 
 /// The PIN (stored hash) of the profile a Jellyfin user is, if it has one.
 fn pin_of(app: &AppHandle, user_id: &str) -> Option<String> {
@@ -734,16 +752,14 @@ fn unlock_key(user_id: &str, token: &str) -> String {
     trust_hash(&format!("{user_id}|{token}"))
 }
 
-pub fn web_unlocked(key: &str, now: Instant) -> bool {
-    let mut g = WEB_UNLOCKED.lock().unwrap_or_else(|e| e.into_inner());
-    let m = g.get_or_insert_with(HashMap::new);
-    m.retain(|_, at| now.duration_since(*at) < WEB_UNLOCK_FOR);
-    m.contains_key(key)
+pub fn web_unlocked(app: &AppHandle, key: &str) -> bool {
+    let now = now_secs();
+    with_unlocked(app, |m| m.get(key).is_some_and(|at| unlock_fresh(*at, now)))
 }
 
 /// This sign-in is a profile with a PIN that hasn't been typed on it yet.
 pub fn web_locked(app: &AppHandle, user_id: &str, token: &str) -> bool {
-    pin_of(app, user_id).is_some() && !web_unlocked(&unlock_key(user_id, token), Instant::now())
+    pin_of(app, user_id).is_some() && !web_unlocked(app, &unlock_key(user_id, token))
 }
 
 /// The PIN typed on the web for the profile it's signed in as.
@@ -758,8 +774,20 @@ pub async fn web_unlock(app: &AppHandle, user_id: &str, token: &str, pin: String
         r
     })
     .await?;
-    let mut g = WEB_UNLOCKED.lock().unwrap_or_else(|e| e.into_inner());
-    g.get_or_insert_with(HashMap::new).insert(unlock_key(user_id, token), Instant::now());
+    let now = now_secs();
+    let text = with_unlocked(app, |m| {
+        m.retain(|_, at| unlock_fresh(*at, now));
+        m.insert(unlock_key(user_id, token), now);
+        // Never more than a few hundred sign-ins kept: the oldest go.
+        while m.len() > 400 {
+            let Some(old) = m.iter().min_by_key(|(_, at)| **at).map(|(k, _)| k.clone()) else { break };
+            m.remove(&old);
+        }
+        serde_json::to_string(m).unwrap_or_default()
+    });
+    if let Some(p) = unlocked_file(app) {
+        let _ = crate::seal::write(&p, &text);
+    }
     Ok(())
 }
 
@@ -987,6 +1015,13 @@ pub async fn remove(app: &AppHandle, id: &str, pin: Option<String>, login: Optio
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_pin_typed_on_a_device_holds_for_30_days() {
+        let day = 24 * 3600;
+        assert!(unlock_fresh(0, 29 * day));
+        assert!(!unlock_fresh(0, 30 * day));
+    }
 
     #[test]
     fn a_web_profile_never_gets_more_than_its_maker() {

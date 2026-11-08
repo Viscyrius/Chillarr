@@ -1,5 +1,15 @@
 // Shared helpers and the app-wide state every page reads from.
-export const { invoke } = window.__TAURI__.core;
+const rawInvoke = window.__TAURI__.core.invoke;
+/** Every command. In Jellyfin's pages, a device the PC locked behind its
+ *  profile's PIN (after the PIN was forgotten there, or a new sign-in) says so
+ *  once, and profiles.js puts the PIN pad up. */
+export async function invoke(cmd, args) {
+  try { return await rawInvoke(cmd, args); }
+  catch (e) {
+    if (/Enter this profile's PIN first/.test(String(e)) && cmd !== "web_unlock") window.dispatchEvent(new Event("chillarr:locked"));
+    throw e;
+  }
+}
 export const { listen } = window.__TAURI__.event;
 
 /** Chillarr inside Jellyfin's web pages (web/shim.js): runs as the signed-in Jellyfin user. */

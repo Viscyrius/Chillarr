@@ -384,7 +384,7 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
         "read_book_remove" => res(crate::books::remove(app, &arg::<String>(a, "key")?).await),
         "read_books" => res(crate::read::books(app).await),
         "read_book_open" => res(crate::read::open_book(app, &arg::<String>(a, "key")?).await),
-        "read_search" => res(crate::read::search(&arg::<String>(a, "term")?).await),
+        "read_search" => res(crate::read::search(app, &arg::<String>(a, "term")?, arg::<Option<bool>>(a, "adult")?.unwrap_or(false)).await),
         "read_library" => res(crate::read::library(app).await),
         "read_detail" => res(crate::read::detail(app, &arg::<String>(a, "key")?).await),
         "read_sources" => res(crate::read::sources(app, &arg(a, "meta")?, arg::<Option<String>>(a, "lang")?.as_deref().unwrap_or("en")).await),

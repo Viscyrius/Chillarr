@@ -1,6 +1,9 @@
 # Changelog
 
 ## 0.14.0 (2026-11-08)
+- Switching Style changes the page at once, also on Movies, Series and Anime (it could wait for the whole page to load again first).
+- A TV, phone or browser that typed its profile's PIN stays unlocked for 30 days, even when Chillarr restarts (it used to ask again after every restart). If one does need the PIN again, the PIN pad comes up instead of pages not loading.
+- Search finds 18+ titles too, once 18+ is on (Include or Only in a reading tab's filters).
 - New: Style in Movies too. Cinema, Midnight or Classic, each in dark or light, from the picker in the middle of the top bar. Movies and reading each keep their own style, for each profile.
   - Midnight: dark violet and dense, a shorter picture at the top, ratings on the covers, and a Popular ranking down the side (Top 10, Trending, Series).
   - Classic: the featured picture is a card inside the page, and the Top 10 is a numbered chart with the title and genre beside each cover.
