@@ -528,6 +528,7 @@ fn expected_exe(id: AppId) -> Option<PathBuf> {
         AppId::QBittorrent => env("ProgramFiles")?.join("qBittorrent").join("qbittorrent.exe"),
         AppId::Jellyfin => env("ProgramFiles")?.join("Jellyfin").join("Server").join("jellyfin.exe"),
         AppId::FlareSolverr => install::flare_dir().join("flaresolverr").join("flaresolverr.exe"),
+        AppId::Suwayomi => crate::suwayomi::java_in(&install::suwa_dir().join(format!("Suwayomi-Server-{}-windows-x64", install::SUWA_TAG))),
     })
 }
 
@@ -538,7 +539,8 @@ fn expected_exe(id: AppId) -> Option<PathBuf> {
 fn wall_for(id: AppId, exe: PathBuf) -> Wall {
     let (allow, lan_only) = match id {
         AppId::Jellyfin | AppId::QBittorrent => (true, false),
-        AppId::FlareSolverr => (false, false),
+        // Only Chillarr on this PC talks to them; neither has a login.
+        AppId::FlareSolverr | AppId::Suwayomi => (false, false),
         _ => (true, true),
     };
     Wall { name: id.label().to_string(), exe, allow, lan_only }
@@ -698,7 +700,7 @@ async fn get_apps_locked(app: &AppHandle, ids: &[AppId]) -> Result<Vec<(AppId, S
             Some(kind) => steps.push(Step { id, path, sha256: sha, kind }),
             None => {
                 row(app, id, |r| r.state = "install".into());
-                match install::unpack_zip(&path, &install::flare_dir()).await {
+                match install::unpack_zip(&path, &install::zip_dir(id)).await {
                     Ok(()) => row(app, id, |r| r.state = "done".into()),
                     Err(e) => {
                         row(app, id, |r| {
@@ -997,6 +999,11 @@ async fn whole_run(app: &AppHandle, ids: &[AppId], req: Request) -> Result<(), S
     fix::fix_all(app, Trigger::Button).await;
     finish_setup(app);
     with(app, |m| m.problems.extend(problems));
+    // Reading, ready on the first visit: its folder next to the films, the
+    // manga downloader running with its sources. In the background, as the
+    // sources take a minute and setup is done without them.
+    let a = app.clone();
+    tauri::async_runtime::spawn(async move { crate::read::set_up_once(&a).await });
     Ok(())
 }
 

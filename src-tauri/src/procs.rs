@@ -34,6 +34,7 @@ unsafe impl Sync for Job {}
 pub struct Procs {
     job: Option<Job>,
     flare: Mutex<Option<Child>>,
+    suwa: Mutex<Option<Child>>,
 }
 
 /// Spawn FlareSolverr only when we don't own one and nothing answers on its port.
@@ -83,7 +84,7 @@ impl Procs {
                 Job(h)
             })
         };
-        Procs { job, flare: Mutex::new(None) }
+        Procs { job, flare: Mutex::new(None), suwa: Mutex::new(None) }
     }
 
     /// True while the FlareSolverr we started is still alive.
@@ -122,6 +123,53 @@ impl Procs {
             }
         }
         *self.flare.lock().unwrap() = Some(child);
+        Ok(())
+    }
+}
+
+impl Procs {
+    /// True while the Suwayomi we started is still alive.
+    pub fn owns_suwayomi(&self) -> bool {
+        let mut g = self.suwa.lock().unwrap();
+        match g.as_mut().map(|c| c.try_wait()) {
+            Some(Ok(None)) => true,
+            Some(_) => {
+                *g = None;
+                false
+            }
+            None => false,
+        }
+    }
+
+    /// Ends the Suwayomi we started (its folder moved; Fix everything starts it again).
+    pub fn stop_suwayomi(&self) {
+        if let Some(mut c) = self.suwa.lock().unwrap().take() {
+            let _ = c.kill();
+            let _ = c.wait();
+        }
+    }
+
+    /// Suwayomi's Java, hidden, in the kill-on-close job like FlareSolverr:
+    /// it never outlives Chillarr and never shows a window or tray icon.
+    pub fn start_suwayomi(&self, java: &Path, args: &[String]) -> Result<(), String> {
+        if self.owns_suwayomi() {
+            return Ok(());
+        }
+        let child = Command::new(java)
+            .args(args)
+            .current_dir(java.parent().unwrap_or(Path::new(".")))
+            .creation_flags(CREATE_NO_WINDOW)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|e| format!("Couldn't start the manga downloader: {e}"))?;
+        if let Some(job) = &self.job {
+            unsafe {
+                let _ = AssignProcessToJobObject(job.0, HANDLE(child.as_raw_handle()));
+            }
+        }
+        *self.suwa.lock().unwrap() = Some(child);
         Ok(())
     }
 }

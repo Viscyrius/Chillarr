@@ -155,6 +155,15 @@ pub async fn stop_item(app: &AppHandle, owner: AppId, id: i64, forget: bool) -> 
     let files = if owner == AppId::Radarr { (item["hasFile"] != false) as i64 } else { item["statistics"]["episodeFileCount"].as_i64().unwrap_or(1) };
     if forget && files == 0 {
         a.delete(&format!("{kind}/{id}?deleteFiles=false&addImportExclusion=false")).await.map_err(|e| format!("Couldn't stop {title}: {e}"))?;
+        // A finished torrent that never made it in would seed on with nothing
+        // owning it (Meet Joe Black, 2026-11-08): it goes too, outside the library only.
+        // Never a torrent Watch now is playing from for someone.
+        let watch_now = app.state::<crate::watchnow::WatchNow>().owned_set();
+        let left: Vec<String> = grabbed.iter().filter(|h| !deleted.contains(h) && !watch_now.contains(*h)).cloned().collect();
+        if let (Some(q), false) = (qbit(app), left.is_empty()) {
+            let safe = crate::storage::safe_to_delete_files(app, &q, &left).await;
+            let _ = q.delete(&safe, true).await;
+        }
         return Ok(format!("Stopped {title}."));
     }
     // A grab not in the queue yet (stopped right after it) has its torrent
@@ -1007,18 +1016,26 @@ pub fn spawn(app: AppHandle) {
         let mut seen = Seen::default();
         tokio::time::sleep(FIRST_CHECK).await;
         link_jellyfin(&app).await;
+        crate::downloads_home::move_out_of_user_downloads(&app).await;
+        // A PC set up before reading existed: set it up once now.
+        let r = app.clone();
+        tauri::async_runtime::spawn(async move { crate::read::set_up_once(&r).await });
         for n in 0u64.. {
             // Every 10 minutes: finished downloads Radarr never brought in
             // (it missed them, or Chillarr was closed) get imported now.
             if n % 5 == 4 {
                 let mut rep = crate::fix::FixReport::default();
                 crate::fix::import_finished_step(&app, &mut rep).await;
+                crate::downloads_home::clear_orphans(&app).await;
+                crate::read::fetch_new(&app).await;
+                crate::read::clean_up(&app).await;
             }
             check(&app, &mut seen).await;
             crate::history::sync(&app).await;
             crate::transcodes::keep_tidy(&app).await;
             crate::trickplay::ensure(&app).await;
             tidy_imported(&app).await;
+            crate::books::tick(&app).await;
             crate::watchnow::tick(&app).await;
             tokio::time::sleep(TICK).await;
         }

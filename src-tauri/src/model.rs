@@ -9,16 +9,19 @@ pub enum AppId {
     FlareSolverr,
     QBittorrent,
     Jellyfin,
+    /// Manga and manhua downloader (Suwayomi-Server), Chillarr's own hidden child.
+    Suwayomi,
 }
 
 impl AppId {
-    pub const ALL: [AppId; 6] = [
+    pub const ALL: [AppId; 7] = [
         AppId::Prowlarr,
         AppId::Sonarr,
         AppId::Radarr,
         AppId::FlareSolverr,
         AppId::QBittorrent,
         AppId::Jellyfin,
+        AppId::Suwayomi,
     ];
 
     pub fn label(self) -> &'static str {
@@ -29,6 +32,7 @@ impl AppId {
             AppId::FlareSolverr => "FlareSolverr",
             AppId::QBittorrent => "qBittorrent",
             AppId::Jellyfin => "Jellyfin",
+            AppId::Suwayomi => "Suwayomi",
         }
     }
 

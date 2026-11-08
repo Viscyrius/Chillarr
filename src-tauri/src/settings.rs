@@ -49,6 +49,18 @@ pub struct Settings {
     /// Colours and the logo (theme.rs).
     #[serde(default)]
     pub theme: crate::theme::Theme,
+    /// Where manga, manhua and books go (read.rs): Comics and Books inside.
+    /// Picked next to the films the first time something is followed.
+    #[serde(default)]
+    pub reading_dir: Option<String>,
+    /// Days after a chapter is read (by everyone reading it) before it's
+    /// deleted; 0 keeps everything.
+    #[serde(default)]
+    pub read_cleanup_days: u32,
+    /// Reading was set up once on this PC (folder, manga downloader, sources),
+    /// by setup or, for a PC set up before reading existed, on the first start.
+    #[serde(default)]
+    pub reading_ready: bool,
 }
 
 fn default_audio_lang() -> String {
@@ -65,7 +77,7 @@ fn default_player() -> String {
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { start_with_windows: true, auto_fix: true, apps: Vec::new(), defender_allowed: Vec::new(), defender_ask: true, setup_done: false, player: default_player(), skip_remux: true, skip_dubs: true, audio_pref: default_audio(), audio_lang: default_audio_lang(), theme: Default::default() }
+        Settings { start_with_windows: true, auto_fix: true, apps: Vec::new(), defender_allowed: Vec::new(), defender_ask: true, setup_done: false, player: default_player(), skip_remux: true, skip_dubs: true, audio_pref: default_audio(), audio_lang: default_audio_lang(), theme: Default::default(), reading_dir: None, read_cleanup_days: 0, reading_ready: false }
     }
 }
 
@@ -96,6 +108,7 @@ pub fn exe_names(id: AppId) -> &'static [&'static str] {
         AppId::Sonarr => &["Sonarr.exe", "Sonarr.Console.exe"],
         AppId::Radarr => &["Radarr.exe", "Radarr.Console.exe"],
         AppId::FlareSolverr => &["flaresolverr.exe"],
+        AppId::Suwayomi => &["java.exe"],
         AppId::QBittorrent => &["qbittorrent.exe"],
         AppId::Jellyfin => &["jellyfin.exe"],
     }

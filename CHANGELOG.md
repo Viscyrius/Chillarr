@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.12.0 (2026-11-08)
+- New: Read. A new tab for manga, manhwa, manhua, books and light novels, on the PC, phones and the TV.
+- Pick a series and Chillarr checks every site for it, then shows the copies sharpest and most complete first. Download one and every chapter comes in, new chapters too.
+- The reader shows each page exactly as the site has it. Scroll for manhwa and manhua (one long strip, the next chapter follows on), Right to left for manga (two pages side by side on a wide screen), and Left to right.
+- Books and light novels come through your download sites like films do. Books open in a reader with Dark, Sepia and Light and a text size, and PDFs open in your browser.
+- Each profile keeps its own place, read chapters and Finished list. Settings > Library & storage can delete chapters a few days after everyone reading them has read them.
+- The manga downloader is set up for you, hidden like the other apps. New installs get it during setup, and this PC gets it the first time Chillarr starts after updating.
+- New: Comments on every title. Everyone on your server sees them, and you can edit or delete your own.
+- New: Chat in Watch together. Press C, or the chat button, to talk while you watch. The video never pauses.
+- New: Ecchi works as a genre for films and shows from your library too, and genres are listed A to Z everywhere.
+- Fixed: the first sign-in could open a profile with a PIN. A locked profile now always asks who's watching.
+- Fixed: downloads no longer go into your own Downloads folder. They go to a Chillarr Downloads folder on the same drive as your library, and what was already downloading moves there too.
+- Fixed: a finished download left behind after its title was removed (Meet Joe Black) is cleaned up.
+- Fixed: Play on a show now starts the episode you have, not the first one of the show. Edgerunners started downloading season 1 again while you had season 2.
+
 ## 0.11.5 (2026-11-05)
 - New: Use graphics card for video, in Settings > General. Video that has to be converted, like x265 films on a TV, is converted on your graphics card instead of the processor, which can help stutter on a TV and leaves more for your games. It only shows in the app on this PC.
 

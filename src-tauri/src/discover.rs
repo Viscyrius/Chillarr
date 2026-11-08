@@ -225,6 +225,7 @@ pub fn discover_all() -> Vec<AppConfig> {
         .iter()
         .map(|&id| match id {
             AppId::FlareSolverr => flaresolverr_config(),
+            AppId::Suwayomi => crate::suwayomi::config(),
             AppId::QBittorrent => qbit_config(),
             AppId::Jellyfin => jellyfin_config(),
             _ => arr_config(id, &program_data.join(id.label()).join("config.xml")),

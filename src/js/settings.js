@@ -259,7 +259,7 @@ async function library(panel) {
   const foldersBox = el("div");
   const roomBox = el("div");
   const settingsBox = el("div");
-  panel.append(drivesBox, foldersBox, roomBox, settingsBox);
+  panel.append(drivesBox, foldersBox, roomBox, readingBox(), settingsBox);
   const [o, stats, f] = await Promise.all([
     invoke("storage_overview").catch(() => null),
     invoke("library_stats").catch(() => []),
@@ -313,6 +313,33 @@ function folderCards(stats, disks) {
 }
 
 /** Clean up watched, Delete watched now, and what takes the most room. */
+/** Manga, manhwa and books: where they go, and deleting chapters once read. */
+function readingBox() {
+  const path = el("p", { class: "path selectable", text: "..." });
+  invoke("read_folder").then((p) => (path.textContent = p || "Picked next to your movies the first time you download something to read.")).catch(() => {});
+  const change = el("button", { class: "btn small ghost" }, icon(ICON.folder), "Change");
+  change.addEventListener("click", async () => {
+    const p = await invoke("pick_folder");
+    if (!p) return;
+    change.disabled = true;
+    try { toast(await invoke("read_set_folder", { path: p })); path.textContent = p; } catch (e) { toast(String(e), true); }
+    change.disabled = false;
+  });
+  const days = el("select", { class: "quality", "aria-label": "Delete chapters after reading" },
+    CLEANUP.map(([d, label]) => el("option", { value: String(d), text: label })));
+  invoke("get_settings").then((s) => { days.value = String((s && s.read_cleanup_days) || 0); }).catch(() => {});
+  days.addEventListener("change", async () => {
+    const n = +days.value || 0;
+    try { await invoke("read_set_cleanup", { days: n }); toast(n ? `Chapters are deleted ${n} day${n === 1 ? "" : "s"} after everyone reading them has read them.` : "Chapters are kept."); }
+    catch (e) { toast(String(e), true); }
+  });
+  return el("div", {}, subhead("Reading"),
+    el("div", { class: "box" },
+      el("div", { class: "opt" }, el("span", {}, el("b", { text: "Reading folder" }), el("small", { text: "Manga, manhwa, manhua and books go here." }), path), change),
+      el("div", { class: "opt" }, el("span", {}, el("b", { text: "Delete chapters after reading" }),
+        el("small", { text: "Frees the space once a chapter is read. A chapter someone else hasn't reached yet stays. Deleted chapters can be downloaded again." })), days)));
+}
+
 function storageParts(o) {
   let filter = "all";
   const total = o.items.reduce((n, i) => n + i.size, 0);
@@ -620,7 +647,8 @@ async function apps(panel) {
     }
   };
   panel.append(el("h2", { text: "Apps" }), el("p", { class: "sub", text: "Chillarr finds all of this itself. Change it only if something is wrong." }),
-    el("div", {}, ORDER.map((id) => {
+    // The manga downloader is part of Chillarr: its program and port are Chillarr's own.
+    el("div", {}, ORDER.filter((id) => id !== "Suwayomi").map((id) => {
       const c = configs.find((x) => x.id === id) || {};
       const exe = el("input", { type: "text", value: c.exe || "", placeholder: c.service ? `Windows service "${c.service}"` : "Not found", spellcheck: "false" });
       const port = el("input", { type: "number", min: "1", max: "65535", value: portOf(c.base_url) });

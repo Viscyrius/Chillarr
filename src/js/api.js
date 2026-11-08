@@ -75,9 +75,9 @@ export const ICON = {
 
 export const LABEL = {
   Prowlarr: "Prowlarr", Sonarr: "Sonarr", Radarr: "Radarr",
-  FlareSolverr: "FlareSolverr", QBittorrent: "qBittorrent", Jellyfin: "Jellyfin",
+  FlareSolverr: "FlareSolverr", QBittorrent: "qBittorrent", Jellyfin: "Jellyfin", Suwayomi: "Manga downloader",
 };
-export const ORDER = ["Prowlarr", "Sonarr", "Radarr", "FlareSolverr", "QBittorrent", "Jellyfin"];
+export const ORDER = ["Prowlarr", "Sonarr", "Radarr", "FlareSolverr", "QBittorrent", "Jellyfin", "Suwayomi"];
 
 /** Languages offered for dubs, with how a file's audio track names them. */
 export const AUDIO_LANGS = [

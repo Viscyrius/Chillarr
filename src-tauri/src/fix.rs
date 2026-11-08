@@ -129,13 +129,15 @@ fn set_card(app: &AppHandle, card: CardState) {
 
 /// A short-lived amber state while a step runs ("Starting...", "Testing indexers...").
 fn busy(app: &AppHandle, id: AppId, line: &str) {
-    let open_url = app.state::<Core>().config(id).filter(|c| c.id != AppId::FlareSolverr).map(|c| c.base_url);
+    let open_url = app.state::<Core>().config(id).filter(|c| !matches!(c.id, AppId::FlareSolverr | AppId::Suwayomi)).map(|c| c.base_url);
     set_card(app, CardState { id, level: Level::Amber, line: line.into(), notes: vec![], open_url, fixable: false, missing: false, update: None });
 }
 
 fn missing_card(cfg: &AppConfig) -> CardState {
     let notes = if cfg.id == AppId::FlareSolverr {
         vec!["Already have it somewhere? Pick flaresolverr.exe in Settings.".into()]
+    } else if cfg.id == AppId::Suwayomi {
+        vec!["Downloads manga, manhwa and manhua for the Read tab. Also sets itself up the first time you download one.".into()]
     } else {
         vec![]
     };
@@ -181,7 +183,7 @@ async fn card_for(core: &Core, cfg: &AppConfig) -> CardState {
         }
     } else if procs::port_open(&cfg.base_url).await {
         let mut c = CardState { id: cfg.id, level: Level::Ok, line: "Running".into(), notes: vec![], open_url: None, fixable: false, missing: false, update: None };
-        if cfg.id == AppId::FlareSolverr && core.procs.owns_flaresolverr() {
+        if (cfg.id == AppId::FlareSolverr && core.procs.owns_flaresolverr()) || (cfg.id == AppId::Suwayomi && core.procs.owns_suwayomi()) {
             c.notes.push("Started by Chillarr, hidden".into());
         }
         c
@@ -197,7 +199,7 @@ async fn card_for(core: &Core, cfg: &AppConfig) -> CardState {
             update: None,
         }
     };
-    if cfg.id != AppId::FlareSolverr && !cfg.base_url.is_empty() {
+    if !matches!(cfg.id, AppId::FlareSolverr | AppId::Suwayomi) && !cfg.base_url.is_empty() {
         card.open_url = Some(cfg.base_url.clone());
     }
     if !cfg.managed {
@@ -288,6 +290,13 @@ async fn start_if_down(app: &AppHandle, cfg: &AppConfig, trigger: Trigger, rep: 
             }
             Some(_) => return,
             None => return log(app, Level::Red, "FlareSolverr isn't running and Chillarr can't find flaresolverr.exe. Pick it in Settings."),
+        },
+        AppId::Suwayomi => match &cfg.exe {
+            Some(exe) if !core.procs.owns_suwayomi() => match crate::suwayomi::launch_args(app, exe) {
+                Ok(args) => (core.procs.start_suwayomi(exe, &args), crate::suwayomi::START_WAIT_SECS),
+                Err(e) => return log(app, Level::Amber, e),
+            },
+            _ => return,
         },
         AppId::QBittorrent => match &cfg.exe {
             // Open but not answering: its Web UI is off. Starting it again only

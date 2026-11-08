@@ -1,4 +1,10 @@
 mod arr;
+mod downloads_home;
+mod zipread;
+mod read_core;
+mod read;
+mod suwayomi;
+mod books;
 mod bridge;
 mod viewer;
 mod seal;
@@ -647,6 +653,125 @@ async fn watchnow_remove(app: AppHandle, key: String) -> Result<String, String> 
     watchnow::remove(&app, &key).await
 }
 
+// ---------- reading (read.rs, suwayomi.rs) ----------
+
+/// Where the reader asks for pages: this PC's bridge.
+#[tauri::command]
+fn read_base() -> Result<String, String> {
+    bridge::local_base().ok_or_else(|| "Chillarr's page server isn't up yet.".into())
+}
+
+#[tauri::command]
+async fn read_rows(app: AppHandle) -> Result<serde_json::Value, String> {
+    read::rows(&app).await
+}
+
+#[tauri::command]
+async fn read_search(term: String) -> Result<Vec<serde_json::Value>, String> {
+    read::search(&term).await
+}
+
+#[tauri::command]
+async fn read_library(app: AppHandle) -> Result<Vec<read::Shelf>, String> {
+    read::library(&app).await
+}
+
+#[tauri::command]
+async fn read_detail(app: AppHandle, key: String) -> Result<read::Detail, String> {
+    read::detail(&app, &key).await
+}
+
+#[tauri::command]
+async fn read_sources(app: AppHandle, meta: read::Meta) -> Result<Vec<suwayomi::Candidate>, String> {
+    read::sources(&app, &meta).await
+}
+
+#[tauri::command]
+async fn read_follow(app: AppHandle, meta: read::Meta, pick: suwayomi::Candidate, from: Option<f64>) -> Result<String, String> {
+    read::follow(&app, meta, pick, from).await
+}
+
+#[tauri::command]
+async fn read_unfollow(app: AppHandle, key: String, delete: bool) -> Result<String, String> {
+    read::unfollow(&app, &key, delete).await
+}
+
+#[tauri::command]
+async fn read_open(app: AppHandle, key: String, chapter: i64) -> Result<read::Opened, String> {
+    read::open(&app, &key, chapter).await
+}
+
+#[tauri::command]
+fn read_progress(app: AppHandle, key: String, chapter: i64, page: usize, pages: usize) -> Result<(), String> {
+    read::set_spot(&app, &key, chapter, page, pages)
+}
+
+#[tauri::command]
+fn read_mode(app: AppHandle, key: String, mode: String) -> Result<(), String> {
+    read::set_mode(&app, &key, &mode)
+}
+
+#[tauri::command]
+fn read_mark(app: AppHandle, key: String, chapters: Vec<i64>, read: bool) -> Result<(), String> {
+    read::mark(&app, &key, &chapters, read)
+}
+
+#[tauri::command]
+async fn read_book_rows() -> Vec<serde_json::Value> {
+    books::rows().await
+}
+
+#[tauri::command]
+async fn read_book_search(term: String) -> Result<Vec<serde_json::Value>, String> {
+    books::search(&term).await
+}
+
+#[tauri::command]
+async fn read_book_copies(app: AppHandle, meta: books::BookMeta) -> Result<Vec<books::Release>, String> {
+    books::copies(&app, &meta).await
+}
+
+#[tauri::command]
+async fn read_book_get(app: AppHandle, meta: books::BookMeta, id: String) -> Result<String, String> {
+    books::get(&app, meta, &id).await
+}
+
+#[tauri::command]
+async fn read_book_remove(app: AppHandle, key: String) -> Result<String, String> {
+    books::remove(&app, &key).await
+}
+
+#[tauri::command]
+async fn read_books(app: AppHandle) -> Result<Vec<read::BookShelf>, String> {
+    read::books(&app).await
+}
+
+#[tauri::command]
+async fn read_book_open(app: AppHandle, key: String) -> Result<read::OpenedBook, String> {
+    read::open_book(&app, &key).await
+}
+
+#[tauri::command]
+fn read_folder(app: AppHandle) -> Option<String> {
+    read::root(&app).map(|p| p.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+async fn read_set_folder(app: AppHandle, path: String) -> Result<String, String> {
+    read::move_root(&app, &path).await
+}
+
+#[tauri::command]
+fn read_set_cleanup(app: AppHandle, days: u32) -> Result<(), String> {
+    let st = app.state::<SettingsState>();
+    let saved = {
+        let mut s = st.current.lock().unwrap();
+        s.read_cleanup_days = days.min(365);
+        s.clone()
+    };
+    settings::save(&st.path, &saved)
+}
+
 #[tauri::command]
 async fn watchnow_list(app: AppHandle) -> Vec<tiles::Tile> {
     watchnow::list(&app).await
@@ -773,6 +898,14 @@ async fn set_settings(app: AppHandle, mut s: settings::Settings) -> Result<Vec<A
         s.defender_allowed = st.current.lock().unwrap().defender_allowed.clone();
         // Theme has its own command; the window's copy may be older.
         s.theme = st.current.lock().unwrap().theme.clone();
+        // So do the reading folder and its clean-up (read.rs): a copy of the
+        // page from before a change must not put the old values back.
+        {
+            let cur = st.current.lock().unwrap();
+            s.reading_dir = cur.reading_dir.clone();
+            s.read_cleanup_days = cur.read_cleanup_days;
+            s.reading_ready = cur.reading_ready;
+        }
         settings::save(&st.path, &s)?;
         let remux_changed = st.current.lock().unwrap().skip_remux != s.skip_remux;
         let dubs_changed = st.current.lock().unwrap().skip_dubs != s.skip_dubs || st.current.lock().unwrap().audio_pref != s.audio_pref || st.current.lock().unwrap().audio_lang != s.audio_lang;
@@ -857,7 +990,30 @@ pub fn run() {
         .manage(Logs::default())
         .manage(login::Pending::default())
         .manage(onboard::Onboard::default())
+        .manage(read::Reading::default())
         .invoke_handler(tauri::generate_handler![
+            read_base,
+            read_rows,
+            read_search,
+            read_library,
+            read_detail,
+            read_sources,
+            read_follow,
+            read_unfollow,
+            read_open,
+            read_progress,
+            read_mode,
+            read_mark,
+            read_folder,
+            read_set_folder,
+            read_book_rows,
+            read_book_search,
+            read_book_copies,
+            read_book_get,
+            read_book_remove,
+            read_books,
+            read_book_open,
+            read_set_cleanup,
             window_fullscreen,
             open_link,
             fix_everything,
