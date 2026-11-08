@@ -1,4 +1,5 @@
 mod arr;
+mod downloads_home;
 mod bridge;
 mod viewer;
 mod seal;

@@ -280,6 +280,15 @@ impl Qbit {
         self.call("torrents/delete", Some(&[("hashes", joined.as_str()), ("deleteFiles", if files { "true" } else { "false" })])).await.map(|_| ())
     }
 
+    /// Moves torrents (and their files) to another folder.
+    pub async fn set_location(&self, hashes: &[String], location: &str) -> Result<(), QbError> {
+        if hashes.is_empty() {
+            return Ok(());
+        }
+        let joined = hashes.join("|");
+        self.call("torrents/setLocation", Some(&[("hashes", joined.as_str()), ("location", location)])).await.map(|_| ())
+    }
+
     /// Sets the priority of some of a torrent's files (0 = don't download).
     pub async fn set_file_prio(&self, hash: &str, ids: &[i64], prio: u8) -> Result<(), QbError> {
         if ids.is_empty() {
