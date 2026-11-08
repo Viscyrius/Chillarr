@@ -5,6 +5,7 @@ import { openDetail, playShowNow } from "./detail.js";
 import { canWatchNow, confirmRemove, isWatchNow, movieLike, play, removeWatchNow, watchNow } from "./player.js";
 import { completedActions, confirmRedownload, listable, markWatched, onMyList, removeCompleted, removeContinue, resumable, setMyList } from "./mylist.js";
 import { goBack, remember, restore } from "./place.js";
+import { inlinePicker, styleNow } from "./look.js";
 
 const WIDE = new Set(["continue", "downloading"]);
 let refreshTimer;
@@ -59,6 +60,8 @@ function art(t, wide) {
   }
   // A Watch now title says where its download is under the title instead (see tile()).
   if (t.status && !isWatchNow(t)) box.append(el("div", { class: "over", text: t.status }));
+  // The rating on the cover: only the Midnight style shows it (styles.css).
+  if (t.rating && !wide) box.append(el("span", { class: "rc-score", text: `★ ${(+t.rating).toFixed(1)}` }));
   if (t.progress != null && (t.jf_id || t.status)) {
     box.append(el("div", { class: "bar" }, el("span", { style: `width:${Math.round(t.progress * 100)}%` })));
   }
@@ -97,7 +100,9 @@ const watchFrom = (t) => (movieLike(t) ? watchNow(t) : openDetail(t, { episodes:
 export function tile(t, wide = false, rank = 0) {
   const cap = el("div", { class: "cap" }, el("strong", { text: t.title }), t.subtitle ? ` · ${t.subtitle}` : t.year ? ` · ${t.year}` : "");
   const cls = ["tile", wide ? "wide" : "", rank ? "top10" : ""].filter(Boolean).join(" ");
-  const b = el("button", { class: cls, "aria-label": t.title, dataset: { key: t.key } }, rank ? el("span", { class: "rank", "aria-hidden": "true", text: String(rank) }) : null, art(t, wide), rank ? null : cap);
+  // A Top 10 card has no caption under it; Classic lists the title and genre beside the cover instead (styles.css).
+  const rkCap = rank ? el("div", { class: "rk-cap" }, el("strong", { text: t.title }), el("small", { text: [t.year, genresAZ(t.genres || [], 1)[0]].filter(Boolean).join(" · ") })) : null;
+  const b = el("button", { class: cls, "aria-label": t.title, dataset: { key: t.key } }, rank ? el("span", { class: "rank", "aria-hidden": "true", text: String(rank) }) : null, art(t, wide), rank ? rkCap : cap);
   b._tsig = `${rank}|${JSON.stringify(t)}`; // what it shows; a kept tab redraws a card only when this changes
   if (isWatchNow(t) && t.status && !rank) b.append(el("div", { class: "cap wn-state", text: t.status }));
   b.addEventListener("click", () => { hidePreview(true); open(t); });
@@ -503,13 +508,13 @@ let heroKey = null; // the featured title showing, kept across a redraw
 function hero(picks, keep = null) {
   clearInterval(heroTimer);
   heroShow = null;
-  if (!picks.length) return el("section", { class: "hero empty" });
+  if (!picks.length) return heroLook(el("section", { class: "hero empty" }));
   const bgUrl = (p) => `url("${p.t.backdrop.replace(/"/g, "%22")}")`;
   let at = Math.max(0, picks.findIndex((p) => p.t.key === keep));
   heroKey = picks[at].t.key;
   const bgA = el("div", { class: "hero-bg", style: `background-image:${bgUrl(picks[at])}` });
   const bgB = el("div", { class: "hero-bg out" });
-  const section = el("section", { class: "hero" }, bgA, bgB, heroCopy(picks[at]));
+  const section = heroLook(el("section", { class: "hero" }, bgA, bgB, heroCopy(picks[at])));
   section.lastChild.classList.add("first"); // the copy a kept tab comes back with (styles.css)
   section.picks = picks.map((p) => p.t.key).join("|");
   let front = bgA, back = bgB;
@@ -527,7 +532,8 @@ function hero(picks, keep = null) {
   const dots = el("div", { class: "hero-dots" }, picks.map((_, i) => el("button", { class: i === at ? "on" : "", "aria-label": `Show featured title ${i + 1}`, onclick: () => show(i) })));
   // Arrows at the sides, a swipe or drag, or the arrow keys move between titles.
   const side = (cls, label, path, step) => el("button", { class: `hero-arrow ${cls}`, "aria-label": label, onclick: () => show(at + step) }, icon(path));
-  section.append(dots, side("prev", "Previous title", ICON.left, -1), side("next", "Next title", ICON.right, 1));
+  // The arrows sit with the dots, bottom right, never over the words.
+  section.append(el("div", { class: "hero-nav" }, side("prev", "Previous title", ICON.left, -1), dots, side("next", "Next title", ICON.right, 1)));
   let downX = null;
   section.addEventListener("pointerdown", (e) => { if (!e.target.closest("button, a")) downX = e.clientX; });
   section.addEventListener("pointerup", (e) => {
@@ -562,6 +568,54 @@ function hero(picks, keep = null) {
   }
   section.resume();
   return section;
+}
+
+/** Midnight's hero is shorter; Classic's is a card inside the page, like a banner. */
+function heroLook(section) {
+  const s = styleNow("watch");
+  if (s === "midnight") section.classList.add("compact");
+  if (s === "classic") section.classList.add("cl-hero");
+  return section;
+}
+
+/* ---------- Midnight: the ranking down the side ---------- */
+const RANKS = [["top10", "Top 10"], ["trending", "Trending"], ["popular-series", "Series"], ["anime-trending", "Anime"]];
+
+function rankItem(t, i) {
+  const b = el("button", { class: "rk", style: `--i:${i}`, onclick: () => { hidePreview(true); open(t); } },
+    el("span", { class: "rk-n", text: String(i + 1).padStart(2, "0") }),
+    t.poster ? el("img", { class: "rk-img", src: t.poster, alt: "", loading: "lazy", decoding: "async" }) : el("span", { class: "rk-img" }),
+    el("span", { class: "rk-text" },
+      el("strong", { text: t.title }),
+      el("small", { text: [t.year, ...genresAZ(t.genres || [], 2)].filter(Boolean).join(" · ") })),
+    t.rating ? el("span", { class: "rk-score", text: `★ ${(+t.rating).toFixed(1)}` }) : null);
+  return b;
+}
+
+/** Lists for the side ranking, from the rows the page already has. */
+function rankLists(rows) {
+  return RANKS.map(([id, label]) => [label, (rows.find((r) => r.id === id)?.tiles || []).slice(0, 10)]).filter(([, l]) => l.length >= 5).slice(0, 3);
+}
+
+function rankSide(rows) {
+  const lists = rankLists(rows);
+  if (!lists.length) return null;
+  const head = el("div", { class: "tabbed-tabs", role: "tablist" });
+  const body = el("div", { class: "tabbed-body" });
+  let swapT = 0;
+  const pick = (i, first) => {
+    [...head.children].forEach((b, j) => { b.classList.toggle("on", j === i); b.setAttribute("aria-selected", String(j === i)); });
+    const fill = () => { body.replaceChildren(...lists[i][1].map(rankItem)); void body.offsetWidth; body.classList.remove("swap"); };
+    if (first) { fill(); return; }
+    clearTimeout(swapT);
+    body.classList.add("swap");
+    swapT = setTimeout(fill, 160);
+  };
+  head.append(...lists.map(([label], i) => el("button", { role: "tab", onclick: () => pick(i) }, label)));
+  pick(0, true);
+  const side = el("aside", { class: "mn-side mw-side" }, el("h2", { class: "mn-h", text: "Popular" }), head, body);
+  side._sig = JSON.stringify(lists.map(([l, ts]) => [l, ts.map((t) => t.key)]));
+  return side;
 }
 
 /** The page while it loads: the shape of what's coming (a hero with its
@@ -1009,6 +1063,8 @@ function patchRows(view, tab, entry, fresh, seq) {
   }
   const genreIds = (rows) => rows.filter((r) => r.id.startsWith("genre-")).map((r) => r.id).join("|");
   if (genreIds(fresh) !== genreIds(entry.rows)) box.querySelector(".genre-chips")?.replaceWith(chipBar(fresh, tab));
+  const sideNow = box.querySelector(".mw-side");
+  if (sideNow) { const n = rankSide(fresh); if (!n) sideNow.remove(); else if (n._sig !== sideNow._sig) sideNow.replaceWith(n); }
   const before = new Map(entry.rows.map((r) => [r.id, r]));
   const shown = new Map();
   for (const n of box.children) if (n.dataset.row) shown.set(n.dataset.row, n);
@@ -1081,7 +1137,8 @@ async function draw(view, tab, rows, mode, seq) {
   const banner = store.media && !store.media.signed_in
     ? el("div", { class: "tip", style: "margin:0 var(--gutter) 28px" }, el("span", { text: "Sign in to Jellyfin to see your own movies and series here and play them." }), el("a", { class: "btn small primary", href: "#settings/account", style: "margin-left:auto" }, "Sign in"))
     : null;
-  const box = el("div", { class: "rows" }, chipBar(rows, tab), banner, rows.map((r, i) => rowEl(r, i)));
+  const side = styleNow("watch") === "midnight" ? rankSide(rows) : null;
+  const box = el("div", { class: side ? "rows mn-rows" : "rows" }, side, inlinePicker(), chipBar(rows, tab), banner, rows.map((r, i) => rowEl(r, i)));
   swapIn(view, [h, box], mode);
   const entry = keep(tab, "rows", [h, box], rows);
   watchLazyRows(view, rows, seq);
@@ -1093,7 +1150,7 @@ export async function renderTab(view, tab, mode = null) {
   const seq = renderSeq;
   quietSeq = mode ? seq : -1;
   // Another profile, or Jellyfin signed in or out (the sign-in tip): nothing kept fits.
-  const owner = `${personKey()}|${store.media && !store.media.signed_in ? "tip" : ""}`;
+  const owner = `${personKey()}|${store.media && !store.media.signed_in ? "tip" : ""}|${styleNow("watch")}`;
   if (pagesFor !== owner) { pages.clear(); pagesFor = owner; }
   const kept = pages.get(tab);
   if (kept) {

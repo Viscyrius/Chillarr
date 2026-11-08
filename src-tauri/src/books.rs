@@ -445,30 +445,61 @@ fn doc_card(d: &Value) -> Value {
     ol_card(d["title"].as_str().unwrap_or_default(), authors, d["cover_i"].as_i64(), d["first_publish_year"].as_i64(), d["key"].as_str())
 }
 
+/// The subject rows: (row id, Open Library subject, title).
+const SUBJECTS: [(&str, &str, &str); 4] = [("books-fantasy", "fantasy", "Fantasy books"), ("books-scifi", "science_fiction", "Science fiction"), ("books-thriller", "thrillers", "Thrillers"), ("books-romance", "romance", "Romance novels")];
+/// Books per row, and per page of a row's See all.
+const PER_PAGE: u32 = 30;
+
+fn subject_items(v: &Value) -> Vec<Value> {
+    v["works"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter(|w| w["cover_id"].is_i64())
+                .map(|w| {
+                    let authors = w["authors"].as_array().map(|x| x.iter().filter_map(|a| a["name"].as_str().map(String::from)).collect()).unwrap_or_default();
+                    ol_card(w["title"].as_str().unwrap_or_default(), authors, w["cover_id"].as_i64(), w["first_publish_year"].as_i64(), w["key"].as_str())
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn trending_items(v: &Value) -> Vec<Value> {
+    v["works"].as_array().map(|a| a.iter().filter(|d| d["cover_i"].is_i64()).map(doc_card).collect()).unwrap_or_default()
+}
+
+/// Where a row's page `page` (from 1) comes from; None for a row that isn't a book row.
+fn more_url(id: &str, page: u32) -> Option<String> {
+    let page = page.clamp(1, 50);
+    if id == "books-trending" {
+        return Some(format!("https://openlibrary.org/trending/weekly.json?limit={PER_PAGE}&page={page}"));
+    }
+    let (_, subject, _) = SUBJECTS.iter().find(|(k, _, _)| *k == id)?;
+    Some(format!("https://openlibrary.org/subjects/{subject}.json?limit={PER_PAGE}&offset={}&sort=rating", (page - 1) * PER_PAGE))
+}
+
 /// Book rows for the Read tab.
 pub async fn rows() -> Vec<Value> {
     let mut out = Vec::new();
-    if let Ok(v) = ol_get("https://openlibrary.org/trending/weekly.json?limit=30").await {
-        let items: Vec<Value> = v["works"].as_array().map(|a| a.iter().filter(|d| d["cover_i"].is_i64()).map(doc_card).collect()).unwrap_or_default();
-        out.push(json!({ "id": "books-trending", "title": "Books people are reading", "items": items }));
+    if let Ok(v) = ol_get(&more_url("books-trending", 1).unwrap_or_default()).await {
+        out.push(json!({ "id": "books-trending", "title": "Books people are reading", "items": trending_items(&v) }));
     }
-    for (id, subject, title) in [("books-fantasy", "fantasy", "Fantasy books"), ("books-scifi", "science_fiction", "Science fiction"), ("books-thriller", "thrillers", "Thrillers"), ("books-romance", "romance", "Romance novels")] {
-        let Ok(v) = ol_get(&format!("https://openlibrary.org/subjects/{subject}.json?limit=30&sort=rating")).await else { continue };
-        let items: Vec<Value> = v["works"]
-            .as_array()
-            .map(|a| {
-                a.iter()
-                    .filter(|w| w["cover_id"].is_i64())
-                    .map(|w| {
-                        let authors = w["authors"].as_array().map(|x| x.iter().filter_map(|a| a["name"].as_str().map(String::from)).collect()).unwrap_or_default();
-                        ol_card(w["title"].as_str().unwrap_or_default(), authors, w["cover_id"].as_i64(), w["first_publish_year"].as_i64(), w["key"].as_str())
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        out.push(json!({ "id": id, "title": title, "items": items }));
+    for (id, _, title) in SUBJECTS {
+        let Ok(v) = ol_get(&more_url(id, 1).unwrap_or_default()).await else { continue };
+        out.push(json!({ "id": id, "title": title, "items": subject_items(&v) }));
     }
     out
+}
+
+/// One page of a book row's See all: { items, more }.
+pub async fn more(id: &str, page: u32) -> Result<Value, String> {
+    let url = more_url(id, page).ok_or("That isn't a book row.")?;
+    let v = ol_get(&url).await?;
+    let raw = v["works"].as_array().map(|a| a.len()).unwrap_or(0);
+    let items = if id == "books-trending" { trending_items(&v) } else { subject_items(&v) };
+    // A full page means there may be more; Open Library's trending list stops after a few pages.
+    Ok(json!({ "items": items, "more": raw as u32 >= PER_PAGE && page < 50 }))
 }
 
 #[cfg(test)]
@@ -479,6 +510,16 @@ mod tests {
         json!({ "title": title, "size": size_mb * 1024 * 1024, "seeders": seeders, "indexer": "x", "protocol": "torrent",
             "magnetUrl": if magnet { json!("magnet:?xt=urn:btih:0123456789ABCDEF0123456789ABCDEF01234567&dn=x") } else { Value::Null },
             "downloadUrl": "http://localhost:9696/1/download?link=abc" })
+    }
+
+    #[test]
+    fn book_rows_page_through_open_library() {
+        assert_eq!(more_url("books-trending", 2).as_deref(), Some("https://openlibrary.org/trending/weekly.json?limit=30&page=2"));
+        assert_eq!(more_url("books-fantasy", 1).as_deref(), Some("https://openlibrary.org/subjects/fantasy.json?limit=30&offset=0&sort=rating"));
+        assert_eq!(more_url("books-scifi", 3).as_deref(), Some("https://openlibrary.org/subjects/science_fiction.json?limit=30&offset=60&sort=rating"));
+        assert_eq!(more_url("books-scifi", 0), more_url("books-scifi", 1), "page 0 is the first page");
+        assert_eq!(more_url("trending", 1), None, "only book rows");
+        assert_eq!(more_url("../etc", 1), None);
     }
 
     #[test]

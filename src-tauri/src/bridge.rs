@@ -307,7 +307,7 @@ fn need(cmd: &str) -> Option<Need> {
         // Reading (read.rs): each profile its own progress; following a
         // series downloads it, like Download does for a film.
         | "read_rows" | "read_search" | "read_library" | "read_detail" | "read_sources" | "read_follow" | "read_open" | "read_progress" | "read_mode" | "read_mark"
-        | "read_book_rows" | "read_book_search" | "read_book_copies" | "read_book_get" | "read_books" | "read_book_open"
+        | "read_book_rows" | "read_book_more" | "read_book_search" | "read_book_copies" | "read_book_get" | "read_books" | "read_book_open"
         | "read_languages" | "read_copy_chapters" | "read_get_chapters" | "read_keep_up" | "read_list" | "read_list_set" | "read_explore" | "read_genres" | "read_filter_info" | "read_similar" | "read_downloads" => Need::Viewer,
         "read_unfollow" | "read_book_remove" | "read_stop_chapters" => Need::Delete,
         "media_delete" | "media_delete_episodes" | "media_stop_download" | "media_stop_waiting" => Need::Delete,
@@ -370,6 +370,7 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
         "media_rows" => res(media::rows(app, &arg::<String>(a, "tab")?).await),
         "read_rows" => res(crate::read::rows(app).await),
         "read_book_rows" => ok(crate::books::rows().await),
+        "read_book_more" => res(crate::books::more(&arg::<String>(a, "id")?, arg::<u32>(a, "page")?).await),
         "read_book_search" => res(crate::books::search(&arg::<String>(a, "term")?).await),
         "read_book_copies" => res(crate::books::copies(app, &arg(a, "meta")?).await),
         "read_book_get" => res(crate::books::get(app, arg(a, "meta")?, &arg::<String>(a, "id")?).await),
