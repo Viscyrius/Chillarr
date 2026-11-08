@@ -18,6 +18,7 @@
 - A TV, phone or browser signed in as a profile with a PIN now asks for that PIN first.
 - Each profile has its own manga and books: what one follows doesn't show on another's, and following something already here doesn't download it again.
 - A profile made on a TV or phone now shows in the PC's profile picker right away.
+- Watch together no longer micro-stutters: tiny pauses aren't sent to the whole party any more, and small drifts are caught up gently instead of jumping.
 - Fixed: a Watch now film could stay in Downloads after it finished (The Dark Knight did). A player that has said nothing for 10 minutes no longer counts as still watching.
 
 ## 0.13.4 (2026-11-08)
