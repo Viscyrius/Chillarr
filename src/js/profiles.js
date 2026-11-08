@@ -115,6 +115,12 @@ function openPicker(manage = false) {
   document.body.style.overflow = "hidden";
   setBehind(true);
   root.querySelector(".pf-tile")?.focus();
+  // Asked again each time: a profile made on a TV or a phone since this list
+  // was read shows now, not after Chillarr restarts.
+  const ids = list.map((p) => p.id).join(",");
+  load().then(() => {
+    if (!root.hidden && root.querySelector(".pf-grid") && list.map((p) => p.id).join(",") !== ids) openPicker(manage);
+  }).catch(() => {});
 }
 
 /** Jellyfin's apps' back button: closes the picker. */
