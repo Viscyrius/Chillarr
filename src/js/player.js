@@ -2,7 +2,7 @@
 // app can play it, or converted on the fly into an HLS stream (played with hls.js).
 import { $, ask, AUDIO_LANGS, el, fmtTime, getPref, icon, invoke, listen, screenMode, setPref, store, toast, windowFull } from "./api.js";
 import { SubRenderer, parseAss, parseVtt, setSubScale, subScale } from "./subrender.js";
-import { buffering, caughtUp, inGroup, loadedHere, openTogether, requestPause, requestPlay, requestSeek, startedHere, toggleChat } from "./syncplay.js";
+import { buffering, caughtUp, inGroup, leftPlayer, loadedHere, openTogether, requestPause, requestPlay, requestSeek, startedHere, toggleChat } from "./syncplay.js";
 
 const box = $("#player");
 // Not const: when this device turns out unable to send the sound through Web
@@ -715,6 +715,7 @@ export async function playTile(tile, playlist = null) {
 }
 
 function close(sendStop = true) {
+  const was = session?.tile?.jf_id || null;
   loadSeq++;
   showKeys(false);
   seekTip.hidden = true;
@@ -738,6 +739,7 @@ function close(sendStop = true) {
   $("#p-menu").hidden = true;
   if (full) setFull(false);
   window.dispatchEvent(new Event("chillarr:refresh"));
+  if (was && inGroup()) leftPlayer(was);
 }
 
 const total = () => (session?.info.duration || video.duration || 0);
