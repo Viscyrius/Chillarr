@@ -820,7 +820,7 @@ pub async fn set_up_once(app: &AppHandle) {
             let _ = crate::settings::save(&st.path, &saved);
             crate::log::log(app, crate::model::Level::Ok, "Reading is set up: manga, manhwa, manhua and books are in the Read tab.");
         }
-        Err(e) => crate::log::log(app, crate::model::Level::Amber, format!("Reading isn't set up yet: {e}. Chillarr tries again next start.")),
+        Err(e) => crate::log::log(app, crate::model::Level::Amber, format!("Reading isn't set up yet: {}. Chillarr tries again next start.", e.trim_end_matches('.'))),
     }
 }
 

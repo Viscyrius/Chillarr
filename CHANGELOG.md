@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.12.1 (2026-11-08)
+- Fixed: pressing Find copies while the manga downloader was still being set up could say it "didn't start". It now waits for the setup to finish.
+
 ## 0.12.0 (2026-11-08)
 - New: Read. A new tab for manga, manhwa, manhua, books and light novels, on the PC, phones and the TV.
 - Pick a series and Chillarr checks every site for it, then shows the copies sharpest and most complete first. Download one and every chapter comes in, new chapters too.
