@@ -288,6 +288,12 @@ enum Need {
 /// What a command needs from the web, or None: the window's only. A new
 /// command that takes a Jellyfin item under another argument name must add
 /// that name to `item_ids`, or its item skips the visibility check.
+/// What a device locked behind its profile's PIN may still do: say who it is,
+/// type the PIN, or switch to another profile (which asks that one's PIN).
+fn open_while_locked(cmd: &str) -> bool {
+    matches!(cmd, "web_viewer" | "web_unlock" | "profiles_list" | "profiles_switch_web")
+}
+
 fn need(cmd: &str) -> Option<Need> {
     Some(match cmd {
         "web_viewer" | "media_status" | "media_rows" | "media_episodes" | "media_search" | "media_search_live" | "media_play" | "media_report" | "media_forget_resume" | "media_get" | "media_get_picked" | "media_seasons" | "media_trailer"
@@ -301,7 +307,7 @@ fn need(cmd: &str) -> Option<Need> {
         // Written as the viewer, who can change only their own (comments.rs).
         | "comments_key" | "comments_list" | "comments_add" | "comments_edit" | "comments_delete"
         // Only for a viewer who is one of Chillarr's profiles (profiles.rs).
-        | "profiles_list" | "profiles_switch_web" | "profiles_add"
+        | "profiles_list" | "profiles_switch_web" | "profiles_add" | "web_unlock"
         // The phone remote's code for the device asking, and only that one.
         | "remote_device"
         // Reading (read.rs): each profile its own progress; following a
@@ -354,7 +360,8 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
                 let s = st.current.lock().unwrap();
                 (s.theme.clone(), s.audio_pref.clone(), s.audio_lang.clone())
             };
-            ok(json!({ "user_id": me.session.user_id, "name": me.session.user, "admin": me.admin, "can_delete": me.can_delete, "theme": theme, "audio_pref": audio_pref, "audio_lang": audio_lang }))
+            let locked = crate::profiles::web_locked(app, &me.session.user_id, &me.session.token);
+            ok(json!({ "user_id": me.session.user_id, "name": me.session.user, "admin": me.admin, "can_delete": me.can_delete, "theme": theme, "audio_pref": audio_pref, "audio_lang": audio_lang, "locked": locked }))
         }
         // The viewer's own name; the PC's addresses and the owner's account
         // are the window's business.
@@ -463,6 +470,7 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
         "syncplay_tile" => ok(syncplay::tile(app, &arg::<String>(a, "id")?).await),
         // Sent as the viewer, and only into a party they're in (syncplay.rs).
         "syncplay_say" => res(syncplay::say(app, &arg::<String>(a, "group")?, &arg::<String>(a, "text")?).await),
+        "web_unlock" => res(crate::profiles::web_unlock(app, &me.session.user_id, &me.session.token, arg::<String>(a, "pin")?).await.map(|_| json!(true))),
         "profiles_list" => ok(crate::profiles::list_for_web(app, &me.session.user_id, arg::<Option<String>>(a, "trust")?.as_deref()).await),
         // { trust: key } when the main profile's password was typed: the page keeps it.
         "profiles_switch_web" => res(crate::profiles::authorize_web(app, &me.session.user_id, &arg::<String>(a, "id")?, arg(a, "pin")?, arg(a, "password")?, arg(a, "trust")?, &arg::<String>(a, "code")?).await.map(|t| json!({ "trust": t }))),
@@ -809,6 +817,10 @@ async fn serve(app: AppHandle, mut sock: TcpStream, gate: Gate) -> std::io::Resu
     if !allowed(&v, n) {
         let msg = if n == Need::Delete { "Your Jellyfin account isn't allowed to delete." } else { "Only a Jellyfin admin can do that." };
         return error(&mut sock, origin, "403 Forbidden", msg).await;
+    }
+    // Signed in as a profile with a PIN: nothing until it's typed on this device.
+    if !open_while_locked(cmd) && crate::profiles::web_locked(&app, &v.session.user_id, &v.session.token) {
+        return error(&mut sock, origin, "403 Forbidden", "Enter this profile's PIN first.").await;
     }
     let args: Value = if body.is_empty() { json!({}) } else {
         match serde_json::from_slice(&body) {
