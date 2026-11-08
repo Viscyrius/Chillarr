@@ -688,7 +688,7 @@ function general(panel) {
       subSizeRow(),
       sw("start_with_windows", "Start with Windows", "Opens in the tray when you sign in."),
       seedSwitch()),
-    ...(WEB ? [] : [limitBox(), gpuBox()]),
+    ...(WEB ? [] : [limitBox(), gpuBox(), sharpenBox()]),
     remoteBox(),
     more("More options",
       el("div", { class: "box" },
@@ -718,6 +718,32 @@ function gpuBox() {
     catch (e) { toast(String(e), true); sw.checked = !sw.checked; sw.disabled = false; }
   });
   return el("div", { class: "box", style: "margin-top:24px" }, el("label", { class: "opt" }, el("span", {}, el("b", { text: "Use graphics card for video" }), hint), sw));
+}
+
+/** Sharpen manga pages with the graphics card (sharpen.rs). This PC's window only. */
+function sharpenBox() {
+  const sw = el("input", { type: "checkbox", class: "switch" });
+  const hint = el("small", { text: "Redraws each chapter you download at twice the detail, once, in the background. Pauses while a game is full screen." });
+  const state = el("small", { class: "sharpen-state" });
+  const draw = (st) => {
+    sw.checked = st.on;
+    if (!st.on) state.textContent = "";
+    else if (st.paused) state.textContent = "Paused while something is full screen.";
+    else if (st.now) state.textContent = `Sharpening ${st.now}${st.left > 1 ? `, ${st.left - 1} more after it` : ""}. Copies use ${st.mb} MB.`;
+    else state.textContent = `All caught up. Copies use ${st.mb} MB. Turning this off deletes them; your chapters stay.`;
+  };
+  const poll = () => invoke("sharpen_status").then(draw).catch(() => {});
+  poll();
+  const t = setInterval(() => { if (!sw.isConnected) clearInterval(t); else if (!sw.disabled) poll(); }, 4000);
+  sw.addEventListener("input", async () => {
+    sw.disabled = true;
+    if (sw.checked) state.textContent = "Getting it ready (a 45 MB download the first time)...";
+    try { draw(await invoke("sharpen_set", { on: sw.checked })); }
+    catch (e) { toast(String(e), true); sw.checked = !sw.checked; state.textContent = ""; }
+    sw.disabled = false;
+  });
+  return el("div", { class: "box", style: "margin-top:24px" },
+    el("label", { class: "opt" }, el("span", {}, el("b", { text: "Sharpen pages with your graphics card" }), hint, state), sw));
 }
 
 /** Limit downloads. Only ever in this PC's window: the web pages don't draw it and can't reach its commands. */
