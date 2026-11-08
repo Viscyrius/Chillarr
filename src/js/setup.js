@@ -4,6 +4,7 @@
 import { $, audioChoice, el, invoke, listen, store, toast } from "./api.js";
 import { downloadsRow, folderPicker, saveLogsButton, subtitleOffer } from "./settings.js";
 import { logoImg, themePicker } from "./theme.js";
+import { askIfLocked } from "./profiles.js";
 
 const root = $("#setup");
 const state = { movies: [], series: [], downloads: null, base: null, free: 0, custom: false, loaded: false, audio: { audio_pref: "sub", audio_lang: "eng" } };
@@ -258,6 +259,8 @@ function close() {
   root.hidden = true;
   document.body.style.overflow = "";
   window.dispatchEvent(new Event("chillarr:refresh"));
+  // Signed in just now: a profile with a PIN isn't opened by itself, so ask who's watching.
+  askIfLocked().catch(() => {});
 }
 
 export function openSetup() {

@@ -710,6 +710,26 @@ input[type="range"] { background: linear-gradient(90deg, var(--accent) 0 var(--f
 .person b { display: block; font: 600 13px var(--display); line-height: 1.25; }
 .person small { display: block; color: var(--muted); font-size: 12px; line-height: 1.3; margin-top: 2px; }
 
+/* Detail: comments */
+.comments { margin-top: 30px; max-width: 760px; }
+.comments h3 { font: 600 1.25rem var(--display); margin: 0 0 14px; }
+.comments .cm-count { color: var(--muted); font-weight: 500; }
+.cm-new { margin-bottom: 18px; }
+.cm-input { display: block; width: 100%; resize: none; overflow-y: auto; min-height: 64px; background: var(--surface); border: 1px solid var(--line-2); border-radius: 8px; padding: 10px 12px; color: var(--text); font: 14px/1.45 var(--text-font); }
+.cm-input:focus { outline: none; border-color: var(--muted); }
+.cm-actions { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+.cm-left { color: var(--muted); font-size: 12px; margin-left: auto; }
+.cm-err:empty { display: none; }
+.cm-list { list-style: none; margin: 0; padding: 0; }
+.cm-item { display: flex; gap: 12px; padding: 14px 0; border-top: 1px solid var(--line); animation: fade 0.3s ease both; }
+.cm-avatar { flex: none; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; background: var(--raised); color: var(--muted); font: 600 15px var(--display); }
+.cm-body { flex: 1; min-width: 0; }
+.cm-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; }
+.cm-head b { font: 600 14px var(--display); }
+.cm-when, .cm-edited { color: var(--dim); font-size: 12px; }
+.cm-text { margin: 4px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; word-wrap: break-word; color: #e4e5ea; font-size: 14px; line-height: 1.5; }
+.cm-tools { margin: 4px 0 0 -6px; }
+
 /* Controller / remote focus: a clear ring on whatever is selected */
 body.nav-on :focus { outline: 3px solid var(--accent); outline-offset: 3px; }
 body.nav-on .tile:focus { outline: none; transform: translateY(-4px) scale(1.06); z-index: 1; }
@@ -1036,6 +1056,27 @@ button.icon-btn { border: 0; background: none; cursor: pointer; }
 .together-btn.on { color: var(--ok); }
 .together-btn.on::after { content: ""; position: absolute; top: 7px; right: 7px; width: 7px; height: 7px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 2px var(--bg); }
 .p-btn.together-btn { position: relative; }
+
+/* Watch together chat (syncplay.js): over the picture, never in the way of it */
+.p-top .chat-btn { margin-left: auto; position: relative; }
+.p-top .chat-btn:not([hidden]) + .together-btn { margin-left: 0; }
+.chat-btn svg { width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linejoin: round; }
+.chat-badge { position: absolute; top: 3px; right: 1px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--accent); color: var(--accent-ink); font: 700 11px/18px var(--display); text-align: center; }
+.p-chat { position: absolute; right: 24px; top: 84px; bottom: 120px; z-index: 3; width: 320px; max-width: calc(100% - 48px); display: flex; flex-direction: column; background: rgba(12,13,17,0.82); border-radius: 12px; box-shadow: 0 0 0 1px rgba(255,255,255,0.08), 0 18px 40px rgba(0,0,0,0.5); transition: opacity 0.35s; cursor: default; }
+.player.idle .p-chat:not(:focus-within) { opacity: 0.45; }
+.chat-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px 6px 14px; font: 600 14px var(--display); }
+.chat-list { flex: 1; min-height: 0; overflow-y: auto; list-style: none; margin: 0; padding: 4px 14px; overscroll-behavior: contain; }
+.chat-line { padding: 4px 0; font-size: 14px; line-height: 1.4; overflow-wrap: anywhere; word-wrap: break-word; }
+.chat-line b { font-weight: 600; margin-right: 6px; color: var(--accent-2); }
+.chat-line.mine b { color: var(--accent); }
+.chat-line time { margin-left: 6px; color: var(--dim); font-size: 11px; }
+.chat-form { display: flex; gap: 8px; padding: 10px 12px 12px; }
+.chat-input { flex: 1; min-width: 0; background: rgba(255,255,255,0.08); border: 1px solid var(--line-2); border-radius: 8px; padding: 7px 10px; color: var(--text); font: 14px var(--text-font); }
+.chat-input:focus { outline: none; border-color: var(--muted); }
+.chat-float { position: absolute; right: 24px; bottom: 130px; z-index: 3; width: 320px; max-width: calc(100% - 48px); list-style: none; margin: 0; padding: 0; pointer-events: none; }
+.chat-float .chat-line { margin-top: 6px; padding: 7px 12px; border-radius: 10px; background: rgba(12,13,17,0.75); animation: rise 0.4s var(--out) both; transition: opacity 0.6s; }
+.chat-float .chat-line.out { opacity: 0; }
+.player.waiting .chat-btn, .player.waiting .p-chat, .player.waiting .chat-float { display: none; }
 .together { width: min(480px, calc(100vw - 32px)); }
 .together h3 { margin: 20px 0 8px; font: 600 14px var(--display); color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
 .together .ask-actions { margin-top: 18px; }
@@ -1544,8 +1585,14 @@ html.no-flexgap .sr-looking > :not([hidden]) ~ :not([hidden]) { margin-left: 8px
 html.no-flexgap .fl-season > * { margin-right: 18px; margin-bottom: 12px; }
 html.no-flexgap .skel-btns > :not([hidden]) ~ :not([hidden]) { margin-left: 12px; }
 html.no-flexgap .recent-row > :not([hidden]) ~ :not([hidden]) { margin-left: 10px; }
+html.no-flexgap .cm-actions > :not([hidden]) ~ :not([hidden]) { margin-left: 10px; }
+html.no-flexgap .cm-item > :not([hidden]) ~ :not([hidden]) { margin-left: 12px; }
+html.no-flexgap .cm-head > * { margin-right: 10px; }
+html.no-flexgap .chat-form > :not([hidden]) ~ :not([hidden]) { margin-left: 8px; }
 html.no-flexgap .tabs a > :not([hidden]) ~ :not([hidden]) { margin-top: 3px; }
 html.no-flexgap .topbar > .top-actions:not([hidden]), html.no-flexgap .p-top > .together-btn:not([hidden]) { margin-left: auto; }
+html.no-flexgap .p-top > .chat-btn:not([hidden]) { margin-left: auto; }
+html.no-flexgap .p-top > .chat-btn:not([hidden]) + .together-btn { margin-left: 0; }
 /* An icon then words: the words are a text node, so the gap goes on the icon. */
 html.no-flexgap :-webkit-any(.btn, .pv-pill, .filter-chip, .chip, .back-link, .trailer-back, .detail-back, .fl-more, .link-btn) > svg:first-child { margin-right: 8px; }
 

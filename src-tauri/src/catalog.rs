@@ -470,7 +470,8 @@ pub fn from_meta(v: &Value) -> Tile {
         backdrop: image(v, "fanart", "w1280"),
         rating: v["MovieRatings"]["Tmdb"]["Value"].as_f64().filter(|r| *r > 0.0).map(|r| (r * 10.0).round() / 10.0),
         tmdb,
-        genres: v["Genres"].as_array().map(|g| g.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default(),
+        // TMDb has no Ecchi genre, only the keyword.
+        genres: crate::tiles::genres_and_tags(&v["Genres"], &v["Keywords"]),
         trailer: v["YoutubeTrailerId"].as_str().map(String::from).filter(|s| !s.is_empty()),
         ..Default::default()
     }

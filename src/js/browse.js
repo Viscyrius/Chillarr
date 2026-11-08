@@ -1,6 +1,6 @@
 // Home, Movies, Series, Anime and My downloads: a hero, genre chips and rows
 // of posters; hover previews; Top 10; and "Explore all" pages that keep loading.
-import { $, canDelete, el, getPref, icon, ICON, invoke, listen, metaBits, personKey, store, toast } from "./api.js";
+import { $, canDelete, el, genresAZ, getPref, icon, ICON, invoke, listen, metaBits, personKey, store, toast } from "./api.js";
 import { openDetail, playShowNow } from "./detail.js";
 import { canWatchNow, confirmRemove, isWatchNow, movieLike, play, removeWatchNow, watchNow } from "./player.js";
 import { completedActions, confirmRedownload, listable, markWatched, onMyList, removeCompleted, removeContinue, resumable, setMyList } from "./mylist.js";
@@ -213,7 +213,7 @@ function previewCard(t, door) {
       el("strong", { class: "pv-title", text: t.title }),
       meta.length ? el("div", { class: "pv-meta" }, meta) : null,
       t.overview ? el("p", { class: "pv-overview", text: t.overview }) : null,
-      t.genres?.length ? el("div", { class: "pv-genres" }, t.genres.slice(0, 3).map((g) => el("span", { text: g }))) : null,
+      t.genres?.length ? el("div", { class: "pv-genres" }, genresAZ(t.genres, 3).map((g) => el("span", { text: g }))) : null,
       actions));
   const poster = door ? el("div", { class: "pv-poster" }, el("img", { src: t.poster, alt: "", decoding: "async" }),
     t.progress != null && (t.jf_id || t.status) ? el("div", { class: "pv-progress" }, el("span", { style: `width:${Math.round(t.progress * 100)}%` })) : null) : null;
@@ -471,7 +471,7 @@ function heroCopy({ t, kicker }) {
   return el("div", { class: "hero-copy" },
     el("p", { class: "hero-kicker", text: kicker }),
     el("h1", { text: t.title }),
-    el("p", { class: "meta" }, metaBits(t), t.genres?.length ? [el("span", { class: "sep" }), el("span", { text: t.genres.slice(0, 2).join(", ") })] : null),
+    el("p", { class: "meta" }, metaBits(t), t.genres?.length ? [el("span", { class: "sep" }), el("span", { text: genresAZ(t.genres, 2).join(", ") })] : null),
     t.overview ? el("p", { class: "overview", text: t.overview }) : null,
     actions);
 }
@@ -1272,7 +1272,7 @@ const sigOf = (t) => [t.jf_id, t.status, t.poster, t.year, t.progress, (t.genres
 
 function searchTile(t) {
   const b = tile(t);
-  if (t.genres?.length) b.append(el("div", { class: "cap genres", text: t.genres.slice(0, 2).join(", ") }));
+  if (t.genres?.length) b.append(el("div", { class: "cap genres", text: genresAZ(t.genres, 2).join(", ") }));
   b._sig = sigOf(t);
   return b;
 }

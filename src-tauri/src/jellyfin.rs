@@ -313,7 +313,7 @@ impl Jf {
     /// Library items, minus the Discover shelf's placeholders (titles you don't have).
     pub async fn items(&self, query: &str) -> Result<Vec<Value>, JfError> {
         let uid = self.uid()?;
-        let v = self.get(&format!("/Items?userId={uid}&{query}&fields=Overview,ProviderIds,Genres,DateCreated,Path&enableImageTypes=Primary,Backdrop,Thumb")).await?;
+        let v = self.get(&format!("/Items?userId={uid}&{query}&fields=Overview,ProviderIds,Genres,Tags,DateCreated,Path&enableImageTypes=Primary,Backdrop,Thumb")).await?;
         Ok(v["Items"].as_array().cloned().unwrap_or_default().into_iter().filter(|i| !on_shelf(i)).collect())
     }
 

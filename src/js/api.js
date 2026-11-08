@@ -167,6 +167,11 @@ export function fmtTime(s) {
   return `${h ? h + ":" : ""}${mm}:${String(sec).padStart(2, "0")}`;
 }
 
+/** A title's first `n` genres (its main ones), shown A to Z. */
+export function genresAZ(list, n) {
+  return (list || []).slice(0, n).sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+}
+
 /** Year · rating · kind, for heroes and details. */
 export function metaBits(t) {
   const kinds = { movie: "Movie", series: "Series", episode: "Episode", anime: "Anime" };

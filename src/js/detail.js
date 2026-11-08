@@ -1,8 +1,9 @@
 // The detail panel: what a title is, Play / Resume / Download, My List, and episodes.
-import { $, ask, canDelete, closeDialog, el, getPref, icon, ICON, invoke, listen, metaBits, setPref, store, toast } from "./api.js";
+import { $, ask, canDelete, closeDialog, el, genresAZ, getPref, icon, ICON, invoke, listen, metaBits, setPref, store, toast } from "./api.js";
 import { canWatchNow, isWatchNow, movieLike, play, removeWatchNow, startEpisode, watchNow } from "./player.js";
 import { completedActions, confirmRedownload, isWatched, listable, loadWatched, onMyList, removeContinue, resumable, setMyList } from "./mylist.js";
 import { subtitlesControl } from "./subpick.js";
+import { commentsBox, loadComments } from "./comments.js";
 
 const dlg = $("#detail");
 const shut = () => {
@@ -817,6 +818,7 @@ export async function openDetail(t, opts = {}) {
   pickState = null;
   loadAbout(t);
   loadSimilar(t);
+  loadComments(t);
   const pic = t.backdrop || t.poster;
   $("#detail-hero").style.backgroundImage = pic ? `url("${pic.replace(/"/g, "%22")}")` : "none";
   $("#detail-title").textContent = t.title;
@@ -916,7 +918,7 @@ export async function openDetail(t, opts = {}) {
       if (seq === openSeq && id && !actions.querySelector(".trailer-btn")) actions.append(trailerButton({ ...t, trailer: id }));
     }).catch(() => {});
   }
-  if (t.genres?.length) $("#detail-meta").append(el("span", { class: "sep" }), el("span", { text: t.genres.slice(0, 3).join(", ") }));
+  if (t.genres?.length) $("#detail-meta").append(el("span", { class: "sep" }), el("span", { text: genresAZ(t.genres, 3).join(", ") }));
 }
 
 /* ---------- Similar to this ---------- */
@@ -924,7 +926,7 @@ export async function openDetail(t, opts = {}) {
 // panel has opened. A card opens its title in place; Back (Esc, B, the phone
 // remote, or the Back pill) returns to the title before, at the same card.
 const simBox = el("section", { class: "similar", id: "detail-similar", "aria-label": "Similar to this", hidden: true });
-$("#detail .detail-body").append(simBox);
+$("#detail .detail-body").append(simBox, commentsBox);
 /** Where the row sits in the panel's content, leaving out the slide a title swap gives the body. */
 function simTop() {
   const body = simBox.parentElement;

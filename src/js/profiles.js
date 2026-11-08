@@ -41,6 +41,15 @@ export async function startProfiles() {
   }
 }
 
+/** After setup signed in: nobody is watching yet (a profile has a PIN), so someone picks. */
+export async function askIfLocked() {
+  await load();
+  if (list.length && !list.some((p) => p.active) && root.hidden) {
+    root.dataset.startup = "1";
+    openPicker();
+  }
+}
+
 /** Jellyfin's web pages: the switcher, when the signed-in user is one of the
  *  profiles. Otherwise app.js's avatar for who's signed in stays. */
 export async function startProfilesWeb() {
