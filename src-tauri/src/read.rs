@@ -1567,12 +1567,15 @@ pub async fn similar(app: &AppHandle, anilist: i64) -> Result<Vec<Value>, String
         .unwrap_or_default())
 }
 
-pub async fn search(term: &str) -> Result<Vec<Value>, String> {
+/// `adult`: this profile turned 18+ on (Include or Only in a reading tab), so
+/// 18+ titles are found too. Otherwise they never are.
+pub async fn search(app: &AppHandle, term: &str, adult: bool) -> Result<Vec<Value>, String> {
     let term = term.trim();
     if term.is_empty() {
         return Ok(vec![]);
     }
-    let q = format!("query($s:String){{Page(perPage:30){{media(type:MANGA,isAdult:false,search:$s,sort:SEARCH_MATCH){{{MEDIA_FIELDS}}}}}}}");
+    let only_safe = if adult && adult_ok(app) { "" } else { "isAdult:false," };
+    let q = format!("query($s:String){{Page(perPage:30){{media(type:MANGA,{only_safe}search:$s,sort:SEARCH_MATCH){{{MEDIA_FIELDS}}}}}}}");
     let v = crate::media::anilist(&json!({ "query": q, "variables": { "s": term } })).await?;
     Ok(v["data"]["Page"]["media"].as_array().map(|a| a.iter().map(card).collect()).unwrap_or_default())
 }

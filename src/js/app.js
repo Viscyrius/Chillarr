@@ -1,6 +1,6 @@
 // Routing between tabs, the top bar, search, and the first-run tutorial.
 import { $, el, getPref, invoke, personKey, screenMode, setPerson, setPref, store, viewer, WEB, windowFull } from "./api.js";
-import { renderTab, renderSearch, renderExplore, stopBrowse, warmTabs } from "./browse.js";
+import { renderTab, renderSearch, renderExplore, stopBrowse, warmTabs, markRestyle } from "./browse.js";
 import { renderFilter } from "./filter.js";
 import { renderRead, renderReadSearch, stopRead } from "./read.js";
 import { renderSettings, stopSettings } from "./settings.js";
@@ -102,7 +102,7 @@ function route(redraw = false) {
 window.addEventListener("hashchange", () => route());
 
 // A new style while watching: the page on screen is drawn again in it, where you were.
-onStyle("watch", () => { if (current === "search") return null; current = ""; return route(true); });
+onStyle("watch", () => { if (current === "search") return null; current = ""; markRestyle(); return route(true); });
 
 // The top bar turns solid once the page scrolls past the hero.
 window.addEventListener("scroll", () => $("#topbar").classList.toggle("solid", window.scrollY > 40), { passive: true });

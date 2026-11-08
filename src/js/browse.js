@@ -1145,6 +1145,13 @@ async function draw(view, tab, rows, mode, seq) {
   startRefresh(view, tab, entry, seq);
 }
 
+// A style change redraws the same rows in the new look: from the saved rows at
+// once, then quietly brought up to date. It used to ask for every row again
+// first, which on a big catalogue took seconds, so the new style seemed not to
+// apply until another tab was opened.
+let restyling = false;
+export const markRestyle = () => { restyling = true; };
+
 export async function renderTab(view, tab, mode = null) {
   stopBrowse();
   const seq = renderSeq;
@@ -1165,7 +1172,9 @@ export async function renderTab(view, tab, mode = null) {
     return;
   }
   // A redraw was asked for because something changed: the saved rows are older than that.
-  const saved = mode === "redraw" ? null : savedRows(tab);
+  const restyle = restyling;
+  restyling = false;
+  const saved = mode === "redraw" && !restyle ? null : savedRows(tab);
   if (saved) {
     await draw(view, tab, saved, mode, seq);
     if (seq !== renderSeq) return;

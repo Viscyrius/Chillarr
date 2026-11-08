@@ -55,14 +55,17 @@ export async function askIfLocked() {
 /** Signed in to Jellyfin as a profile with a PIN: nothing shows until the PIN is
  *  typed on this device (the PC refuses everything else meanwhile, bridge.rs).
  *  Or pick another profile, which asks for that one's own. */
+let unlocking = null;
 export function unlockWeb(v) {
-  return new Promise((resolve) => {
+  if (unlocking) return unlocking;
+  unlocking = new Promise((resolve) => {
     const me = { name: v.name || "this profile", color: "var(--accent)" };
     root.dataset.startup = "1";
     const submit = async (pin) => {
       try {
         await invoke("web_unlock", { pin });
         closePicker();
+        unlocking = null;
         resolve();
       } catch (e) { pinPad(me, String(e), submit, back); }
     };
@@ -73,7 +76,15 @@ export function unlockWeb(v) {
     document.body.style.overflow = "hidden";
     setBehind(true);
   });
+  return unlocking;
 }
+
+// Locked mid-session (a restarted PC forgot nothing now, but a new sign-in
+// can still need it): the PIN pad, then the page draws again.
+window.addEventListener("chillarr:locked", () => {
+  if (!WEB) return;
+  unlockWeb({ name: (list.find((p) => p.active) || {}).name }).then(() => window.dispatchEvent(new Event("chillarr:refresh")));
+});
 
 export async function startProfilesWeb() {
   await load();

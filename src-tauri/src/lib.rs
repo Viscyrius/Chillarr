@@ -670,8 +670,8 @@ async fn read_rows(app: AppHandle) -> Result<serde_json::Value, String> {
 }
 
 #[tauri::command]
-async fn read_search(term: String) -> Result<Vec<serde_json::Value>, String> {
-    read::search(&term).await
+async fn read_search(app: AppHandle, term: String, adult: Option<bool>) -> Result<Vec<serde_json::Value>, String> {
+    read::search(&app, &term, adult.unwrap_or(false)).await
 }
 
 #[tauri::command]

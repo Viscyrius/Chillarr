@@ -917,12 +917,19 @@ async function downloadsPage(view, my) {
 }
 
 /** The top bar's search, in reading mode. */
+/** This profile turned 18+ on in any reading tab's filters (Include or Only). */
+function adultOn() {
+  return ["manga", "manhwa", "manhua", "novels"].some((k) => {
+    try { const f = JSON.parse(getPref(`read-filter-${k}`) || "{}"); return f.adult === "include" || f.adult === "only"; } catch (e) { return false; }
+  });
+}
+
 export async function renderReadSearch(view, term) {
   const my = ++seq;
   const body = el("div", {}, ...skel());
   view.replaceChildren(page(head(`"${term}"`), body));
   const [found, books] = (await Promise.all([
-    invoke("read_search", { term }).catch(() => []),
+    invoke("read_search", { term, adult: adultOn() }).catch(() => []),
     invoke("read_book_search", { term }).catch(() => []),
   ])).map((x) => x || []);
   if (my !== seq) return;
