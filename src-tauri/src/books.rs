@@ -136,6 +136,10 @@ pub struct Book {
     pub added: i64,
     /// Set when something went wrong (shown on the card).
     pub problem: Option<String>,
+    /// The profiles that got it (Jellyfin user ids): each profile's books are its
+    /// own. Empty: from before this was kept, the PC owner's.
+    #[serde(default)]
+    pub owners: Vec<String>,
 }
 
 fn books_file(app: &AppHandle) -> Result<PathBuf, String> {
@@ -152,8 +156,11 @@ fn save(app: &AppHandle, list: &[Book]) -> Result<(), String> {
     std::fs::write(&tmp, serde_json::to_string(list).map_err(|e| e.to_string())?).and_then(|_| std::fs::rename(&tmp, &p)).map_err(|e| format!("Couldn't save it: {e}"))
 }
 
+/// The watching profile's book: someone else's isn't in your list.
 pub fn find(app: &AppHandle, key: &str) -> Result<Book, String> {
-    all(app).into_iter().find(|b| b.key == key).ok_or_else(|| "That book isn't in your list.".into())
+    let uid = crate::media::active_user(app).ok_or("Sign in to Jellyfin first.")?;
+    let owner = crate::profiles::owner_id(app);
+    all(app).into_iter().find(|b| b.key == key && crate::read::owned_by(&b.owners, owner.as_deref(), &uid)).ok_or_else(|| "That book isn't in your list.".into())
 }
 
 pub fn path_of(app: &AppHandle, b: &Book) -> Option<PathBuf> {
@@ -217,6 +224,25 @@ fn enc(s: &str) -> String {
 
 /// Downloads the copy offered as `id` and adds the book to the list.
 pub async fn get(app: &AppHandle, meta: BookMeta, id: &str) -> Result<String, String> {
+    let me = crate::media::active_user(app).ok_or("Sign in to Jellyfin first.")?;
+    let pc_owner = crate::profiles::owner_id(app);
+    // Someone else already has this book: this profile gets it too, no second download.
+    let same = |b: &Book| match (&b.olid, &meta.olid) {
+        (Some(a), Some(c)) => a == c,
+        _ => crate::read_core::norm_title(&b.title) == crate::read_core::norm_title(&meta.title) && b.author == meta.author,
+    };
+    let mut list = all(app);
+    if let Some(b) = list.iter_mut().find(|b| same(b)) {
+        if crate::read::owned_by(&b.owners, pc_owner.as_deref(), &me) {
+            return Ok(format!("{} is already in your books.", b.title));
+        }
+        let mut owners = crate::read::owners_of(&b.owners, pc_owner.as_deref());
+        owners.push(me);
+        b.owners = owners;
+        let title = b.title.clone();
+        save(app, &list)?;
+        return Ok(format!("{title} is in your books now. It was already here."));
+    }
     let pick = offered(id).ok_or("That list of copies is old. Look for copies again.")?;
     if pick.size > MAX_BOOK {
         return Err("That copy is too big to be one book.".into());
@@ -251,6 +277,7 @@ pub async fn get(app: &AppHandle, meta: BookMeta, id: &str) -> Result<String, St
         file: None,
         added: chrono::Utc::now().timestamp(),
         problem: None,
+        owners: vec![me],
     });
     save(app, &list)?;
     let msg = format!("Getting {}.", meta.title);
@@ -332,8 +359,19 @@ pub async fn tick(app: &AppHandle) {
 }
 
 pub async fn remove(app: &AppHandle, key: &str) -> Result<String, String> {
+    let b = find(app, key)?;
     let mut list = all(app);
-    let b = list.iter().find(|b| b.key == key).cloned().ok_or("That book isn't in your list.")?;
+    // Others have it too: it only leaves this profile's books.
+    let me = crate::media::active_user(app).unwrap_or_default();
+    let mut owners = crate::read::owners_of(&b.owners, crate::profiles::owner_id(app).as_deref());
+    owners.retain(|o| o != &me);
+    if !owners.is_empty() {
+        if let Some(x) = list.iter_mut().find(|x| x.key == key) {
+            x.owners = owners;
+        }
+        save(app, &list)?;
+        return Ok(format!("Took {} off your books. Others still have it, so the file stays.", b.title));
+    }
     if let (Some(h), Some(q)) = (&b.hash, crate::waiting::qbit(app)) {
         let _ = q.delete(&[h.clone()], true).await;
     }

@@ -5,7 +5,7 @@ import { renderFilter } from "./filter.js";
 import { renderRead, renderReadSearch, stopRead } from "./read.js";
 import { renderSettings, stopSettings } from "./settings.js";
 import { openSetup } from "./setup.js";
-import { knowPerson, startProfiles, startProfilesWeb } from "./profiles.js";
+import { knowPerson, startProfiles, startProfilesWeb, unlockWeb } from "./profiles.js";
 import * as place from "./place.js";
 import "./nav.js";
 import { recentSearches } from "./recent.js";
@@ -183,7 +183,7 @@ document.addEventListener("contextmenu", (e) => {
 /** Start in Jellyfin's web pages: no profiles, setup or app health, just the signed-in user. */
 async function startWeb() {
   document.body.classList.add("web");
-  try { Object.assign(viewer, await invoke("web_viewer")); setPerson(viewer.user_id); if (viewer.theme) applyTheme(viewer.theme); }
+  try { Object.assign(viewer, await invoke("web_viewer")); setPerson(viewer.user_id); if (viewer.theme) applyTheme(viewer.theme); if (viewer.locked) await unlockWeb(viewer); }
   catch (e) {
     view.replaceChildren(el("div", { class: "web-down" }, el("h1", { text: "Chillarr isn't answering" }), el("p", { text: String(e) }),
       el("button", { class: "btn primary", onclick: () => location.reload() }, "Try again")));
