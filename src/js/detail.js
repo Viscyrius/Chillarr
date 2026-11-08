@@ -1,6 +1,6 @@
 // The detail panel: what a title is, Play / Resume / Download, My List, and episodes.
 import { $, ask, canDelete, closeDialog, el, getPref, icon, ICON, invoke, listen, metaBits, setPref, store, toast } from "./api.js";
-import { canWatchNow, isWatchNow, movieLike, play, removeWatchNow, watchNow } from "./player.js";
+import { canWatchNow, isWatchNow, movieLike, play, removeWatchNow, startEpisode, watchNow } from "./player.js";
 import { completedActions, confirmRedownload, isWatched, listable, loadWatched, onMyList, removeContinue, resumable, setMyList } from "./mylist.js";
 import { subtitlesControl } from "./subpick.js";
 
@@ -124,8 +124,7 @@ const playable = () => show.data.episodes.filter((r) => r.tile).map((r) => r.til
 export async function playShowNow(t) {
   const data = await invoke("media_show_episodes", { tile: t }).catch(() => null);
   if (!data?.episodes.length) return false;
-  const here = (r) => !!data.spot && r.season === data.spot.season && r.episode === data.spot.episode;
-  const target = data.episodes.find(here) || data.episodes.find((r) => r.season > 0) || data.episodes[0];
+  const target = startEpisode(data.episodes, data.spot) || data.episodes[0];
   if (!target?.tile) return false;
   play(target.tile, data.episodes.filter((r) => r.tile).map((r) => r.tile));
   return true;
@@ -229,7 +228,7 @@ function drawSeason(season, toSpot = false) {
  */
 function drawMain() {
   const slot = show.main;
-  const target = spotRow() || show.data.episodes.find((r) => r.season > 0) || show.data.episodes[0];
+  const target = startEpisode(show.data.episodes, show.data.spot) || show.data.episodes[0];
   slot.replaceChildren();
   if (!target) return;
   const wn = !!show.data.tvdb;

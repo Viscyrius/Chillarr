@@ -2079,12 +2079,31 @@ function dropEarly(keep = null) {
   });
 }
 
-/** Watch now on a show: the episode you're at, else its first. One already downloaded just plays. */
+/** Which episode a show's Play starts. Where you're at; else the first unwatched
+ *  one you already have, or that's already on its way; else the one after the
+ *  last you watched; only then the very first. Picking the first by default
+ *  fetched S1 E1 of Edgerunners twice (2026-11-07) while season 1 was stopped
+ *  and season 2 was the one downloading. */
+export function startEpisode(rows, spot) {
+  const at = spot && rows.find((x) => x.season === spot.season && x.episode === spot.episode);
+  if (at) return at;
+  const real = rows.filter((x) => x.season > 0 && x.aired);
+  const open = real.filter((x) => !x.played);
+  const have = open.find((x) => x.tile);
+  if (have) return have;
+  const coming = open.find((x) => x.watch_key || x.state === "downloading" || x.state === "half");
+  if (coming) return coming;
+  let last = -1;
+  real.forEach((x, i) => { if (x.played) last = i; });
+  return real.slice(last + 1).find((x) => !x.played) || real[0] || null;
+}
+
+/** Watch now on a show: see startEpisode. One already downloaded just plays. */
 export function watchNowShow(t, opts = {}) {
   return watchNow(t, { ...opts, resolve: async () => {
     const d = await invoke("media_show_episodes", { tile: t });
     const rows = d.episodes || [];
-    const r = (d.spot && rows.find((x) => x.season === d.spot.season && x.episode === d.spot.episode)) || rows.find((x) => x.season > 0 && x.aired);
+    const r = startEpisode(rows, d.spot);
     if (!r) return null;
     if (r.tile) return { play: r.tile, playlist: rows.filter((x) => x.tile).map((x) => x.tile) };
     const show = d.show || t;
