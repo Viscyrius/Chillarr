@@ -218,6 +218,9 @@ pub struct Candidate {
     pub quality: f64,
     /// Median sampled page width, shown as "1600 px".
     pub width: u32,
+    /// Median bytes per pixel (WebP counted as JPEG would be): breaks near ties.
+    #[serde(default)]
+    pub density: f64,
 }
 
 /// Every installed source's copy of a series named any of `names`, best first.
@@ -245,10 +248,55 @@ pub async fn candidates(names: &[String]) -> Result<Vec<Candidate>, String> {
 
 /// Best first: among copies with (nearly) every chapter, the sharpest; a copy
 /// missing many chapters goes after them, however sharp.
+/// Qualities within 10% count as the same look; then the less squeezed wins.
 pub fn rank(c: &mut [Candidate]) {
+    use std::cmp::Ordering::Equal;
+    // "Has it all" is about how far it goes, not how many rows: extras such
+    // as 10.5 made MangaFire 225 to everyone else's 201 (same newest, 200).
+    let newest = c.iter().filter_map(|x| x.latest).fold(0.0, f64::max);
     let most = c.iter().map(|x| x.chapters).max().unwrap_or(0) as f64;
-    let full = |x: &Candidate| most > 0.0 && x.chapters as f64 >= most * 0.9;
-    c.sort_by(|a, b| full(b).cmp(&full(a)).then(b.quality.partial_cmp(&a.quality).unwrap_or(std::cmp::Ordering::Equal)).then(b.chapters.cmp(&a.chapters)));
+    let full = |x: &Candidate| match x.latest {
+        Some(l) if newest > 0.0 => l >= newest * 0.97 && x.chapters as f64 >= most * 0.6,
+        _ => most > 0.0 && x.chapters as f64 >= most * 0.9,
+    };
+    let band = |q: f64| (q.max(1.0).ln() / 1.1f64.ln()).floor() as i64;
+    c.sort_by(|a, b| {
+        full(b)
+            .cmp(&full(a))
+            .then(band(b.quality).cmp(&band(a.quality)))
+            .then(b.density.partial_cmp(&a.density).unwrap_or(Equal))
+            .then(b.chapters.cmp(&a.chapters))
+    });
+}
+
+/// One copy of each chapter. Sources such as MangaFire list a chapter once
+/// per group that translated it (449 rows for Solo Leveling's 201, measured
+/// 2026-11-08); following all of them downloads everything twice. Kept: a
+/// downloaded copy, else the series' most common group's, else the newest.
+/// Chapters with no number are all kept.
+pub fn one_per_chapter(chs: Vec<Chapter>) -> Vec<Chapter> {
+    let mut counts: std::collections::HashMap<Option<String>, usize> = Default::default();
+    for c in &chs {
+        *counts.entry(c.scanlator.clone()).or_default() += 1;
+    }
+    let main = counts.into_iter().max_by_key(|(_, n)| *n).map(|(s, _)| s).flatten();
+    let mut out: Vec<Chapter> = Vec::new();
+    for c in chs {
+        let Some(n) = c.number else {
+            out.push(c);
+            continue;
+        };
+        match out.iter_mut().find(|o| o.number == Some(n)) {
+            None => out.push(c),
+            Some(o) => {
+                let score = |x: &Chapter| (x.downloaded, x.scanlator == main, x.uploaded.clone());
+                if score(&c) > score(o) {
+                    *o = c;
+                }
+            }
+        }
+    }
+    out
 }
 
 async fn one_source(source_id: String, source: String, names: Vec<String>) -> Option<Candidate> {
@@ -270,7 +318,10 @@ async fn one_source(source_id: String, source: String, names: Vec<String>) -> Op
             .max_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
         let Some((_, manga_id, title)) = hit else { continue };
         let got = gql("mutation($id:Int!){fetchMangaAndChapters(input:{id:$id,fetchManga:true,fetchChapters:true}){chapters{id chapterNumber}}}", json!({ "id": manga_id })).await.ok()?;
-        let chs: Vec<(i64, f64)> = got["fetchMangaAndChapters"]["chapters"].as_array()?.iter().filter_map(|c| Some((c["id"].as_i64()?, c["chapterNumber"].as_f64()?))).collect();
+        let mut chs: Vec<(i64, f64)> = got["fetchMangaAndChapters"]["chapters"].as_array()?.iter().filter_map(|c| Some((c["id"].as_i64()?, c["chapterNumber"].as_f64()?))).collect();
+        // One per chapter number, for the count: duplicates aren't more chapters.
+        chs.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+        chs.dedup_by(|a, b| a.1 == b.1);
         if chs.is_empty() {
             return None;
         }
@@ -278,7 +329,10 @@ async fn one_source(source_id: String, source: String, names: Vec<String>) -> Op
         let samples = sample_pages(&chs).await;
         let mut widths: Vec<u32> = samples.iter().map(|s| s.w).collect();
         widths.sort();
-        return Some(Candidate { source_id, source, manga_id, title, chapters: chs.len(), latest, quality: read_core::quality(&samples), width: widths.get(widths.len() / 2).copied().unwrap_or(0) });
+        let mut dens: Vec<f64> = samples.iter().map(|s| s.bytes as f64 / (s.w as f64 * s.h as f64).max(1.0) * if s.webp { 1.6 } else { 1.0 }).collect();
+        dens.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let density = dens.get(dens.len() / 2).copied().unwrap_or(0.0);
+        return Some(Candidate { source_id, source, manga_id, title, chapters: chs.len(), latest, quality: read_core::quality(&samples), width: widths.get(widths.len() / 2).copied().unwrap_or(0), density });
     }
     None
 }
@@ -361,7 +415,7 @@ pub async fn chapters(manga_id: i64) -> Result<Vec<Chapter>, String> {
         })
         .unwrap_or_default();
     out.sort_by(|a, b| a.number.unwrap_or(f64::MAX).partial_cmp(&b.number.unwrap_or(f64::MAX)).unwrap_or(std::cmp::Ordering::Equal));
-    Ok(out)
+    Ok(one_per_chapter(out))
 }
 
 /// What's downloading right now: (manga id, chapter id, 0..1).
@@ -405,10 +459,26 @@ mod tests {
 
     #[test]
     fn full_copies_rank_before_sharp_partial_ones() {
-        let c = |s: &str, ch: usize, q: f64| Candidate { source_id: s.into(), source: s.into(), manga_id: 1, title: "x".into(), chapters: ch, latest: None, quality: q, width: 0 };
-        let mut v = vec![c("fire", 200, 450.0), c("asura", 71, 800.0), c("weeb", 201, 720.0)];
+        let c = |s: &str, ch: usize, q: f64, d: f64| Candidate { source_id: s.into(), source: s.into(), manga_id: 1, title: "x".into(), chapters: ch, latest: None, quality: q, width: 0, density: d };
+        let mut v = vec![c("fire", 200, 450.0, 0.03), c("asura", 71, 800.0, 0.2), c("weeb", 201, 720.0, 0.22)];
         rank(&mut v);
         assert_eq!(v.iter().map(|x| x.source.as_str()).collect::<Vec<_>>(), vec!["weeb", "fire", "asura"]);
+        // 760 vs 720 is the same look: the less squeezed copy wins.
+        let mut v = vec![c("fire", 201, 760.0, 0.09), c("weeb", 201, 720.0, 0.22)];
+        rank(&mut v);
+        assert_eq!(v[0].source, "weeb");
+        // Measured 2026-11-08: extra half chapters don't make the others "partial".
+        let l = |mut x: Candidate, n: f64| { x.latest = Some(n); x };
+        let mut v = vec![l(c("fire", 225, 765.0, 0.09), 200.5), l(c("dex", 25, 720.0, 0.3), 46.0), l(c("weeb", 201, 720.0, 0.22), 200.0)];
+        rank(&mut v);
+        assert_eq!(v.iter().map(|x| x.source.as_str()).collect::<Vec<_>>(), vec!["weeb", "fire", "dex"]);
+    }
+
+    #[test]
+    fn duplicate_chapters_collapse_to_one() {
+        let ch = |id: i64, n: Option<f64>, s: &str, dl: bool| Chapter { id, name: String::new(), number: n, scanlator: Some(s.into()), downloaded: dl, pages: 1, uploaded: None };
+        let v = one_per_chapter(vec![ch(1, Some(1.0), "A", false), ch(2, Some(1.0), "B", false), ch(3, Some(2.0), "A", false), ch(4, Some(2.0), "B", true), ch(7, Some(3.0), "A", false), ch(5, None, "A", false), ch(6, None, "B", false)]);
+        assert_eq!(v.iter().map(|c| c.id).collect::<Vec<_>>(), vec![1, 4, 7, 5, 6], "main group A, but a downloaded copy is kept");
     }
 
     /// `CHILLARR_SUWA_BASE=http://127.0.0.1:4568 cargo test --lib live_candidates -- --ignored --nocapture`
