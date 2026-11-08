@@ -5,6 +5,7 @@ import { startProfiles } from "./profiles.js";
 import { installWithMeter, openSetup } from "./setup.js";
 import { applyTheme, currentTheme, saveTheme, themePicker } from "./theme.js";
 import { setSubScale, subScale } from "./subrender.js";
+import { bytesText, deleteBookFile, deleteChapters } from "./read.js";
 
 const SECTIONS = [
   ["system", "Status"],
@@ -350,13 +351,64 @@ function readingBox() {
   }).catch(() => {});
   drawWhen();
   days.addEventListener("change", () => { const n = +days.value || 0; whenRow.hidden = !n; save(n); });
+  const inside = el("div", { class: "rs-inside" });
+  const room = el("div", { class: "rs-room" });
+  drawReadingRoom(inside, room);
   return el("div", {}, subhead("Reading"),
     el("div", { class: "box" },
       el("div", { class: "opt" }, el("span", {}, el("b", { text: "Reading folder" }), el("small", { text: "Manga, manhwa, manhua and books go here." }), path), change),
+      inside,
       el("div", { class: "opt" }, el("span", {}, el("b", { text: "Delete chapters after reading" }),
         el("small", { text: "Frees the space after reading, like films after watching. A chapter someone else hasn't reached yet stays. Deleted chapters can be downloaded again." })), days),
-      whenRow));
+      whenRow),
+    room);
 }
+
+/* What's inside the reading folder, and what in it takes the most room (#39). */
+const READ_FOLDER_NOTE = {
+  Comics: "Manga, manhwa and manhua chapters, a folder per site and series.",
+  Books: "Books and light novels.",
+  Sharpened: "Pages your graphics card sharpened.",
+};
+async function drawReadingRoom(inside, room) {
+  let o;
+  try { o = await invoke("read_storage"); } catch (e) { return; }
+  if (!o || !o.folders.length) return;
+  const all = o.folders.find((f) => f.name === "Reading");
+  inside.replaceChildren(...o.folders.filter((f) => f.name !== "Reading").map((f) => el("div", { class: "opt rs-folder" },
+    el("span", {}, el("b", { text: `${f.name} · ${bytesText(f.bytes)}` }), el("small", { text: READ_FOLDER_NOTE[f.name] || "" }), el("p", { class: "path selectable", text: f.path })),
+    WEB || !f.exists ? null : el("button", { class: "btn small ghost", onclick: () => invoke("open_folder", { path: f.path }).catch((e) => toast(String(e), true)) }, icon(ICON.folder), "Open folder"))),
+    el("p", { class: "note rs-total", text: `Reading takes ${bytesText(all ? all.bytes : 0)} in all: ${o.chapters} chapter${o.chapters === 1 ? "" : "s"}, ${o.books.length} book${o.books.length === 1 ? "" : "s"}, ${bytesText(o.sharp_bytes)} of sharpened copies.${o.total ? ` ${size(o.free)} free on this drive.` : ""}` }));
+  const items = [
+    ...o.series.map((x) => ({ kind: "series", x, bytes: x.bytes })),
+    ...o.books.map((x) => ({ kind: "book", x, bytes: x.bytes })),
+  ].sort((a, b) => b.bytes - a.bytes);
+  if (!items.length) { room.replaceChildren(); return; }
+  const biggest = items[0].bytes || 1;
+  const redraw = () => { const r = $("#view"); if (r) renderSettings(r, "library"); };
+  const list = el("ul", { class: "st-list" }, items.map(({ kind, x, bytes }) => {
+    const del = el("button", { class: "btn small ghost danger" }, "Delete");
+    del.addEventListener("click", async () => {
+      del.disabled = true;
+      const done = kind === "series" ? await deleteChapters(x.key, null) : await deleteBookFile(x, x.others || []);
+      if (done) redraw(); else del.disabled = false;
+    });
+    const unread = kind === "series" ? x.chapters - x.read : 0;
+    const what = kind === "series"
+      ? `${x.chapters} chapter${x.chapters === 1 ? "" : "s"} · ${x.read} read, ${unread} unread`
+      : x.author || "Book";
+    const whose = x.others && x.others.length ? `${x.mine ? "Also read by" : "Read by"} ${x.others.join(", ")}` : null;
+    return el("li", {},
+      el("div", { class: "st-thumb", style: x.cover ? `background-image:url("${String(x.cover).replace(/"/g, "%22")}")` : "" }),
+      el("div", { class: "st-info" },
+        el("b", { text: x.title }),
+        el("small", { text: [what, x.sharp_bytes ? `${bytesText(x.sharp_bytes)} sharpened` : null, whose].filter(Boolean).join(" · ") }),
+        el("div", { class: "st-bar thin" }, el("span", { style: `width:${Math.max(2, Math.round((bytes / biggest) * 100))}%` }))),
+      el("span", { class: "st-size", text: bytesText(bytes) }), canDel() ? del : el("span"));
+  }));
+  room.replaceChildren(subhead("What reading takes"), list);
+}
+const canDel = () => viewer.admin || viewer.can_delete;
 
 function storageParts(o) {
   let filter = "all";
