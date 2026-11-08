@@ -149,7 +149,21 @@ pub fn launch_args(app: &AppHandle, java: &Path) -> Result<Vec<String>, String> 
     let flare = app.state::<crate::fix::Core>().config(AppId::FlareSolverr).map(|c| c.base_url).unwrap_or_else(|| "http://localhost:8191".into());
     let password = new_password();
     *PASSWORD.lock().unwrap() = Some(password.clone());
-    Ok(args(&jar, &data, &comics, &flare, &password))
+    // Everything it downloads goes through Chillarr's relay, so Limit downloads covers it.
+    let relay = crate::manga_net::ensure()?;
+    let mut a = args(&jar, &data, &comics, &flare, &password);
+    let at = a.len() - 2;
+    for (k, v) in [
+        ("socksProxyEnabled", "true".to_string()),
+        ("socksProxyVersion", "5".into()),
+        ("socksProxyHost", "127.0.0.1".into()),
+        ("socksProxyPort", relay.0.to_string()),
+        ("socksProxyUsername", relay.1),
+        ("socksProxyPassword", relay.2),
+    ] {
+        a.insert(at, format!("-Dsuwayomi.tachidesk.config.server.{k}={v}"));
+    }
+    Ok(a)
 }
 
 fn args(jar: &Path, data: &Path, comics: &Path, flare: &str, password: &str) -> Vec<String> {
@@ -287,11 +301,27 @@ pub struct Candidate {
 
 /// Every installed source's copy of a series named any of `names`, best first.
 /// Each source is asked at once; a slow or broken one is left out after 45 s.
-pub async fn candidates(names: &[String]) -> Result<Vec<Candidate>, String> {
+/// The languages the installed sources read in, with how many sources each.
+pub async fn languages() -> Result<Vec<(String, usize)>, String> {
+    let v = gql("{sources{nodes{lang}}}", json!({})).await?;
+    let mut count: std::collections::BTreeMap<String, usize> = Default::default();
+    for s in v["sources"]["nodes"].as_array().into_iter().flatten() {
+        if let Some(l) = s["lang"].as_str().filter(|l| !matches!(*l, "all" | "localsourcelang" | "other")) {
+            *count.entry(l.to_string()).or_default() += 1;
+        }
+    }
+    let mut out: Vec<(String, usize)> = count.into_iter().collect();
+    out.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    Ok(out)
+}
+
+pub async fn candidates(names: &[String], lang: &str) -> Result<Vec<Candidate>, String> {
     let srcs = gql("{sources{nodes{id displayName lang}}}", json!({})).await?;
+    // Only sources in that language: a mixed "all" source lists every
+    // language's copy of each chapter (MangaDex ALL had 556 rows for 468).
     let srcs: Vec<(String, String)> = srcs["sources"]["nodes"]
         .as_array()
-        .map(|a| a.iter().filter(|s| matches!(s["lang"].as_str(), Some("en") | Some("all"))).filter_map(|s| Some((s["id"].as_str()?.to_string(), s["displayName"].as_str()?.to_string()))).collect())
+        .map(|a| a.iter().filter(|s| s["lang"].as_str() == Some(lang)).filter_map(|s| Some((s["id"].as_str()?.to_string(), s["displayName"].as_str()?.to_string()))).collect())
         .unwrap_or_default();
     let mut set = tokio::task::JoinSet::new();
     for (id, name) in srcs {
@@ -310,6 +340,38 @@ pub async fn candidates(names: &[String]) -> Result<Vec<Candidate>, String> {
 
 /// Best first: among copies with (nearly) every chapter, the sharpest; a copy
 /// missing many chapters goes after them, however sharp.
+/// What Best takes from the ranked copies: (main, fill). The main copy is the
+/// sharpest that goes at least a third of the way; when another copy is
+/// further ahead, it fills in every chapter the main one lacks. Webtoons.com,
+/// for one, has the sharpest pages but only its free chapters, while other
+/// sites are far ahead (user, 2026-11-08). No fill when the furthest copy is
+/// as sharp anyway, so a series isn't mixed for nothing.
+pub fn best_pair(c: &[Candidate]) -> Option<(usize, Option<usize>)> {
+    if c.is_empty() {
+        return None;
+    }
+    let newest = c.iter().filter_map(|x| x.latest).fold(0.0, f64::max);
+    if newest <= 0.0 {
+        return Some((0, None));
+    }
+    let band = |q: f64| (q.max(1.0).ln() / 1.1f64.ln()).floor() as i64;
+    let far = (0..c.len())
+        .filter(|&i| c[i].latest.is_some())
+        .max_by(|&a, &b| c[a].latest.partial_cmp(&c[b].latest).unwrap_or(std::cmp::Ordering::Equal).then(band(c[a].quality).cmp(&band(c[b].quality))).then(b.cmp(&a)))?;
+    let sharp = (0..c.len())
+        .filter(|&i| c[i].latest.is_some_and(|l| l >= newest / 3.0))
+        .max_by(|&a, &b| band(c[a].quality).cmp(&band(c[b].quality)).then(c[a].density.partial_cmp(&c[b].density).unwrap_or(std::cmp::Ordering::Equal)).then(b.cmp(&a)))
+        .unwrap_or(far);
+    if sharp == far || band(c[sharp].quality) <= band(c[far].quality) {
+        return Some((far, None));
+    }
+    // The sharp copy has (nearly) everything: nothing to fill.
+    if c[sharp].latest.is_some_and(|l| l >= newest * 0.97) {
+        return Some((sharp, None));
+    }
+    Some((sharp, Some(far)))
+}
+
 /// Qualities within 10% count as the same look; then the less squeezed wins.
 pub fn rank(c: &mut [Candidate]) {
     use std::cmp::Ordering::Equal;
@@ -418,16 +480,33 @@ async fn sample_pages(chs: &[(i64, f64)]) -> Vec<Sample> {
     out
 }
 
-/// Follows a series: in the library (so new chapters come by themselves) and
-/// every chapter from `from` on queued. Returns how many were queued.
-pub async fn follow(manga_id: i64, from: Option<f64>) -> Result<usize, String> {
+/// Follows a series: in the library (so its chapter list stays current) and
+/// the chosen chapters queued: `ids` when picked by hand, else every chapter
+/// from `from` on. Returns how many were queued.
+pub async fn follow(manga_id: i64, from: Option<f64>, picked: Option<&[i64]>) -> Result<usize, String> {
     gql("mutation($id:Int!){updateManga(input:{id:$id,patch:{inLibrary:true}}){manga{inLibrary}}}", json!({ "id": manga_id })).await?;
     let chs = chapters(manga_id).await?;
-    let ids: Vec<i64> = chs.iter().filter(|c| !c.downloaded && from.is_none_or(|f| c.number.unwrap_or(f64::MAX) >= f)).map(|c| c.id).collect();
+    let ids: Vec<i64> = chs
+        .iter()
+        .filter(|c| !c.downloaded)
+        .filter(|c| match picked {
+            Some(p) => p.contains(&c.id),
+            None => from.is_none_or(|f| c.number.unwrap_or(f64::MAX) >= f),
+        })
+        .map(|c| c.id)
+        .collect();
     if !ids.is_empty() {
         enqueue(&ids).await?;
     }
     Ok(ids.len())
+}
+
+/// Drops a series' queued chapters (they stay listed and can be got again).
+pub async fn dequeue(ids: &[i64]) -> Result<(), String> {
+    if ids.is_empty() {
+        return Ok(());
+    }
+    gql("mutation($ids:[Int!]!){dequeueChapterDownloads(input:{ids:$ids}){clientMutationId}}", json!({ "ids": ids })).await.map(|_| ())
 }
 
 /// Stops following: out of the library, its queued chapters dropped.
@@ -547,6 +626,24 @@ mod tests {
     }
 
     #[test]
+    fn best_mixes_sharp_with_far_ahead() {
+        let c = |s: &str, latest: f64, q: f64| Candidate { source_id: s.into(), source: s.into(), manga_id: 1, title: "x".into(), chapters: latest as usize, latest: Some(latest), quality: q, width: q as u32, density: 0.2 };
+        // Webtoons: sharp, but only the free chapters. Weeb Central: far ahead.
+        let v = vec![c("weeb", 200.0, 720.0), c("webtoons", 120.0, 1600.0), c("asura", 200.0, 720.0)];
+        assert_eq!(best_pair(&v), Some((1, Some(0))));
+        // The far one is as sharp: just it.
+        let v = vec![c("weeb", 200.0, 1600.0), c("webtoons", 120.0, 1600.0)];
+        assert_eq!(best_pair(&v), Some((0, None)));
+        // The sharp one is a teaser (4 of 600): not worth mixing.
+        let v = vec![c("kun", 600.0, 1000.0), c("webtoons", 4.0, 1600.0)];
+        assert_eq!(best_pair(&v), Some((0, None)));
+        // The sharp one has it all.
+        let v = vec![c("fire", 897.0, 1682.0), c("kun", 897.0, 730.0)];
+        assert_eq!(best_pair(&v), Some((0, None)));
+        assert_eq!(best_pair(&[]), None);
+    }
+
+    #[test]
     fn duplicate_chapters_collapse_to_one() {
         let ch = |id: i64, n: Option<f64>, s: &str, dl: bool| Chapter { id, name: String::new(), number: n, scanlator: Some(s.into()), downloaded: dl, pages: 1, uploaded: None };
         let v = one_per_chapter(vec![ch(1, Some(1.0), "A", false), ch(2, Some(1.0), "B", false), ch(3, Some(2.0), "A", false), ch(4, Some(2.0), "B", true), ch(7, Some(3.0), "A", false), ch(5, None, "A", false), ch(6, None, "B", false)]);
@@ -563,7 +660,7 @@ mod tests {
         }
         let t = std::time::Instant::now();
         let names: Vec<String> = std::env::var("CHILLARR_TITLES").map(|t| t.split('|').map(String::from).collect()).unwrap_or_else(|_| vec!["Solo Leveling".to_string(), "Na Honjaman Level Up".to_string(), "Only I Level Up".to_string()]);
-        let c = candidates(&names).await.unwrap();
+        let c = candidates(&names, &std::env::var("CHILLARR_LANG").unwrap_or_else(|_| "en".into())).await.unwrap();
         for x in &c {
             println!("{:24} {:30} ch={:4} latest={:?} width={} q={:.0}", x.source, x.title, x.chapters, x.latest, x.width, x.quality);
         }
