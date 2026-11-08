@@ -204,6 +204,10 @@ pub struct Followed {
     /// The chapter another site was ahead to when that was last said.
     #[serde(default)]
     pub ahead_told: Option<f64>,
+    /// The profiles (Jellyfin user ids) that follow it: each profile's reading is
+    /// its own. Empty: from before this was kept, the PC owner's.
+    #[serde(default)]
+    pub owners: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -311,8 +315,29 @@ fn known(app: &AppHandle, key: &str) -> Result<(), String> {
     if key.starts_with('b') { crate::books::find(app, key).map(|_| ()) } else { find(app, key).map(|_| ()) }
 }
 
+/// Who has something, with the old (empty) lists read as the PC owner's.
+pub fn owners_of(list: &[String], pc_owner: Option<&str>) -> Vec<String> {
+    if list.is_empty() { pc_owner.map(|o| vec![o.to_string()]).unwrap_or_default() } else { list.to_vec() }
+}
+
+pub fn owned_by(list: &[String], pc_owner: Option<&str>, uid: &str) -> bool {
+    owners_of(list, pc_owner).iter().any(|o| o == uid)
+}
+
+fn mine(app: &AppHandle, f: &Followed, uid: &str) -> bool {
+    owned_by(&f.owners, crate::profiles::owner_id(app).as_deref(), uid)
+}
+
+/// The watching profile's series only: someone else's isn't in your list.
 fn find(app: &AppHandle, key: &str) -> Result<Followed, String> {
-    followed(app).into_iter().find(|f| f.key == key).ok_or_else(|| "That series isn't in your reading list.".into())
+    let uid = uid(app)?;
+    followed(app).into_iter().find(|f| f.key == key && mine(app, f, &uid)).ok_or_else(|| "That series isn't in your reading list.".into())
+}
+
+/// What the watching profile follows.
+fn followed_mine(app: &AppHandle) -> Vec<Followed> {
+    let Ok(uid) = uid(app) else { return vec![] };
+    followed(app).into_iter().filter(|f| mine(app, f, &uid)).collect()
 }
 
 // ---------- where each profile is ----------
@@ -643,8 +668,10 @@ pub async fn books(app: &AppHandle) -> Result<Vec<BookShelf>, String> {
         Some(q) => q.list().await.unwrap_or_default(),
         None => vec![],
     };
+    let pc_owner = crate::profiles::owner_id(app);
     let mut out: Vec<BookShelf> = crate::books::all(app)
         .into_iter()
+        .filter(|b| owned_by(&b.owners, pc_owner.as_deref(), &uid))
         .map(|b| {
             let spot = s.get(&b.key);
             let progress = b.hash.as_ref().and_then(|h| torrents.iter().find(|t| t["hash"].as_str() == Some(h.as_str()))).and_then(|t| t["progress"].as_f64());
@@ -692,7 +719,7 @@ pub async fn library(app: &AppHandle) -> Result<Vec<Shelf>, String> {
     let uid = uid(app)?;
     let s = spots(app, &uid);
     let mut out = Vec::new();
-    for f in followed(app) {
+    for f in followed_mine(app) {
         let chs = chapter_list(&f).await.unwrap_or_default();
         out.push(shelf_of(&f, &chs, s.get(&f.key)));
     }
@@ -991,6 +1018,22 @@ pub async fn follow(app: &AppHandle, meta: Meta, pick: crate::suwayomi::Candidat
     }
     ensure_root(app).await?;
     crate::suwayomi::ready(app).await?;
+    let me = uid(app)?;
+    let pc_owner = crate::profiles::owner_id(app);
+    // Someone else already follows it: this profile joins. Nothing downloads
+    // twice and their copy stays as it is; picked chapters still come.
+    let others = followed(app).into_iter().find(|f| meta.anilist.is_some() && f.anilist == meta.anilist && !owned_by(&f.owners, pc_owner.as_deref(), &me));
+    if let Some(f) = others {
+        let mut owners = owners_of(&f.owners, pc_owner.as_deref());
+        owners.push(me.clone());
+        update_followed(app, &f.key, |x| x.owners = owners);
+        if let Some(ids) = sel.ids.as_ref().filter(|ids| !ids.is_empty() && f.has_manga(pick.manga_id)) {
+            let _ = crate::suwayomi::enqueue(ids).await;
+        }
+        let msg = format!("{} is on your list now. Its chapters are already here.", f.title);
+        crate::log::log(app, crate::model::Level::Ok, &msg);
+        return Ok(msg);
+    }
     // Where its chapters land is Suwayomi's say, never the page's: the folder
     // names come from the downloader itself and are checked to be plain names.
     let (source, source_title) = crate::suwayomi::folder_names(pick.manga_id).await?;
@@ -1037,6 +1080,11 @@ pub async fn follow(app: &AppHandle, meta: Meta, pick: crate::suwayomi::Candidat
         }
     }
     let was_live = all.iter().any(|f| f.live && (f.key == key || old.iter().any(|o| o.key == f.key)));
+    // Whoever followed the old copy follows the new one, and so does this profile.
+    let mut owners: Vec<String> = all.iter().filter(|f| f.key == key || old.iter().any(|o| o.key == f.key)).flat_map(|f| owners_of(&f.owners, pc_owner.as_deref())).collect();
+    owners.push(me.clone());
+    owners.sort();
+    owners.dedup();
     all.retain(|f| f.key != key && !old.iter().any(|o| o.key == f.key));
     all.push(Followed {
         key,
@@ -1064,6 +1112,7 @@ pub async fn follow(app: &AppHandle, meta: Meta, pick: crate::suwayomi::Candidat
         live: was_live,
         told: None,
         ahead_told: None,
+        owners,
     });
     save_followed(app, &all)?;
     let msg = match queued {
@@ -1079,6 +1128,14 @@ pub async fn follow(app: &AppHandle, meta: Meta, pick: crate::suwayomi::Candidat
 /// Stops following; with `delete`, its downloaded chapters go too.
 pub async fn unfollow(app: &AppHandle, key: &str, delete: bool) -> Result<String, String> {
     let f = find(app, key)?;
+    // Others still follow it: it only leaves this profile's list.
+    let me = uid(app)?;
+    let mut owners = owners_of(&f.owners, crate::profiles::owner_id(app).as_deref());
+    owners.retain(|o| o != &me);
+    if !owners.is_empty() {
+        update_followed(app, key, |x| x.owners = owners);
+        return Ok(format!("Took {} off your list. Others still read it, so its chapters stay.", f.title));
+    }
     for (id, _, _) in f.copies() {
         if delete {
             let chs = crate::suwayomi::chapters(id).await.unwrap_or_default();
@@ -1669,6 +1726,17 @@ mod tests {
         assert_eq!(chs.iter().filter(|c| is_fresh(c, &f, Some(&s))).map(|c| c.id).collect::<Vec<_>>(), vec![3]);
         let shelf = shelf_of(&f, &chs, Some(&s));
         assert_eq!((shelf.fresh, shelf.fresh_label.as_deref(), shelf.fresh_at), (1, Some("Chapter 3"), 3_000));
+    }
+
+    #[test]
+    fn each_profile_has_its_own_reading() {
+        let old: Vec<String> = vec![];
+        assert!(owned_by(&old, Some("me"), "me"), "from before: the PC owner's");
+        assert!(!owned_by(&old, Some("me"), "friend"), "not a friend's");
+        let both = vec!["me".to_string(), "friend".to_string()];
+        assert!(owned_by(&both, Some("me"), "friend"));
+        assert_eq!(owners_of(&old, Some("me")), vec!["me".to_string()]);
+        assert!(!owned_by(&["friend".to_string()], Some("me"), "me"), "a friend's own isn't the owner's");
     }
 
     #[test]

@@ -714,6 +714,55 @@ fn code_ok(code: &str) -> bool {
     (4..=12).contains(&code.len()) && code.bytes().all(|b| b.is_ascii_digit())
 }
 
+// ---------- A PIN on the web ----------
+// A browser, phone or TV signed in to Jellyfin AS a profile that has a PIN gets
+// nothing until that PIN is typed on it: Jellyfin's sign-in alone (often saved
+// on a shared TV) used to open the profile straight away. Each sign-in (its
+// Jellyfin token) stays unlocked for WEB_UNLOCK_FOR; Chillarr restarting asks
+// again. bridge.rs refuses every command but the unlock and switching away.
+
+const WEB_UNLOCK_FOR: Duration = Duration::from_secs(12 * 60 * 60);
+static WEB_UNLOCKED: Mutex<Option<HashMap<String, Instant>>> = Mutex::new(None);
+
+/// The PIN (stored hash) of the profile a Jellyfin user is, if it has one.
+fn pin_of(app: &AppHandle, user_id: &str) -> Option<String> {
+    let me = owner(app)?;
+    find(app, &me, user_id).ok()?.pin
+}
+
+fn unlock_key(user_id: &str, token: &str) -> String {
+    trust_hash(&format!("{user_id}|{token}"))
+}
+
+pub fn web_unlocked(key: &str, now: Instant) -> bool {
+    let mut g = WEB_UNLOCKED.lock().unwrap_or_else(|e| e.into_inner());
+    let m = g.get_or_insert_with(HashMap::new);
+    m.retain(|_, at| now.duration_since(*at) < WEB_UNLOCK_FOR);
+    m.contains_key(key)
+}
+
+/// This sign-in is a profile with a PIN that hasn't been typed on it yet.
+pub fn web_locked(app: &AppHandle, user_id: &str, token: &str) -> bool {
+    pin_of(app, user_id).is_some() && !web_unlocked(&unlock_key(user_id, token), Instant::now())
+}
+
+/// The PIN typed on the web for the profile it's signed in as.
+pub async fn web_unlock(app: &AppHandle, user_id: &str, token: &str, pin: String) -> Result<(), String> {
+    let Some(stored) = pin_of(app, user_id) else { return Ok(()) };
+    let (h, key) = (app.clone(), web_key(user_id));
+    blocking(move || {
+        let profiles = h.state::<Profiles>();
+        let before = profiles.try_state(&key);
+        let r = pin_gate(&profiles.tries, &key, Some(&stored), Some(&pin), Instant::now());
+        profiles.counted(&key, before);
+        r
+    })
+    .await?;
+    let mut g = WEB_UNLOCKED.lock().unwrap_or_else(|e| e.into_inner());
+    g.get_or_insert_with(HashMap::new).insert(unlock_key(user_id, token), Instant::now());
+    Ok(())
+}
+
 /// Lets a browser signed in as `viewer` become profile `id`: after its PIN
 /// (and, for the main profile on a device not yet trusted, its Jellyfin
 /// password), Chillarr approves the Quick Connect `code` the page asked

@@ -52,6 +52,29 @@ export async function askIfLocked() {
 
 /** Jellyfin's web pages: the switcher, when the signed-in user is one of the
  *  profiles. Otherwise app.js's avatar for who's signed in stays. */
+/** Signed in to Jellyfin as a profile with a PIN: nothing shows until the PIN is
+ *  typed on this device (the PC refuses everything else meanwhile, bridge.rs).
+ *  Or pick another profile, which asks for that one's own. */
+export function unlockWeb(v) {
+  return new Promise((resolve) => {
+    const me = { name: v.name || "this profile", color: "var(--accent)" };
+    root.dataset.startup = "1";
+    const submit = async (pin) => {
+      try {
+        await invoke("web_unlock", { pin });
+        closePicker();
+        resolve();
+      } catch (e) { pinPad(me, String(e), submit, back); }
+    };
+    const back = async () => { await load(); openPicker(); };
+    pinPad(me, "", submit, back);
+    root.hidden = false;
+    root.classList.remove("out");
+    document.body.style.overflow = "hidden";
+    setBehind(true);
+  });
+}
+
 export async function startProfilesWeb() {
   await load();
 }
