@@ -493,7 +493,7 @@ dependencies = [
 
 [[package]]
 name = "chillarr"
-version = "0.13.3"
+version = "0.13.4"
 dependencies = [
  "base64 0.22.1",
  "chrono",

@@ -114,7 +114,7 @@ function pvCard(c, shelf, door) {
   if (c.score) meta.push(el("span", { class: "rating", text: `\u2605 ${(c.score / 10).toFixed(1)}` }));
   if (c.year) meta.push(el("span", { text: String(c.year) }));
   meta.push(el("span", { class: "kind", text: kindOf(c) }));
-  if (key) meta.push(el("span", { class: "owned", text: shelf && shelf.unread ? `${shelf.unread} new` : "Following" }));
+  if (key) meta.push(el("span", { class: "owned", text: shelf && shelf.fresh ? `${shelf.fresh} new` : "Following" }));
   else if (STATUS[c.status]) meta.push(el("span", { text: STATUS[c.status] }));
   if (c.chapters) meta.push(el("span", { text: `${c.chapters} ch` }));
   const desc = String(c.description || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
@@ -182,7 +182,7 @@ function card(c, shelf = null) {
   // The translation it's read in, on the cover, like a season on a show.
   const lang = shelf ? shelf.lang : c.anilist && followedLang.get(c.anilist);
   if (lang) box.append(el("span", { class: "badge read-lang", text: lang.toUpperCase() }));
-  if (shelf && shelf.unread) box.append(el("span", { class: "badge get read-new", text: `${shelf.unread} new` }));
+  if (shelf && shelf.fresh) box.append(el("span", { class: "badge get read-new fresh-badge", text: shelf.fresh === 1 ? "NEW" : `${shelf.fresh} NEW` }));
   const sub = shelf ? shelf.resume_label || (shelf.finished ? "Finished" : shelf.downloaded ? "All read" : "Downloading") : c.author || (c.year ? String(c.year) : "");
   // What the Midnight and Classic styles add (styles.css shows each only in its style).
   if (c.score) box.append(el("span", { class: "rc-score", text: `\u2605 ${(c.score / 10).toFixed(1)}` }));
@@ -241,7 +241,51 @@ async function know() {
   followedByAnilist = new Map(lib.filter((s) => s.anilist).map((s) => [s.anilist, s.key]));
   followedLang = new Map(lib.filter((s) => s.anilist && s.lang).map((s) => [s.anilist, s.lang]));
   listKeys = new Set(list.map(cardKey));
+  freshBadge(lib);
   return { lib, list };
+}
+
+/** The reading Home tab's bubble: how many chapters are new, across everything you follow. */
+function freshBadge(lib) {
+  const n = lib.reduce((sum, s) => sum + (s.fresh || 0), 0);
+  for (const a of document.querySelectorAll('a[data-tab="r-home"]')) {
+    let b = a.querySelector(".rt-badge");
+    if (!n) { if (b) b.remove(); continue; }
+    if (!b) { b = el("span", { class: "rt-badge" }); a.append(b); }
+    if (b.textContent !== String(n)) { b.textContent = n > 99 ? "99+" : String(n); b.classList.remove("pop"); void b.offsetWidth; b.classList.add("pop"); }
+  }
+  // Once a visit (per profile): say which series have new chapters.
+  const fresh = lib.filter((s) => s.fresh).sort((a, b) => b.fresh_at - a.fresh_at);
+  const sig = fresh.map((s) => `${s.key}:${s.fresh}`).join(",");
+  let told = "";
+  try { told = sessionStorage.getItem(`read-fresh-told:${fresh.length ? "x" : ""}`) || ""; } catch (e) { /* storage blocked */ }
+  if (fresh.length && told !== sig) {
+    try { sessionStorage.setItem("read-fresh-told:x", sig); } catch (e) { /* storage blocked */ }
+    const names = fresh.slice(0, 3).map((s) => `${s.title} (${s.fresh})`).join(", ");
+    toast(`New chapters: ${names}${fresh.length > 3 ? ` and ${fresh.length - 3} more` : ""}.`);
+  }
+}
+
+/** "New chapters" at the top of Home: each series with chapters out since you last read it. */
+function freshCards(lib) {
+  return lib.filter((s) => s.fresh).sort((a, b) => b.fresh_at - a.fresh_at).map((s, i) => {
+    const t = card(asCard(s), s);
+    t.classList.add("fresh-tile", "rise");
+    t.style.setProperty("--i", String(i));
+    const cap = t.querySelector(".cap");
+    if (cap) cap.replaceChildren(el("strong", { text: s.title }), ` \u00b7 ${s.fresh_label || "New"}`, el("small", { class: "fresh-when", text: ago(s.fresh_at * 1000) }));
+    return t;
+  });
+}
+
+function freshSection(lib, cls = "") {
+  const cards = freshCards(lib);
+  if (!cards.length) return null;
+  const n = lib.reduce((sum, s) => sum + (s.fresh || 0), 0);
+  return el("section", { class: `fresh-block ${cls}` },
+    el("div", { class: "fresh-head" }, el("span", { class: "fresh-dot", "aria-hidden": "true" }), el("h2", { text: "New chapters" }),
+      el("span", { class: "fresh-count", text: `${n} new` })),
+    el("div", { class: "fresh-track" }, cards));
 }
 
 /* ---------- the tabs ---------- */
@@ -251,7 +295,7 @@ export async function renderRead(view, tab) {
   const my = ++seq;
   currentView = view;
   currentTab = tab;
-  document.body.dataset.rstyle = styleNow();
+  applyLook();
   pvHide(true);
   drawPickers(); // the top bar's Style picker, on every reading tab
   if (TAB_TITLE[tab]) return explorePage(view, tab, my);
@@ -358,6 +402,19 @@ function heroPicks(cards) {
    bar while reading (on a narrow screen, at the top of Home). */
 const STYLES = [["cinema", "Cinema"], ["midnight", "Midnight"], ["classic", "Classic"]];
 const styleNow = () => { const s = getPref("read-style"); return STYLES.some(([k]) => k === s) ? s : "cinema"; };
+/** Dark or light, kept for each style: Classic starts light, the others dark. */
+const shadeNow = (s = styleNow()) => { const v = getPref(`read-shade-${s}`); return v === "light" || v === "dark" ? v : s === "classic" ? "light" : "dark"; };
+function applyLook() {
+  document.body.dataset.rstyle = styleNow();
+  document.body.dataset.rshade = shadeNow();
+}
+const SUN = "M12 4V2M12 22v-2M4 12H2M22 12h-2M5.6 5.6 4.2 4.2M19.8 19.8l-1.4-1.4M5.6 18.4l-1.4 1.4M19.8 4.2l-1.4 1.4M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10z";
+const MOON = "M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z";
+function flipShade() {
+  setPref(`read-shade-${styleNow()}`, shadeNow() === "light" ? "dark" : "light");
+  applyLook();
+  drawPickers();
+}
 let currentView = null;
 let currentTab = "r-home";
 
@@ -369,7 +426,7 @@ function styleButtons(onPick) {
 function setStyle(k) {
   if (k === styleNow()) return;
   setPref("read-style", k);
-  document.body.dataset.rstyle = k;
+  applyLook();
   drawPickers();
   if (!currentView || !document.body.contains(currentView)) return;
   // The page fades across to the new look.
@@ -389,13 +446,20 @@ function drawPickers() {
   }
   const seg = topPicker.querySelector(".read-style-seg");
   seg.replaceChildren(...styleButtons(setStyle), el("i", { class: "read-style-pill", "aria-hidden": "true" }));
+  const light = shadeNow() === "light";
+  const shade = () => el("button", { class: "read-shade", "aria-label": light ? "Dark" : "Light", title: light ? "Switch to dark" : "Switch to light", onclick: flipShade }, icon(light ? MOON : SUN));
+  const old = topPicker.querySelector(".read-shade");
+  if (old) old.replaceWith(shade()); else topPicker.append(shade());
   // The pill slides under the picked one.
   requestAnimationFrame(() => {
     const on = seg.querySelector("button.on");
     const pill = seg.querySelector(".read-style-pill");
     if (on && pill) { pill.style.width = `${on.offsetWidth}px`; pill.style.transform = `translateX(${on.offsetLeft - 3}px)`; }
   });
-  for (const s of document.querySelectorAll(".read-style-inline .chips")) s.replaceChildren(...styleButtons(setStyle).map((b) => { b.className = "chip" + (b.className ? " on" : ""); return b; }));
+  for (const s of document.querySelectorAll(".read-style-inline .chips")) {
+    s.replaceChildren(...styleButtons(setStyle).map((b) => { b.className = "chip" + (b.className ? " on" : ""); return b; }),
+      el("button", { class: "chip", onclick: flipShade }, light ? "Dark" : "Light"));
+  }
 }
 
 /** The style picker at the top of Home, for screens too narrow for the top bar's. */
@@ -480,6 +544,8 @@ async function midnightHome(view, my) {
   ], (items) => items.map(rankRow)));
   popular.append(el("h2", { class: "mn-h", text: "Popular now" }), el("div", { class: "grid read-grid mn-grid" }, trending.slice(0, 18).map((c, i) => { const t = card(c); t.style.setProperty("--i", String(i)); t.classList.add("rise"); return t; })));
   rows.append(...got.filter((r) => r.items.length && r !== got.find((x) => x.id === "trending")).map((r) => row(r.id, r.title, r.items.map((c) => card(c)))));
+  const freshMn = freshSection(series, "mn-fresh");
+  if (freshMn) updates.before(freshMn);
   if (series.length) {
     updates.append(el("h2", { class: "mn-h", text: "Latest updates" }), el("div", { class: "skel skel-row" }));
     const list = await followedWithChapters(series);
@@ -490,7 +556,7 @@ async function midnightHome(view, my) {
         el("div", { class: "mn-up-text" },
           el("button", { class: "mn-up-title", onclick: () => openSeries({ key: x.s.key, card: x.card }), text: x.s.title }),
           ...x.chs.slice(0, 3).map((c) => el("button", { class: "mn-ch" + (c.read ? " read" : ""), disabled: !c.downloaded, onclick: () => read(x.s.key, c.id, x.card) },
-            el("span", { text: chLabel(c) }), el("small", { text: c.downloaded ? ago(c.uploaded) : "Not here yet" }))))))));
+            el("span", {}, chLabel(c), c.fresh ? el("b", { class: "read-new-pill", text: "NEW" }) : ""), el("small", { text: c.downloaded ? ago(c.uploaded) : "Not here yet" }))))))));
   }
   return true;
 }
@@ -517,6 +583,8 @@ async function classicHome(view, my) {
   drawPickers();
   const [{ lib: series }, got] = await Promise.all([know(), invoke("read_rows").catch(() => [])]);
   if (my !== seq) return;
+  const freshCl = freshSection(series, "cl-block cl-fresh");
+  if (freshCl) ranks.before(freshCl);
   const trending = (got.find((r) => r.id === "trending") || got[0] || { items: [] }).items;
   ranks.append(el("h2", { class: "cl-h", text: "Trending and popular" }), tabbed("cl-top", [
     ["Trending", async () => trending.slice(0, 10)],
@@ -549,7 +617,7 @@ async function classicHome(view, my) {
 
 async function homePage(view, my) {
   const style = styleNow();
-  document.body.dataset.rstyle = style;
+  applyLook();
   if (style === "midnight") return midnightHome(view, my);
   if (style === "classic") return classicHome(view, my);
   drawPickers();
@@ -563,6 +631,8 @@ async function homePage(view, my) {
   const reading = series.filter((s) => !s.finished);
   const done = series.filter((s) => s.finished);
   const out = [];
+  const fresh = freshSection(series);
+  if (fresh) out.push(fresh);
   if (reading.length) out.push(row("reading", "Continue reading", reading.map((s) => card(asCard(s), s))));
   if (books.filter((b) => b.ready && b.read < 1).length) out.push(row("books", "Your books", books.filter((b) => b.read < 1).map(bookCard)));
   if (done.length) out.push(row("finished", "Finished", done.map((s) => card(asCard(s), s))));
@@ -658,6 +728,8 @@ async function explorePage(view, tab, my) {
     const gs = f.adult !== "hide" && info.adult ? [...genres, "Hentai"] : genres;
     const parts = [
       field("Genres", el("div", { class: "chips" }, gs.map((g) => triChip(g, "genres", "not_genres")))),
+      // AniList has 18 manga genres; its most used tags carry the rest.
+      field("Themes", el("div", { class: "chips" }, info.tags.slice(0, 20).map((t) => triChip(t, "tags", "not_tags")))),
       el("div", { class: "fl-row" },
         field("Status", oneOf(STATUSES, (o) => f.status === o[0], (x, o) => (x.status = o[0]))),
         field("Rating", oneOf(SCORES, (o) => f.min_score === o[0], (x, o) => (x.min_score = o[0])))),
@@ -665,7 +737,7 @@ async function explorePage(view, tab, my) {
     ];
     if (moreOpen) {
       parts.push(
-        field("Tags", el("div", { class: "chips" }, info.tags.map((t) => triChip(t, "tags", "not_tags")))),
+        field("More themes", el("div", { class: "chips" }, info.tags.slice(20).map((t) => triChip(t, "tags", "not_tags")))),
         el("div", { class: "fl-row" },
           field("Length", oneOf(LENGTHS.map((l, i) => [i, l[2]]), (o) => f.length === o[0], (x, o) => (x.length = o[0]))),
           field("Years", el("div", { class: "read-years" }, yearBox("year_from", "From"), el("span", { text: "to" }), yearBox("year_to", "To")))));
@@ -678,15 +750,39 @@ async function explorePage(view, tab, my) {
     panel.replaceChildren(...parts);
   }
   drawPanel();
-  // The big picture on top, like Home: this tab's trending series, whatever the filters say.
+  // The top of the tab takes on the style. Cinema: the big picture, this tab's
+  // trending series. Midnight: a smaller one, and the ranking down the side.
+  // Classic: a banner and a numbered top 5. Whatever the filters say.
+  const style = styleNow();
   const top = el("div", { class: "read-hero-slot" });
-  const body = page(head(TAB_TITLE[tab], el("div", { class: "read-filters" }, toggle, order)), panel, grid, more);
+  const filterHead = head(TAB_TITLE[tab], el("div", { class: "read-filters" }, toggle, order));
+  let body;
+  if (style === "midnight") {
+    const side = el("aside", { class: "mn-side" }, el("h2", { class: "mn-h", text: "Popular" }), tabbed("mn-rank", [
+      ["Trending", () => exploreItems({ kind, sort: "trending" }).then((x) => x.slice(0, 10))],
+      ["Top rated", () => exploreItems({ kind, sort: "score" }).then((x) => x.slice(0, 10))],
+      ["Most read", () => exploreItems({ kind, sort: "popular" }).then((x) => x.slice(0, 10))],
+    ], (items) => items.map(rankRow)));
+    body = el("div", { class: "read-page mn-home mn-explore" }, filterHead, el("div", { class: "mn-cols" }, el("div", { class: "mn-main" }, panel, grid, more), side));
+  } else if (style === "classic") {
+    const top5 = el("section", { class: "cl-block cl-top5" }, tabbed("cl-top", [
+      ["Trending", () => exploreItems({ kind, sort: "trending" }).then((x) => x.slice(0, 5))],
+      ["Top rated", () => exploreItems({ kind, sort: "score" }).then((x) => x.slice(0, 5))],
+    ], (items) => [el("div", { class: "cl-grid" }, items.map((c, i) => classicCard(c, i, { rank: i + 1 })))]));
+    body = el("div", { class: "read-page cl-home cl-explore" },
+      el("div", { class: "cl-banner" }, el("h1", { text: TAB_TITLE[tab] }), el("p", { text: `The ${TAB_TITLE[tab].toLowerCase()} people are reading now, and everything else to find.` })),
+      top5, filterHead, panel, grid, more);
+  } else {
+    body = page(filterHead, panel, grid, more);
+  }
   view.replaceChildren(top, body);
-  invoke("read_explore", { e: { kind, sort: "trending", page: 1 } }).then((g) => {
-    if (my !== seq) return;
-    const h = readHero(heroPicks(g.items || []));
-    if (h) { top.replaceWith(h); body.classList.add("after-hero"); }
-  }).catch(() => {});
+  if (style !== "classic") {
+    invoke("read_explore", { e: { kind, sort: "trending", page: 1 } }).then((g) => {
+      if (my !== seq) return;
+      const h = readHero(heroPicks(g.items || []));
+      if (h) { if (style === "midnight") h.classList.add("compact"); top.replaceWith(h); body.classList.add("after-hero"); }
+    }).catch(() => {});
+  }
   await know();
   let pageNo = 0, done = false, busy = false, run = 0;
   async function next() {
@@ -894,13 +990,38 @@ export async function openSeries({ key = null, card: c = null }) {
   state.followBtn = followBtn;
   actions.append(followBtn, listButton(c));
   const list = el("section", { class: "read-sources" });
-  body.append(list);
+  body.append(...[list, similarSection(c, mine)].filter(Boolean));
   getCopies(c, state, list, mine);
 }
 
 /** Copies found lately, so opening a series again doesn't ask every site again. */
 const copiesSeen = new Map();
 const COPIES_LIFE = 20 * 60 * 1000;
+
+/** "Similar to this" under a series: what AniList's readers recommend. Kept per
+ *  series, since the panel redraws itself while chapters come in. */
+const similarSeen = new Map();
+function similarSection(c, mine) {
+  if (!c || !c.anilist) return null;
+  const head = () => el("h3", { class: "read-similar-h", text: "Similar to this" });
+  const box = el("section", { class: "read-similar" }, head(), el("div", { class: "skel skel-row" }));
+  const draw = (list) => {
+    if (!list.length) { box.remove(); return; }
+    box.replaceChildren(head(), el("div", { class: "read-similar-grid" }, list.slice(0, 12).map((x, i) => {
+      const t = card(x);
+      t.classList.add("rise");
+      t.style.setProperty("--i", String(i));
+      return t;
+    })));
+  };
+  const seen = similarSeen.get(c.anilist);
+  if (seen) { draw(seen); return box; }
+  invoke("read_similar", { anilist: c.anilist }).then((list) => {
+    similarSeen.set(c.anilist, list);
+    if (mine === panelSeq) draw(list);
+  }).catch(() => box.remove());
+  return box;
+}
 
 /** Finds the copies in the chosen translation; Best goes straight to its chapters. */
 async function getCopies(c, state, list, mine) {
@@ -1079,7 +1200,7 @@ async function showFollowed(key, mine, c0) {
     f.new_too === false ? " · new chapters off" : "",
     " · ", el("button", { class: "linkish", onclick: () => changeCopy(c, f, body) }, "Change copy"));
   const list = el("ol", { class: "read-chapters" }, ...d.chapters.slice().reverse().map((r) => chapterRow(key, r, c0)));
-  body.append(...[where, markBar(key, d.chapters, c0), list].filter(Boolean));
+  body.append(...[where, markBar(key, d.chapters, c0), list, similarSection(c, mine)].filter(Boolean));
   if (scroll) dlg.scrollTop = scroll;
   // Chapters still coming: the list keeps itself current.
   if (d.downloading) poll = setTimeout(() => { if (mine === panelSeq && dlg && dlg.open) showFollowed(key, ++panelSeq, c0); }, 5000);
@@ -1133,6 +1254,7 @@ function chapterRow(key, r, c0) {
     el("button", { class: "read-ch-open", disabled: !r.downloaded, onclick: () => read(key, r.id, c0) },
       el("strong", { text: chLabel(r) }), name ? el("span", { class: "read-ch-name", text: name }) : null,
       r.scanlator && !/^unknown$/i.test(r.scanlator) ? el("small", { text: r.scanlator }) : null),
+    r.fresh ? el("b", { class: "read-new-pill", text: "NEW" }) : null,
     el("span", { class: "read-ch-state", text: state }), get || mark);
 }
 
