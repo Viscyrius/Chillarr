@@ -1015,6 +1015,9 @@ pub fn spawn(app: AppHandle) {
         tokio::time::sleep(FIRST_CHECK).await;
         link_jellyfin(&app).await;
         crate::downloads_home::move_out_of_user_downloads(&app).await;
+        // A PC set up before reading existed: set it up once now.
+        let r = app.clone();
+        tauri::async_runtime::spawn(async move { crate::read::set_up_once(&r).await });
         for n in 0u64.. {
             // Every 10 minutes: finished downloads Radarr never brought in
             // (it missed them, or Chillarr was closed) get imported now.

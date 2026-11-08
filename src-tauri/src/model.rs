@@ -36,12 +36,6 @@ impl AppId {
         }
     }
 
-    /// Set up only when first needed (the first manga followed), never by
-    /// setup or "install what's missing": 340 MB most people never use.
-    pub fn on_demand(self) -> bool {
-        matches!(self, AppId::Suwayomi)
-    }
-
     /// Prowlarr, Sonarr and Radarr: the apps with an `*arr` API and a config.xml.
     pub fn is_arr(self) -> bool {
         matches!(self, AppId::Prowlarr | AppId::Sonarr | AppId::Radarr)

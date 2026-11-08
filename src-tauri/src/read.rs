@@ -762,6 +762,38 @@ pub fn cleanup_pick(chs: &[crate::suwayomi::Chapter], spots: &[&Spot], days: u32
         .collect()
 }
 
+/// Once per PC: the reading folder, the manga downloader and its sources, so
+/// the Read tab works on the first visit. Setup calls it; a PC set up before
+/// reading existed gets it on its first start after the update.
+pub async fn set_up_once(app: &AppHandle) {
+    let (done, setup) = {
+        let st = app.state::<crate::SettingsState>();
+        let s = st.current.lock().unwrap();
+        (s.reading_ready, s.setup_done)
+    };
+    if done || !setup {
+        return;
+    }
+    let r = async {
+        ensure_root(app).await?;
+        crate::suwayomi::ready(app).await
+    }
+    .await;
+    match r {
+        Ok(()) => {
+            let st = app.state::<crate::SettingsState>();
+            let saved = {
+                let mut s = st.current.lock().unwrap();
+                s.reading_ready = true;
+                s.clone()
+            };
+            let _ = crate::settings::save(&st.path, &saved);
+            crate::log::log(app, crate::model::Level::Ok, "Reading is set up: manga, manhwa, manhua and books are in the Read tab.");
+        }
+        Err(e) => crate::log::log(app, crate::model::Level::Amber, format!("Reading isn't set up yet: {e}. Chillarr tries again next start.")),
+    }
+}
+
 pub async fn clean_up(app: &AppHandle) {
     let days = app.state::<crate::SettingsState>().current.lock().unwrap().read_cleanup_days;
     if days == 0 {

@@ -879,7 +879,7 @@ fn rows_for(app: &AppHandle, ids: &[AppId]) -> Vec<AppRow> {
 
 fn missing_apps(app: &AppHandle) -> Vec<AppId> {
     let core = app.state::<Core>();
-    AppId::ALL.into_iter().filter(|id| !id.on_demand() && !core.config(*id).is_some_and(|c| crate::discover::is_installed(&c))).collect()
+    AppId::ALL.into_iter().filter(|id| !core.config(*id).is_some_and(|c| crate::discover::is_installed(&c))).collect()
 }
 
 #[derive(Deserialize, Debug, Default)]
@@ -999,6 +999,11 @@ async fn whole_run(app: &AppHandle, ids: &[AppId], req: Request) -> Result<(), S
     fix::fix_all(app, Trigger::Button).await;
     finish_setup(app);
     with(app, |m| m.problems.extend(problems));
+    // Reading, ready on the first visit: its folder next to the films, the
+    // manga downloader running with its sources. In the background, as the
+    // sources take a minute and setup is done without them.
+    let a = app.clone();
+    tauri::async_runtime::spawn(async move { crate::read::set_up_once(&a).await });
     Ok(())
 }
 

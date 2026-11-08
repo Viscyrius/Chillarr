@@ -137,19 +137,18 @@ fn missing_card(cfg: &AppConfig) -> CardState {
     let notes = if cfg.id == AppId::FlareSolverr {
         vec!["Already have it somewhere? Pick flaresolverr.exe in Settings.".into()]
     } else if cfg.id == AppId::Suwayomi {
-        vec!["Gets set up by itself the first time you download a manga or manhua.".into()]
+        vec!["Downloads manga, manhwa and manhua for the Read tab. Also sets itself up the first time you download one.".into()]
     } else {
         vec![]
     };
     CardState {
         id: cfg.id,
         level: Level::Unknown,
-        line: if cfg.id.on_demand() { "Not needed yet".into() } else { "Not installed".into() },
+        line: "Not installed".into(),
         notes,
         open_url: None,
         fixable: false,
-        // An on-demand app has no Install button: it sets itself up when used.
-        missing: !cfg.id.on_demand(),
+        missing: true,
         update: None,
     }
 }
