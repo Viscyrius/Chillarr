@@ -80,6 +80,30 @@ pub fn genre_list(v: &Value) -> Vec<String> {
     v.as_array().map(|g| g.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default()
 }
 
+/// Genres some sources only carry as a keyword or tag: AniList files shows
+/// under Ecchi, but TMDb (Radarr's metadata, and Jellyfin's TMDb tags) and
+/// AniDB call it a keyword. Matched by name, any case.
+const TAG_GENRES: [&str; 1] = ["Ecchi"];
+
+/// `genres` (a JSON list) with the genres in `TAG_GENRES` added from
+/// `tags` (a JSON list of keywords or tags), and spelled the one way.
+pub fn genres_and_tags(genres: &Value, tags: &Value) -> Vec<String> {
+    let mut out = genre_list(genres);
+    for g in out.iter_mut() {
+        if let Some(name) = TAG_GENRES.iter().find(|n| n.eq_ignore_ascii_case(g)) {
+            *g = name.to_string();
+        }
+    }
+    for t in genre_list(tags) {
+        if let Some(name) = TAG_GENRES.iter().find(|n| n.eq_ignore_ascii_case(t.trim())) {
+            if !out.iter().any(|g| g == name) {
+                out.push(name.to_string());
+            }
+        }
+    }
+    out
+}
+
 pub fn from_radarr(v: &Value) -> Tile {
     let img = |kind: &str| {
         v["images"].as_array().and_then(|a| a.iter().find(|i| i["coverType"] == kind)).and_then(|i| opt_str(&i["remoteUrl"]))
@@ -97,7 +121,7 @@ pub fn from_radarr(v: &Value) -> Tile {
         tmdb,
         // A lookup of something Radarr already has comes back with its id.
         status: (v["id"].as_i64().unwrap_or(0) > 0).then(|| "Already added".to_string()),
-        genres: genre_list(&v["genres"]),
+        genres: genres_and_tags(&v["genres"], &v["keywords"]),
         ..Default::default()
     }
 }
@@ -208,7 +232,8 @@ pub fn from_jf(v: &Value, base: &str) -> Tile {
         tvdb: id_num(&v["ProviderIds"]["Tvdb"]),
         status: None,
         format: None,
-        genres: v["Genres"].as_array().map(|g| g.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default(),
+        // Jellyfin's TMDb and AniDB metadata put Ecchi in Tags.
+        genres: genres_and_tags(&v["Genres"], &v["Tags"]),
         trailer: None,
         completed: None,
         mark: None,
@@ -243,6 +268,19 @@ mod tests {
         assert!(t.backdrop.is_some(), "fanart becomes the backdrop");
         assert!(t.jf_id.is_none(), "not downloaded, so not playable");
         assert!(!t.genres.is_empty(), "Radarr's genres come along");
+    }
+
+    #[test]
+    fn ecchi_comes_from_keywords_and_tags_too() {
+        let g = genres_and_tags(&json!(["Animation", "Comedy"]), &json!(["school", "ecchi"]));
+        assert_eq!(g, ["Animation", "Comedy", "Ecchi"], "a keyword becomes the genre");
+        assert_eq!(genres_and_tags(&json!(["ECCHI"]), &json!(["Ecchi"])), ["Ecchi"], "one spelling, once");
+        assert_eq!(genres_and_tags(&json!(["Drama"]), &Value::Null), ["Drama"], "no tags: genres as they are");
+        assert_eq!(genres_and_tags(&json!(["Drama"]), &json!(["harem", "ecchi comedy"])), ["Drama"], "only the exact name counts");
+        let jf = from_jf(&json!({ "Id": "a", "Type": "Series", "Name": "x", "Genres": ["Anime"], "Tags": ["Ecchi"] }), "http://jf");
+        assert_eq!(jf.genres, ["Anime", "Ecchi"], "Jellyfin's tags");
+        let r = from_radarr(&json!({ "tmdbId": 1, "title": "x", "genres": ["Animation"], "keywords": ["ecchi"] }));
+        assert_eq!(r.genres, ["Animation", "Ecchi"], "Radarr's keywords");
     }
 
     #[test]
