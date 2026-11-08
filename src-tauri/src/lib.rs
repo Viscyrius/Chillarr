@@ -785,6 +785,12 @@ async fn read_book_rows() -> Vec<serde_json::Value> {
     books::rows().await
 }
 
+/// The manga sites installed, for Settings > Download sites (PC window only).
+#[tauri::command]
+async fn manga_sites() -> Result<serde_json::Value, String> {
+    suwayomi::sites().await
+}
+
 /// One page of a book row's See all.
 #[tauri::command]
 async fn read_book_more(id: String, page: u32) -> Result<serde_json::Value, String> {
@@ -1104,6 +1110,7 @@ pub fn run() {
             read_downloads,
             read_book_rows,
             read_book_more,
+            manga_sites,
             read_book_search,
             read_book_copies,
             read_book_get,

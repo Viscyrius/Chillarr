@@ -15,13 +15,15 @@ async function bridgeBase() {
   return base;
 }
 
-export async function openBook(key, onClose = null) {
+/** Opens a book where you stopped, or from its first page with `fromStart` (Read again). */
+export async function openBook(key, onClose = null, fromStart = false) {
   let o;
   let root;
   try { [o, root] = await Promise.all([invoke("read_book_open", { key }), bridgeBase()]); }
   catch (e) { base = null; toast(String(e), true); return; }
   const file = `${root}/read/${o.ticket}/file`;
   if (o.kind === "pdf") { window.open(file, "_blank"); return; }
+  if (fromStart) { o.chapter = 0; o.at = 0; }
   if (o.kind !== "epub") {
     // AZW3 / MOBI: nothing here shows them; the file itself is offered.
     const a = el("a", { href: file, download: "" });

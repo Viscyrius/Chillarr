@@ -28,7 +28,9 @@ use tauri::{AppHandle, Manager};
 
 pub const PORT: u16 = 4567;
 pub const START_WAIT_SECS: u64 = 120;
-const STORE: &str = "https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.min.json";
+/// keiyoushi's list. Their old index.min.json now lists only an "Outdated App"
+/// notice (checked 2026-11-08); index.pb has all 1556, and Suwayomi 2.4 reads it.
+const STORE: &str = "https://github.com/keiyoushi/extensions/raw/repo/index.pb";
 /// Installed on first use. Chosen for page quality and reach (measured 2026-11-08):
 /// MangaDex (scanlator uploads, many languages), Weeb Central (manga),
 /// Asura Scans and Flame Comics (high-resolution manhwa), MangaFire (reach),
@@ -42,7 +44,12 @@ const STORE: &str = "https://raw.githubusercontent.com/keiyoushi/extensions/repo
 /// had 922 in English (MangaUpdates, 2026-11-08). ManhuaUS, Top Manhua, Mangakakalot,
 /// Mangabat, MangaK and Zinmanga: big catalogs, so a series one site stopped
 /// carrying is still somewhere (all in keiyoushi's list on 2026-11-08).
-const DEFAULT_SOURCES: [&str; 16] = [
+/// Then the long-running sites, so one going down never leaves a gap: Mangahere,
+/// MangaFox, Mangatown, MangaKatana, Manganato, MangaPill, MangaRead.org, Bato,
+/// Dynasty Scans and Manhwatop, plus the publishers' own MANGA Plus and Comikey.
+/// Each answered a search within seconds on 2026-11-08 (Darling in the Franxx,
+/// a Seven Seas title, was on nine of them); MangaHub errored and was left out.
+const DEFAULT_SOURCES: [&str; 28] = [
     "eu.kanade.tachiyomi.extension.all.mangadex",
     "eu.kanade.tachiyomi.extension.en.weebcentral",
     "eu.kanade.tachiyomi.extension.en.asurascans",
@@ -59,6 +66,18 @@ const DEFAULT_SOURCES: [&str; 16] = [
     "eu.kanade.tachiyomi.extension.en.mangabat",
     "eu.kanade.tachiyomi.extension.en.mangabuddy",
     "eu.kanade.tachiyomi.extension.en.zinmanga",
+    "eu.kanade.tachiyomi.extension.en.mangahere",
+    "eu.kanade.tachiyomi.extension.en.mangafox",
+    "eu.kanade.tachiyomi.extension.en.mangatown",
+    "eu.kanade.tachiyomi.extension.en.mangakatana",
+    "eu.kanade.tachiyomi.extension.en.manganelo",
+    "eu.kanade.tachiyomi.extension.en.mangapill",
+    "eu.kanade.tachiyomi.extension.en.mangareadorg",
+    "eu.kanade.tachiyomi.extension.en.bbato",
+    "eu.kanade.tachiyomi.extension.en.dynasty",
+    "eu.kanade.tachiyomi.extension.en.manhwatop",
+    "eu.kanade.tachiyomi.extension.all.mangaplus",
+    "eu.kanade.tachiyomi.extension.all.comikey",
 ];
 
 /// The password Suwayomi was started with this time. Chillarr starts it, so a
@@ -313,7 +332,8 @@ pub struct Candidate {
 }
 
 /// Every installed source's copy of a series named any of `names`, best first.
-/// Each source is asked at once; a slow or broken one is left out after 45 s.
+/// Each source is asked at once; a slow or broken one is left out after 45 s
+/// (its sample pages get 12 s of that: a copy found but slow to sample is kept).
 /// The languages the installed sources read in, with how many sources each.
 pub async fn languages() -> Result<Vec<(String, usize)>, String> {
     let v = gql("{sources{nodes{lang}}}", json!({})).await?;
@@ -326,6 +346,23 @@ pub async fn languages() -> Result<Vec<(String, usize)>, String> {
     let mut out: Vec<(String, usize)> = count.into_iter().collect();
     out.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
     Ok(out)
+}
+
+/// The manga sites installed, for Settings > Download sites: English ones (by
+/// name, A to Z) and how many in other languages. Never starts the downloader:
+/// before the first follow it just isn't there yet.
+pub async fn sites() -> Result<Value, String> {
+    let v = gql("{sources{nodes{displayName lang isNsfw}}}", json!({})).await?;
+    let nodes = v["sources"]["nodes"].as_array().cloned().unwrap_or_default();
+    let mut en: Vec<String> = nodes
+        .iter()
+        .filter(|s| s["lang"].as_str() == Some("en") && s["isNsfw"] != true)
+        .filter_map(|s| s["displayName"].as_str().map(|n| n.trim_end_matches(" (EN)").to_string()))
+        .collect();
+    en.sort_by_key(|n| n.to_lowercase());
+    en.dedup();
+    let other = nodes.iter().filter(|s| !matches!(s["lang"].as_str(), Some("en" | "all" | "localsourcelang" | "other")) && s["isNsfw"] != true).count();
+    Ok(json!({ "en": en, "other": other }))
 }
 
 /// 18+ sources (only installed and searched for an 18+ title, for those allowed it).
@@ -369,13 +406,20 @@ pub async fn candidates(names: &[String], lang: &str, adult: bool) -> Result<Vec
     let mut set = tokio::task::JoinSet::new();
     for (id, name) in srcs {
         let names = names.to_vec();
-        set.spawn(async move { tokio::time::timeout(Duration::from_secs(45), one_source(id, name, names)).await.ok().flatten() });
+        set.spawn(async move { tokio::time::timeout(Duration::from_secs(45), one_source(id, name, names)).await });
     }
     let mut out = Vec::new();
+    let mut slow = 0;
     while let Some(r) = set.join_next().await {
-        if let Ok(Some(c)) = r {
-            out.push(c);
+        match r {
+            Ok(Ok(Some(c))) => out.push(c),
+            Ok(Err(_)) => slow += 1,
+            _ => {}
         }
+    }
+    // Nothing found because the sites didn't answer in time is not "no site has it".
+    if out.is_empty() && slow > 0 {
+        return Err("The manga sites were slow to answer. Try again in a moment.".into());
     }
     rank(&mut out);
     Ok(out)
@@ -398,11 +442,16 @@ pub fn best_pair(c: &[Candidate]) -> Option<(usize, Option<usize>)> {
         return Some((0, None));
     }
     let band = |q: f64| (q.max(1.0).ln() / 1.1f64.ln()).floor() as i64;
+    // A copy with only a few chapters spread far apart (MANGA Plus gives One
+    // Piece's first 6 and newest 6 of 1198, user 2026-11-08) reaches far but
+    // has gaps nothing would fill: it's never the main copy, nor the fill.
+    let most = c.iter().map(|x| x.chapters).max().unwrap_or(0) as f64;
+    let whole = |i: usize| c[i].chapters as f64 >= most / 3.0;
     let far = (0..c.len())
-        .filter(|&i| c[i].latest.is_some())
+        .filter(|&i| c[i].latest.is_some() && whole(i))
         .max_by(|&a, &b| c[a].latest.partial_cmp(&c[b].latest).unwrap_or(std::cmp::Ordering::Equal).then(band(c[a].quality).cmp(&band(c[b].quality))).then(b.cmp(&a)))?;
     let sharp = (0..c.len())
-        .filter(|&i| c[i].latest.is_some_and(|l| l >= newest / 3.0))
+        .filter(|&i| c[i].latest.is_some_and(|l| l >= newest / 3.0) && whole(i))
         .max_by(|&a, &b| band(c[a].quality).cmp(&band(c[b].quality)).then(c[a].density.partial_cmp(&c[b].density).unwrap_or(std::cmp::Ordering::Equal)).then(b.cmp(&a)))
         .unwrap_or(far);
     if sharp == far || band(c[sharp].quality) <= band(c[far].quality) {
@@ -493,7 +542,8 @@ async fn one_source(source_id: String, source: String, names: Vec<String>) -> Op
             return None;
         }
         let latest = chs.iter().map(|c| c.1).fold(None, |m: Option<f64>, n| Some(m.map_or(n, |m| m.max(n))));
-        let samples = sample_pages(&chs).await;
+        // Sampling is only for ranking: a slow page never costs the copy itself.
+        let samples = tokio::time::timeout(Duration::from_secs(12), sample_pages(&chs)).await.unwrap_or_default();
         let mut widths: Vec<u32> = samples.iter().map(|s| s.w).collect();
         widths.sort();
         let mut dens: Vec<f64> = samples.iter().map(|s| s.bytes as f64 / (s.w as f64 * s.h as f64).max(1.0) * if s.webp { 1.6 } else { 1.0 }).collect();
@@ -702,6 +752,11 @@ mod tests {
         // The sharp one has it all.
         let v = vec![c("fire", 897.0, 1682.0), c("kun", 897.0, 730.0)];
         assert_eq!(best_pair(&v), Some((0, None)));
+        // The sharp one reaches the newest but holds 12 of 1198 (MANGA Plus, One Piece): the full copy.
+        let mut plus = c("plus", 1198.0, 1400.0);
+        plus.chapters = 12;
+        let v = vec![plus, c("weeb", 1198.0, 720.0)];
+        assert_eq!(best_pair(&v), Some((1, None)));
         assert_eq!(best_pair(&[]), None);
     }
 

@@ -215,7 +215,26 @@ pub async fn copies(app: &AppHandle, meta: &BookMeta) -> Result<Vec<Release>, St
             break;
         }
     }
-    Ok(offer(rank(&found, &meta.title)))
+    // Many sites file ebooks under no book category at all (LimeTorrents,
+    // TorrentDownload and 1337x had 18, 10 and 2 for "Percy Jackson epub" and
+    // none in the categories, 2026-11-08), so ask them once more by name.
+    let plain = format!("search?query={}&type=search", enc(format!("{} epub", meta.title).trim()));
+    if let Ok(more) = p.list_slow(&plain).await {
+        found.extend(more.into_iter().filter(looks_like_a_book));
+    }
+    Ok(offer(rank(&dedup(found), &meta.title)))
+}
+
+/// From an uncategorised search: only what says it's an ebook, or is filed as one.
+fn looks_like_a_book(x: &Value) -> bool {
+    let filed = x["categories"].as_array().is_some_and(|c| c.iter().any(|c| c["id"].as_i64().is_some_and(|id| (7000..8000).contains(&id))));
+    filed || x["title"].as_str().and_then(format_of).is_some()
+}
+
+/// The same release found twice (both searches) counts once.
+fn dedup(v: Vec<Value>) -> Vec<Value> {
+    let mut seen = std::collections::HashSet::new();
+    v.into_iter().filter(|x| seen.insert(x["infoHash"].as_str().map(str::to_lowercase).unwrap_or_else(|| format!("{}|{}", x["indexer"], x["title"])))).collect()
 }
 
 fn enc(s: &str) -> String {

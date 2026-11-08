@@ -1916,7 +1916,8 @@ html.no-grid .pf-fields > * + *, html.no-grid .skel-copy > * + * { margin-top: 1
 /* Reading's hero: the banner softened behind, the cover large on the right, tilted toward you. */
 .hero.read-hero-top { min-height: min(68vh, 680px); padding-top: 104px; box-sizing: border-box; }
 .read-hero-bg { filter: blur(5px) saturate(1.12); transform: scale(1.06); opacity: 0.8; background-position: center 30%; }
-.read-hero-bg.is-cover { filter: blur(26px) saturate(1.25); transform: scale(1.18); opacity: 0.7; }
+/* No banner (most manhua and 18+ series): the cover itself, sharp, not blurred (user, 2026-11-08). */
+.read-hero-bg.is-cover { filter: none; transform: none; animation: none; opacity: 0.62; background-position: center 18%; }
 .read-hero-bg.out, .read-hero-bg.is-cover.out { opacity: 0; }
 .read-hero-art { position: absolute; z-index: 2; right: calc(var(--gutter) + 4vw); bottom: calc(10vh + 34px); width: clamp(170px, 15vw, 280px); aspect-ratio: 2 / 3; perspective: 900px; pointer-events: none; }
 .read-hero-art img { width: 100%; height: 100%; object-fit: cover; border-radius: 12px; box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.08);
@@ -1935,7 +1936,7 @@ html.no-grid .pf-fields > * + *, html.no-grid .skel-copy > * + * { margin-top: 1
 .skel-row { height: 290px; margin: 0 var(--gutter) 30px; border-radius: 10px; background: var(--surface); opacity: 0.5; }
 
 .read-hero { overflow: hidden; min-height: 340px; }
-.read-hero-blur { position: absolute; top: -30px; right: -30px; bottom: -30px; left: -30px; background: center 30% / cover no-repeat; filter: blur(28px) saturate(1.2); opacity: 0.55; transform: scale(1.05); }
+.read-hero-blur { position: absolute; top: 0; right: 0; bottom: 0; left: 0; background: center 18% / cover no-repeat; opacity: 0.6; }
 .read-head-row { position: relative; display: flex; align-items: flex-end; gap: 26px; }
 .read-poster { width: 150px; aspect-ratio: 2 / 3; height: auto; object-fit: cover; border-radius: 8px; box-shadow: 0 18px 50px rgba(0,0,0,0.55); flex: none; }
 /* The cover in the series panel, the same tilt as the reading hero; it straightens on hover. */
@@ -2557,3 +2558,8 @@ body[data-rstyle="classic"] .read-page .tile .rc-extra.cl-line { flex-direction:
 .row-head .row-title:hover h2 { color: var(--accent-tint); }
 body[data-rshade="light"] .row-head .row-title:hover h2 { color: var(--accent); }
 .read-back { height: 36px; padding: 0 14px 0 10px; font-size: 14px; }
+/* Settings > Download sites: which sites serve books, and the manga sites. */
+.site-tag { margin-left: 8px; padding: 1px 7px; border-radius: 5px; background: rgba(var(--accent-rgb), 0.16); color: var(--accent-tint); font: 700 10.5px/1.6 var(--display); letter-spacing: 0.04em; text-transform: uppercase; vertical-align: middle; }
+body[data-rshade="light"] .site-tag { color: var(--accent); }
+.manga-sites .chips { margin-top: 10px; }
+.chip.static { cursor: default; height: 30px; padding: 0 12px; font-size: 13px; display: inline-flex; align-items: center; }

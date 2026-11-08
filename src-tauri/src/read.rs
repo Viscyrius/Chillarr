@@ -658,8 +658,13 @@ pub struct BookShelf {
     pub progress: Option<f64>,
     /// Read so far, 0..1, for this profile.
     pub read: f64,
+    /// 90% in, or past the last page: counts as read (BOOK_DONE).
+    pub finished: bool,
     pub at: i64,
 }
+
+/// How far into a book counts as finished.
+pub const BOOK_DONE: f64 = 0.9;
 
 pub async fn books(app: &AppHandle) -> Result<Vec<BookShelf>, String> {
     let uid = uid(app)?;
@@ -679,8 +684,11 @@ pub async fn books(app: &AppHandle) -> Result<Vec<BookShelf>, String> {
                 .map(|s| if s.read.contains_key(&-1) { 1.0 } else if s.pages > 0 { ((s.chapter as f64) + s.page as f64 / 1000.0) / s.pages as f64 } else { 0.0 })
                 .unwrap_or(0.0)
                 .clamp(0.0, 1.0);
+            // Most books end in notes, thanks and previews: 90% in counts as read
+            // (user, 2026-11-08). The place itself is kept, to go on from there.
+            let finished = read >= BOOK_DONE;
             let at = spot.map(|s| s.at).unwrap_or(b.added);
-            BookShelf { ready: b.file.is_some(), progress, read, at, book: b }
+            BookShelf { ready: b.file.is_some(), progress, read, finished, at, book: b }
         })
         .collect();
     out.sort_by(|a, b| b.at.cmp(&a.at));
