@@ -1022,6 +1022,7 @@ pub fn spawn(app: AppHandle) {
                 let mut rep = crate::fix::FixReport::default();
                 crate::fix::import_finished_step(&app, &mut rep).await;
                 crate::downloads_home::clear_orphans(&app).await;
+                crate::read::clean_up(&app).await;
             }
             check(&app, &mut seen).await;
             crate::history::sync(&app).await;

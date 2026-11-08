@@ -296,7 +296,11 @@ fn need(cmd: &str) -> Option<Need> {
         // Only for a viewer who is one of Chillarr's profiles (profiles.rs).
         | "profiles_list" | "profiles_switch_web" | "profiles_add"
         // The phone remote's code for the device asking, and only that one.
-        | "remote_device" => Need::Viewer,
+        | "remote_device"
+        // Reading (read.rs): each profile its own progress; following a
+        // series downloads it, like Download does for a film.
+        | "read_rows" | "read_search" | "read_library" | "read_detail" | "read_sources" | "read_follow" | "read_open" | "read_progress" | "read_mode" | "read_mark" => Need::Viewer,
+        "read_unfollow" => Need::Delete,
         "media_delete" | "media_delete_episodes" | "media_stop_download" | "media_stop_waiting" => Need::Delete,
         "storage_overview" | "storage_set_cleanup" | "library_scan" | "library_stats" | "seeding" | "set_seeding" | "get_settings" | "shelf_status" | "meili_status" | "subs_status" => Need::Admin,
         _ => return None,
@@ -355,6 +359,17 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
             ok(st)
         }
         "media_rows" => res(media::rows(app, &arg::<String>(a, "tab")?).await),
+        "read_rows" => res(crate::read::rows(app).await),
+        "read_search" => res(crate::read::search(&arg::<String>(a, "term")?).await),
+        "read_library" => res(crate::read::library(app).await),
+        "read_detail" => res(crate::read::detail(app, &arg::<String>(a, "key")?).await),
+        "read_sources" => res(crate::read::sources(app, &arg(a, "meta")?).await),
+        "read_follow" => res(crate::read::follow(app, arg(a, "meta")?, arg(a, "pick")?, arg(a, "from")?).await),
+        "read_unfollow" => res(crate::read::unfollow(app, &arg::<String>(a, "key")?, arg(a, "delete")?).await),
+        "read_open" => res(crate::read::open(app, &arg::<String>(a, "key")?, arg(a, "chapter")?).await),
+        "read_progress" => res(crate::read::set_spot(app, &arg::<String>(a, "key")?, arg(a, "chapter")?, arg(a, "page")?, arg(a, "pages")?)),
+        "read_mode" => res(crate::read::set_mode(app, &arg::<String>(a, "key")?, &arg::<String>(a, "mode")?)),
+        "read_mark" => res(crate::read::mark(app, &arg::<String>(a, "key")?, &arg::<Vec<i64>>(a, "chapters")?, arg(a, "read")?)),
         "media_episodes" => ok(media::episodes(app, &arg::<String>(a, "seriesId")?).await),
         "media_search" => ok(media::search(app, &arg::<String>(a, "term")?).await),
         "media_search_live" => ok(crate::search::live(app.clone(), arg(a, "term")?, arg(a, "seq")?).await),
@@ -650,6 +665,39 @@ async fn reply(sock: &mut TcpStream, origin: Option<&str>, status: &str, kind: &
     sock.shutdown().await
 }
 
+/// A reading page: the ticket in its address never changes, so it may be cached.
+async fn reply_page(sock: &mut TcpStream, origin: Option<&str>, status: &str, kind: &str, body: &[u8]) -> std::io::Result<()> {
+    let cache = if status.starts_with("200") { "private, max-age=21600, immutable" } else { "no-store" };
+    let head = format!(
+        "HTTP/1.1 {status}
+
+Content-Type: {kind}
+
+Content-Length: {}
+
+Cache-Control: {cache}
+
+X-Content-Type-Options: nosniff
+
+{}Connection: close
+
+
+
+",
+        body.len(),
+        cors(origin)
+    );
+    sock.write_all(head.as_bytes()).await?;
+    sock.write_all(body).await?;
+    sock.shutdown().await
+}
+
+/// This PC's own address for the bridge, for the window's reader.
+pub fn local_base() -> Option<String> {
+    let p = PORT.load(Ordering::Relaxed);
+    (p != 0).then(|| format!("http://localhost:{p}"))
+}
+
 async fn error(sock: &mut TcpStream, origin: Option<&str>, status: &str, msg: &str) -> std::io::Result<()> {
     reply(sock, origin, status, "application/json", json!({ "error": msg }).to_string().as_bytes()).await
 }
@@ -697,6 +745,14 @@ async fn serve(app: AppHandle, mut sock: TcpStream, gate: Gate) -> std::io::Resu
     let (method, path) = (first.next().unwrap_or_default(), first.next().unwrap_or_default());
     if method == "OPTIONS" {
         return reply(&mut sock, origin, "204 No Content", "text/plain", b"").await;
+    }
+    // A reading page. The random ticket is the permission (read.rs hands it out
+    // to a signed-in viewer who opened that chapter), as an <img> sends no headers.
+    if method == "GET" && path.starts_with("/read/") {
+        let a = app.clone();
+        let p = path.to_string();
+        let (status, kind, body) = tokio::task::spawn_blocking(move || crate::read::serve(&a, &p)).await.unwrap_or(("500 Internal Server Error", "text/plain", vec![]));
+        return reply_page(&mut sock, origin, status, kind, &body).await;
     }
     if method == "GET" && (path == "/events" || path.starts_with("/events?")) {
         let q = query(path);

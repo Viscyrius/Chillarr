@@ -28,6 +28,13 @@ const FLARE_TAG: &str = "v3.5.2";
 const FLARE_ZIP: &str = "flaresolverr_windows_x64.zip";
 const FLARE_SHA256: &str = "309abd7c821546325ae6c509b40d969c5e39034be2314d21b3f5e0517feda7a7";
 
+/// Suwayomi-Server v2.4.2366 (released 2026-09-30), the Windows bundle with
+/// its own Java. The hash is of the asset as downloaded on 2026-11-08 and
+/// equals the digest GitHub's API publishes for it.
+pub const SUWA_TAG: &str = "v2.4.2366";
+const SUWA_ZIP: &str = "Suwayomi-Server-v2.4.2366-windows-x64.zip";
+const SUWA_SHA256: &str = "b955f374a8d94b8d1c2750ae28fa7eb2066b479957561b5ba9cf8ac993c8fc13";
+
 pub fn source(id: AppId) -> Source {
     match id {
         AppId::Sonarr => Source::Winget("TeamSonarr.Sonarr"),
@@ -36,6 +43,7 @@ pub fn source(id: AppId) -> Source {
         AppId::QBittorrent => Source::Winget("qBittorrent.qBittorrent"),
         AppId::Jellyfin => Source::Winget("Jellyfin.Server"),
         AppId::FlareSolverr => Source::GithubZip { repo: "FlareSolverr/FlareSolverr", tag: FLARE_TAG, asset: FLARE_ZIP, sha256: FLARE_SHA256 },
+        AppId::Suwayomi => Source::GithubZip { repo: "Suwayomi/Suwayomi-Server", tag: SUWA_TAG, asset: SUWA_ZIP, sha256: SUWA_SHA256 },
     }
 }
 
@@ -54,6 +62,17 @@ pub fn asset_url(repo: &str, tag: &str, asset: &str) -> String {
 #[cfg(test)]
 pub fn trusted_download(url: &str) -> bool {
     url.starts_with("https://github.com/")
+}
+
+/// Where a pinned zip is unpacked.
+pub fn zip_dir(id: AppId) -> PathBuf {
+    if id == AppId::Suwayomi { suwa_dir() } else { flare_dir() }
+}
+
+/// Where Chillarr puts the Suwayomi it installed. Its data lives apart
+/// (suwayomi::data_dir), so an update can replace this folder whole.
+pub fn suwa_dir() -> PathBuf {
+    PathBuf::from(std::env::var_os("LOCALAPPDATA").unwrap_or_default()).join("Chillarr").join("Suwayomi")
 }
 
 /// Where Chillarr puts a FlareSolverr it installed.

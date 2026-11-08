@@ -437,6 +437,8 @@
 
   window.__TAURI__ = { core: { invoke }, event: { listen } };
   window.__CHILLARR_WEB__ = true;
+  // The reader builds page addresses on the bridge (read.rs serves them).
+  window.__CHILLARR_BRIDGE__ = () => base();
 
   /* ---------- Settings and profiles ---------- */
   /** This device's key for the main profile, once its password was typed here (per server). */
