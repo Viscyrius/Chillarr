@@ -7,7 +7,12 @@
 // Chat: everyone in the party can type to each other while it plays. SyncPlay
 // has no messages, so Chillarr carries them (syncplay.rs `say`): the window
 // hears a Tauri event, a web page its bridge stream, the same "together-chat".
-import { $, el, getPref, icon, invoke, listen, setPref, store, toast } from "./api.js";
+//
+// Host tools (syncplay.rs `Room`): whoever made the party is its host. They
+// can lock it or ask for a password, remove someone, and turn on "Only I
+// control". The PC holds and enforces all of it; this page only shows it and
+// asks. Joining goes through syncplay_join, never Jellyfin's Join directly.
+import { $, ask, el, getPref, icon, invoke, listen, setPref, store, toast } from "./api.js";
 import { syncControl as player } from "./player.js";
 
 const TICKS = 1e7;
@@ -28,8 +33,25 @@ const g = { id: null, name: "", people: [], itemId: null, playlistItemId: null, 
 // Join back (#36): this player is opening the party's title to catch up with
 // it. Local only: nothing is sent to the party until it can play from there.
 let rejoin = null;
+// The party's host tools as this profile sees them (syncplay_room), or null
+// when Chillarr doesn't know the party (made in a Jellyfin app before it saw it).
+let room = null;
+// The host removed this profile: say so once, not "You left".
+let kicked = false;
 
 export const inGroup = () => !!g.id;
+/** "Only I control" is on and this profile isn't the host. */
+const controlled = () => !!(g.id && room && room.host_only && !room.host);
+const hostHasIt = () => { toast("The host is in control."); };
+
+async function loadRoom() {
+  if (!g.id) { room = null; return; }
+  const id = g.id;
+  const r = await invoke("syncplay_room", { group: id }).catch(() => null);
+  if (g.id !== id) return;
+  room = r;
+  draw();
+}
 
 /* ---------- Clock ---------- */
 // Jellyfin writes 7 decimal places; Date.parse wants at most 3.
@@ -91,7 +113,9 @@ function groupUpdate(u) {
   switch (u.Type) {
     case "GroupJoined":
       Object.assign(g, { id: u.GroupId, name: u.Data.GroupName, people: u.Data.Participants || [], state: u.Data.State || "Idle" });
+      kicked = false;
       startTimers();
+      loadRoom();
       toast(`You're in ${g.name}.`);
       // Started while watching something: bring the group to it.
       // Started a party while watching something: bring the group to it. Only
@@ -103,10 +127,13 @@ function groupUpdate(u) {
     case "UserJoined":
       if (!g.people.includes(u.Data)) g.people.push(u.Data);
       notice(`${u.Data} joined the watch party.`);
+      // The PC checks they came in through Chillarr while it's locked.
+      invoke("syncplay_seen", { group: g.id, name: u.Data }).catch(() => {});
       break;
     case "UserLeft":
       g.people = g.people.filter((p) => p !== u.Data);
       notice(`${u.Data} left the watch party.`);
+      invoke("syncplay_gone", { group: g.id, name: u.Data }).catch(() => {});
       break;
     case "GroupLeft":
     case "NotInGroup":
@@ -283,6 +310,7 @@ function startTimers() {
 
 function leftGroup() {
   const was = g.name;
+  room = null;
   chatReset();
   Object.assign(g, { id: null, name: "", people: [], itemId: null, playlistItemId: null, state: "Idle", cmd: null, startWhenReady: false, startTicks: 0, title: "" });
   rejoin = null;
@@ -294,18 +322,22 @@ function leftGroup() {
   waitingReady = false;
   easing = false;
   player.rate(1);
-  if (was) toast(`You left ${was}.`);
+  if (was) toast(kicked ? "You were removed from the party." : `You left ${was}.`, kicked);
+  kicked = false;
   draw();
 }
 
 /* ---------- What the player asks for while in a party ---------- */
-export function requestPlay() { call("/SyncPlay/Unpause").catch((e) => toast(String(e), true)); }
-export function requestPause() { call("/SyncPlay/Pause").catch((e) => toast(String(e), true)); }
-export function requestSeek(seconds) { call("/SyncPlay/Seek", { PositionTicks: Math.round(Math.max(0, seconds) * TICKS) }).catch((e) => toast(String(e), true)); }
+// With "Only I control" on, nothing is sent for anyone but the host (the PC
+// refuses them too).
+export function requestPlay() { if (controlled()) { hostHasIt(); return; } call("/SyncPlay/Unpause").catch((e) => toast(String(e), true)); }
+export function requestPause() { if (controlled()) { hostHasIt(); return; } call("/SyncPlay/Pause").catch((e) => toast(String(e), true)); }
+export function requestSeek(seconds) { if (controlled()) { hostHasIt(); return; } call("/SyncPlay/Seek", { PositionTicks: Math.round(Math.max(0, seconds) * TICKS) }).catch((e) => toast(String(e), true)); }
 
 /** Something was started in this player: the whole party switches to it. */
 export function startedHere(tile, at, playing = true) {
   if (!g.id || !tile?.jf_id || tile.jf_id === g.itemId) return;
+  if (controlled()) { hostHasIt(); return; }
   g.itemId = tile.jf_id;
   g.startWhenReady = playing;
   call("/SyncPlay/SetNewQueue", { PlayingQueue: [tile.jf_id], PlayingItemPosition: 0, StartPositionTicks: Math.round((at || 0) * TICKS) }).catch((e) => toast(String(e), true));
@@ -353,12 +385,14 @@ async function create() {
   } catch (e) { creating = false; toast(String(e), true); }
 }
 
-async function join(id) {
+/** Joins through the PC, which checks the host's lock and password first. */
+async function join(id, password = null) {
   try {
     creating = false;
     await connect();
-    await call("/SyncPlay/Join", { GroupId: id });
-  } catch (e) { toast(String(e), true); }
+    await invoke("syncplay_join", { group: id, password });
+    return true;
+  } catch (e) { toast(String(e), true); return false; }
 }
 
 async function leave() {
@@ -369,13 +403,15 @@ async function leave() {
 async function draw() {
   for (const b of [$("#together-btn"), $("#p-together")]) b.classList.toggle("on", !!g.id);
   chatBtn.hidden = !g.id;
+  $("#player").classList.toggle("wt-follow", controlled());
   if (!dlg.open) return;
   const head = el("h2", { text: g.id ? g.name : "Watch together" });
   const parts = [head];
   if (g.id) {
     parts.push(
       el("div", { class: "wt-people" }, g.people.map((p) => el("span", { class: "wt-person" }, el("span", { class: "wt-dot" }), p))),
-      el("p", { class: "wt-note", text: g.itemId ? "Play, pause and skips happen for everyone. If someone's connection is slow, the party waits for them." : "Pick something to watch: everyone in the party starts it together." }),
+      el("p", { class: "wt-note", text: controlled() ? "The host is in control. Volume, subtitles and chat are still yours." : g.itemId ? "Play, pause and skips happen for everyone. If someone's connection is slow, the party waits for them." : "Pick something to watch: everyone in the party starts it together." }),
+      hostTools(),
       joinBackButton(),
       el("p", { class: "wt-note", text: "To chat with the party, press C in the player or use the chat button at the top." }),
       invite(),
@@ -388,14 +424,75 @@ async function draw() {
     parts.push(el("div", { class: "ask-actions", style: "justify-content:flex-start" }, el("button", { class: "btn primary", onclick: create }, "Start a watch party")),
       el("h3", { text: "Join one" }), list, invite(),
       el("div", { class: "ask-actions" }, el("button", { class: "btn ghost", onclick: () => dlg.close() }, "Close")));
-    call("/SyncPlay/List", null, "GET").then((groups) => {
-      const rows = (groups || []).map((x) => el("div", { class: "wt-group" },
-        el("span", {}, el("b", { text: x.GroupName }), el("small", { text: x.Participants.join(", ") })),
-        el("button", { class: "btn small primary", onclick: () => join(x.GroupId) }, "Join")));
+    Promise.all([call("/SyncPlay/List", null, "GET"), invoke("syncplay_locks").catch(() => ({}))]).then(([groups, locks]) => {
+      const rows = (groups || []).map((x) => groupRow(x, (locks || {})[x.GroupId] || "open"));
       list.replaceChildren(...(rows.length ? rows : [el("p", { class: "wt-note", text: "No parties right now. Start one, or ask a friend to." })]));
     }).catch((e) => list.replaceChildren(el("p", { class: "wt-note", text: String(e) })));
   }
   dlg.replaceChildren(...parts);
+}
+
+const LOCK_ICON = "M7 11V7a5 5 0 0 1 10 0v4M5 11h14v10H5z";
+
+/** One party in the list: Join, a password box first, or why it's shut. */
+function groupRow(x, lock) {
+  const name = el("b", { text: x.GroupName });
+  if (lock !== "open") name.prepend(el("span", { class: "wt-lock", title: lock === "locked" ? "Locked" : "Needs a password" }, icon(LOCK_ICON)));
+  const info = el("span", {}, name, el("small", { text: lock === "locked" ? "Locked. Ask the host to open it." : x.Participants.join(", ") }));
+  const row = el("div", { class: "wt-group" }, info);
+  if (lock === "locked") return row;
+  if (lock === "open") { row.append(el("button", { class: "btn small primary", onclick: () => join(x.GroupId) }, "Join")); return row; }
+  const pass = el("input", { type: "password", class: "wt-pass", maxlength: "32", placeholder: "Password", "aria-label": `Password for ${x.GroupName}`, autocomplete: "off" });
+  const go = async () => { if (!pass.value) { pass.focus(); return; } if (await join(x.GroupId, pass.value)) pass.value = ""; else { pass.select(); } };
+  pass.addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Enter" || e.keyCode === 13) { e.preventDefault(); go(); } });
+  row.append(el("span", { class: "wt-pass-row" }, pass, el("button", { class: "btn small primary", onclick: go }, "Join")));
+  return row;
+}
+
+/** Who hosts, and for the host: lock, "Only I control", Kick, Make host, Removed. */
+function hostTools() {
+  if (!room) return null;
+  const set = (args) => invoke("syncplay_set", Object.assign({ group: g.id }, args)).then((r) => { room = r; draw(); }).catch((e) => toast(String(e), true));
+  if (!room.host) {
+    return el("div", { class: "wt-host" },
+      el("p", { class: "wt-note", text: `${room.host_name || "Someone"} is the host.${room.host_only ? " The host is in control." : ""}${room.lock === "locked" ? " The party is locked." : room.lock === "password" ? " The party needs a password." : ""}` }));
+  }
+  const parts = [el("h3", { text: room.host_only ? "You're in control" : "You're the host" })];
+  // Lock party: Open, Password or Locked.
+  const pass = el("input", { type: "password", class: "wt-pass", maxlength: "32", placeholder: room.lock === "password" ? "New password (optional)" : "Password, 4 to 32 characters", "aria-label": "Party password", autocomplete: "new-password", hidden: room.lock !== "password" });
+  pass.addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Enter" || e.keyCode === 13) { e.preventDefault(); savePass(); } });
+  const savePass = () => set({ lock: "password", password: pass.value });
+  const save = el("button", { class: "btn small primary", onclick: savePass, hidden: room.lock !== "password" }, "Save password");
+  const seg = el("div", { class: "segmented", role: "group", "aria-label": "Lock party" }, ...[["open", "Open"], ["password", "Password"], ["locked", "Locked"]].map(([v, label]) =>
+    el("button", { class: room.lock === v ? "on" : "", "aria-pressed": String(room.lock === v), onclick: () => {
+      if (v === "password") { pass.hidden = false; save.hidden = false; pass.focus(); return; }
+      set({ lock: v });
+    } }, label)));
+  parts.push(el("div", { class: "wt-row" }, el("span", { text: "Lock party" }), seg), el("div", { class: "wt-row wt-pass-row" }, pass, save));
+  // Only I control.
+  const sw = el("input", { type: "checkbox", class: "switch", "aria-label": "Only I control" });
+  sw.checked = !!room.host_only;
+  sw.addEventListener("change", () => set({ hostOnly: sw.checked }));
+  sw.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.keyCode === 13) { e.preventDefault(); sw.click(); } });
+  parts.push(el("label", { class: "wt-row" }, el("span", { text: "Only I control" }), sw));
+  // People: Kick and Make host.
+  const others = room.people.filter((p) => !p.host);
+  if (others.length) {
+    parts.push(el("div", { class: "wt-list" }, ...others.map((p) => el("div", { class: "wt-group" },
+      el("span", {}, el("b", { text: p.name })),
+      el("span", { class: "wt-acts" },
+        el("button", { class: "btn small ghost", onclick: () => invoke("syncplay_host", { group: g.id, who: p.id }).then((r) => { room = r; draw(); }).catch((e) => toast(String(e), true)) }, "Make host"),
+        el("button", { class: "btn small ghost", onclick: async () => {
+          if (!(await ask(`Remove ${p.name} from the party?`, "They can't come back for 10 minutes unless you let them.", [], "Remove", "Cancel"))) return;
+          invoke("syncplay_kick", { group: g.id, who: p.id }).then((r) => { room = r; draw(); }).catch((e) => toast(String(e), true));
+        } }, "Kick")))));
+  }
+  if (room.removed.length) {
+    parts.push(el("h3", { text: "Removed" }), el("div", { class: "wt-list" }, ...room.removed.map((p) => el("div", { class: "wt-group" },
+      el("span", {}, el("b", { text: p.name }), el("small", { text: `Can come back in ${p.mins} min` })),
+      el("button", { class: "btn small ghost", onclick: () => invoke("syncplay_allow", { group: g.id, who: p.id }).then((r) => { room = r; draw(); }).catch((e) => toast(String(e), true)) }, "Allow back")))));
+  }
+  return el("div", { class: "wt-host" }, ...parts);
 }
 
 /** "Join back: Title, 1:12:40", the time kept current while the panel is open. */
@@ -564,3 +661,13 @@ chatInput.addEventListener("keydown", (e) => {
   if (e.key === "Escape" || [461, 10009].includes(e.keyCode)) { e.preventDefault(); toggleChat(false); }
 });
 dlg.addEventListener("click", (e) => { if (e.target === dlg) dlg.close(); });
+
+// The host changed something, or someone came or went: ask again.
+listen("together-room", (e) => { if (g.id && e.payload && e.payload.group === g.id) loadRoom(); });
+// The host removed this profile: leave the party, and the player plays on, alone.
+listen("together-kicked", (e) => {
+  if (!g.id || !e.payload || e.payload.group !== g.id) return;
+  kicked = true;
+  call("/SyncPlay/Leave").catch(() => {});
+  leftGroup();
+});

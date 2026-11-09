@@ -1099,6 +1099,23 @@ html.tv .chat-quiet { font-size: 16px; }
 .wt-invite summary { cursor: pointer; color: var(--text); font-weight: 500; }
 .wt-invite ol { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; }
 @media (prefers-reduced-motion: reduce) { .wt-dot { animation: none; } }
+/* Watch together host tools */
+.wt-host { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+.wt-host h3 { margin: 4px 0 10px; font: 600 15px var(--display); }
+.wt-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 8px 0; flex-wrap: wrap; }
+.wt-pass-row { display: flex; gap: 8px; align-items: center; }
+.wt-pass-row:empty, .wt-row.wt-pass-row > [hidden] { display: none; }
+.wt-pass { min-width: 0; flex: 1; height: 34px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--line-2); background: var(--surface); color: var(--text); font: inherit; }
+.wt-pass:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.wt-list { display: grid; gap: 8px; margin-top: 10px; }
+.wt-acts { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.wt-lock { display: inline-block; width: 14px; height: 14px; margin-right: 6px; vertical-align: -2px; color: var(--muted); }
+.wt-lock svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; }
+/* "Only I control" for someone else: their party controls rest. */
+#player.wt-follow #p-seek, #player.wt-follow #p-play, #player.wt-follow #p-skip, #player.wt-follow #p-next { opacity: 0.4; pointer-events: none; }
+html.no-flexgap .wt-pass-row > * + *, html.no-flexgap .wt-acts > * + * { margin-left: 6px; }
+html.no-grid .wt-list { display: flex; flex-direction: column; }
+html.no-grid .wt-list > * + * { margin-top: 8px; }
 
 /* My List > Completed */
 .completed { margin-top: 40px; }
@@ -2605,3 +2622,21 @@ body[data-mode="read"] #together-btn { display: none; }
 body[data-rshade="light"] .rp-dialog { box-shadow: 0 30px 80px rgba(20, 30, 50, 0.3); }
 @media (prefers-reduced-motion: reduce) { .rp-dialog { animation: none; } }
 .rp-dialog .rp-people { margin: 12px 0 20px; }
+/* Read Party host tools */
+.rp-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin: 10px 0 4px; }
+.rp-small { color: var(--muted); font-size: 13px; margin: 4px 0 10px; }
+.rp-err { color: var(--red); }
+.rp-pass { flex: 1; min-width: 0; height: 40px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--line-2); background: var(--surface); color: var(--text); font: inherit; }
+.rp-pass:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.rp-join[hidden], .rp-pass[hidden] { display: none; }
+.rp-list { display: grid; gap: 8px; margin: 8px 0 16px; }
+.rp-person { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; }
+.rp-person small { color: var(--muted); }
+.rp-center { justify-content: center; margin-bottom: 16px; }
+.rp-lock { display: inline-block; width: 22px; height: 22px; margin-right: 10px; vertical-align: 2px; color: var(--muted); }
+.rp-lock svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; }
+.rp-note { position: fixed; left: 50%; bottom: 72px; transform: translateX(-50%); z-index: var(--z-overlay); z-index: calc(var(--z-player) + 1); padding: 8px 16px; border-radius: 999px; background: rgba(0, 0, 0, 0.72); color: #fff; font: 600 14px var(--display); pointer-events: none; }
+.rp-note[hidden] { display: none; }
+html.no-flexgap .rp-row > * + *, html.no-flexgap .rp-person > * + * { margin-left: 10px; }
+html.no-grid .rp-list { display: flex; flex-direction: column; }
+html.no-grid .rp-list > * + * { margin-top: 8px; }

@@ -20,7 +20,7 @@
 // (Chrome 61; scrolling is eased by hand), CSS transitions on transform and
 // opacity only. Motion is cut when the system asks for less.
 import { el, icon, ICON, invoke, toast, WEB, getPref, setPref, screenMode, windowFull } from "./api.js";
-import { attachReader, detachReader, moved as partyMoved, panel as partyPanel, partyIcon } from "./readparty.js";
+import { attachReader, detachReader, following as partyFollowing, moved as partyMoved, nudge as partyNudge, panel as partyPanel, partyIcon, scrolled as partyScrolled } from "./readparty.js";
 
 const MODES = [
   { id: "webtoon", label: "Scroll" },
@@ -59,13 +59,47 @@ export async function openReader(key, chapter, onClose = null) {
   r.key = key;
   load(opened, root);
   // Read Party: where this reader is, and how a party moves it.
-  attachReader({ where: () => (r && r.o && r.o.chapter ? { key: r.key, chapter: r.o.chapter.id, page: r.page } : null), go: partyGo });
+  attachReader({ where: partyWhere, go: partyGo });
 }
 
-/** A reading party moved: to that page, or that chapter first. */
-async function partyGo(chapter, page) {
-  if (!r || !r.o) return;
-  if (r.o.chapter && r.o.chapter.id === chapter) { goTo(Math.max(0, Math.min(page, r.o.pages.length - 1)), true, 0); return; }
+/** Where this reader is for a reading party: the page, and how far down it
+ *  (0 to 1). Screens, zoom and page widths differ, so never pixels. */
+function partyWhere() {
+  if (!r || !r.o || !r.o.chapter) return null;
+  const s = r.stage;
+  let frac = 0;
+  if (r.mode === "webtoon") {
+    const a = r.cells ? takeAnchor(0, s.clientHeight / 3) : null;
+    if (a) return { key: r.key, chapter: r.o.chapter.id, page: a.i, frac: Math.max(0, Math.min(1, a.y)) };
+  } else {
+    const room = s.scrollHeight - s.clientHeight;
+    frac = room > 4 ? s.scrollTop / room : 0;
+  }
+  return { key: r.key, chapter: r.o.chapter.id, page: r.page, frac };
+}
+
+/** A reading party moved: to that page, or that chapter first. With `frac`
+ *  (Follow me) it glides to the same spot on the page. Returns false while
+ *  that page isn't loaded yet here ("Catching up"). */
+async function partyGo(chapter, page, frac) {
+  if (!r || !r.o) return true;
+  if (r.o.chapter && r.o.chapter.id === chapter) {
+    page = Math.max(0, Math.min(page, r.o.pages.length - 1));
+    if (frac == null) { goTo(page, true, 0); return true; }
+    const s = r.stage;
+    if (r.mode === "webtoon") {
+      const c = r.cells && r.cells[page];
+      if (!c) return false;
+      if (!c.classList.contains("loaded") && Math.abs(c.offsetTop - s.scrollTop) > s.clientHeight * 2) { s.scrollTop = c.offsetTop; return false; }
+      const want = c.offsetTop + frac * c.offsetHeight - s.clientHeight / 3;
+      glideTo(want);
+      return c.classList.contains("loaded");
+    }
+    const spread = r.spreads.find((x) => x.includes(page));
+    if (!spread || !spread.includes(r.page)) goTo(page, true, 0);
+    glideTo(frac * Math.max(0, s.scrollHeight - s.clientHeight));
+    return true;
+  }
   try {
     const o = await invoke("read_open", { key: r.key, chapter });
     if (!r) return;
@@ -93,7 +127,7 @@ function build(onClose) {
   const prevCh = el("button", { class: "rd-btn rd-ch", onclick: () => jumpChapter(-1) }, "Previous chapter");
   const nextCh = el("button", { class: "rd-btn rd-ch", onclick: () => jumpChapter(1) }, "Next chapter");
   const slider = el("input", { class: "rd-slider", type: "range", min: "0", max: "0", value: "0", "aria-label": "Page" });
-  slider.addEventListener("input", () => goTo(+slider.value, false, 0));
+  slider.addEventListener("input", () => { if (partyFollowing()) { slider.value = String(r.page); partyNudge(); return; } goTo(+slider.value, false, 0); });
   const bottom = el("div", { class: "rd-bar rd-bottom" }, prevCh, slider, nextCh);
   const fill = el("i");
   const progress = el("div", { class: "rd-progress", "aria-hidden": "true" }, fill);
@@ -395,10 +429,19 @@ function pageAt(y) {
 function onScroll() {
   if (!r) return;
   calmBars();
+  partyScrolled();
   if (r.mode !== "webtoon" || !r.cells) return;
   // The page at the top third of the screen is the one you're on.
   const lo = pageAt(r.stage.scrollTop + r.stage.clientHeight / 3);
   if (lo !== r.page) { r.page = lo; paintCount(); saveSoon(); }
+}
+
+/** Eases to `top`, unless it's already there. */
+function glideTo(top) {
+  const s = r.stage;
+  const at = r.glide ? r.glide.to : s.scrollTop;
+  if (Math.abs(top - at) < 3) return;
+  glideBy(top - at);
 }
 
 /** Eases the column by `dy`; presses while it's moving add up. */
@@ -541,6 +584,8 @@ function turn(old, sp, dir) {
 function step(dir) {
   // dir: +1 = onward in the story.
   if (r.fading) return;
+  // Follow me: the host turns the pages.
+  if (partyFollowing()) { partyNudge(); return; }
   if (r.mode === "webtoon") { glideBy(dir * r.stage.clientHeight * 0.85); return; }
   const at = r.spreads.findIndex((s) => s.includes(r.page));
   const next = at + dir;
@@ -550,6 +595,7 @@ function step(dir) {
 }
 
 async function jumpChapter(dir, toEnd = false) {
+  if (partyFollowing()) { partyNudge(); return; }
   const id = dir > 0 ? r.o.next : r.o.prev;
   if (id == null) return;
   saveNow();
