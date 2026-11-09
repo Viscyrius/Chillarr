@@ -135,30 +135,35 @@ pub async fn stop(app: &AppHandle, name: &str, id: i64) -> Result<String, String
 
 /// Cancels everything a title is downloading (the torrents leave qBittorrent,
 /// half-done data included) and makes sure it doesn't start again: a title
-/// with no files and `forget` set leaves Radarr/Sonarr; otherwise what was
-/// downloading is no longer wanted, so the next search doesn't grab it again.
+/// with no files and `forget` set leaves Radarr/Sonarr; otherwise it stops
+/// being wanted (a movie, or for a show the whole series: every episode it
+/// still lacks), so no search or new release grabs any of it again.
+/// A torrent Watch now is playing from for someone is left alone.
 pub async fn stop_item(app: &AppHandle, owner: AppId, id: i64, forget: bool) -> Result<String, String> {
     let (kind, field) = if owner == AppId::Radarr { ("movie", "movieId") } else { ("series", "seriesId") };
     let a = arr(app, owner).ok_or_else(|| format!("{} isn't running", owner.label()))?;
     app.state::<Media>().stop_following(owner, id);
     let item = a.get_one(&format!("{kind}/{id}")).await.map_err(|e| format!("{} couldn't find it: {e}", owner.label()))?;
     let title = item["title"].as_str().unwrap_or("it").to_string();
-    let recs: Vec<Value> = a.get_one("queue?pageSize=2000").await.unwrap_or_default()["records"]
+    let watch_now = app.state::<crate::watchnow::WatchNow>().owned_set();
+    let all: Vec<Value> = a.get_one("queue?pageSize=2000").await.unwrap_or_default()["records"]
         .as_array()
         .map(|r| r.iter().filter(|x| x[field].as_i64() == Some(id)).cloned().collect())
         .unwrap_or_default();
+    let (recs, held) = split_watch_now(all, &watch_now);
     let grabs = grab_records(&a, owner, id).await;
-    let grabbed = hashes_of(&grabs);
+    let grabbed: Vec<String> = hashes_of(&grabs).into_iter().filter(|h| !watch_now.contains(h)).collect();
     remove_from_queue(&a, &recs).await?;
     let deleted = delete_unfinished(app, &grabbed).await;
     // A missing field counts as "has files": the title is only forgotten when it surely has none.
     let files = if owner == AppId::Radarr { (item["hasFile"] != false) as i64 } else { item["statistics"]["episodeFileCount"].as_i64().unwrap_or(1) };
-    if forget && files == 0 {
+    // Someone watching an episode through Watch now keeps the show in Sonarr,
+    // so that episode can still come into the library.
+    if forget && files == 0 && !held {
         a.delete(&format!("{kind}/{id}?deleteFiles=false&addImportExclusion=false")).await.map_err(|e| format!("Couldn't stop {title}: {e}"))?;
         // A finished torrent that never made it in would seed on with nothing
         // owning it (Meet Joe Black, 2026-11-08): it goes too, outside the library only.
-        // Never a torrent Watch now is playing from for someone.
-        let watch_now = app.state::<crate::watchnow::WatchNow>().owned_set();
+        // Never a torrent Watch now is playing from for someone (left out of `grabbed` above).
         let left: Vec<String> = grabbed.iter().filter(|h| !deleted.contains(h) && !watch_now.contains(*h)).cloned().collect();
         if let (Some(q), false) = (qbit(app), left.is_empty()) {
             let safe = crate::storage::safe_to_delete_files(app, &q, &left).await;
@@ -166,12 +171,13 @@ pub async fn stop_item(app: &AppHandle, owner: AppId, id: i64, forget: bool) -> 
         }
         return Ok(format!("Stopped {title}."));
     }
-    // A grab not in the queue yet (stopped right after it) has its torrent
-    // deleted above: its episodes stop being wanted too, or the next search
-    // grabs them again.
-    let mut covered = recs.clone();
-    covered.extend(grabs_of(&grabs, &deleted));
-    unwant(&a, owner, id, &covered).await;
+    if owner == AppId::Sonarr {
+        // The whole series: every episode it still lacks, not just the ones
+        // that were downloading, or Sonarr fetches the rest.
+        unwant_series(&a, id).await;
+    } else {
+        unwant(&a, owner, id, &recs).await;
+    }
     Ok(if recs.is_empty() { format!("Stopped {title}.") } else { format!("Cancelled the download of {title}.") })
 }
 
@@ -187,16 +193,6 @@ fn hashes_of(grabs: &[Value]) -> Vec<String> {
     out.sort();
     out.dedup();
     out
-}
-
-/// The grabs of these torrents, as stand-ins for queue rows (with
-/// `episodeId` for a show). No queue id, so remove_from_queue skips them.
-fn grabs_of(grabs: &[Value], hashes: &[String]) -> Vec<Value> {
-    grabs
-        .iter()
-        .filter(|r| r["downloadId"].as_str().is_some_and(|h| hashes.contains(&h.to_ascii_lowercase())))
-        .map(|r| json!({ "episodeId": r["episodeId"].clone() }))
-        .collect()
 }
 
 pub(crate) fn qbit(app: &AppHandle) -> Option<crate::qbit::Qbit> {
@@ -592,6 +588,44 @@ async fn remove_from_queue(a: &crate::arr::Arr, recs: &[Value]) -> Result<(), St
     a.delete_with("queue/bulk?removeFromClient=true&blocklist=false", &json!({ "ids": ids })).await.map_err(|e| format!("Couldn't cancel the download: {e}"))
 }
 
+/// Queue rows split into the ones to cancel and whether any were left alone
+/// because Watch now is playing from them (`owned` holds lower-case hashes).
+fn split_watch_now(rows: Vec<Value>, owned: &HashSet<String>) -> (Vec<Value>, bool) {
+    let mut held = false;
+    let keep: Vec<Value> = rows
+        .into_iter()
+        .filter(|r| {
+            let mine = r["downloadId"].as_str().is_some_and(|d| owned.contains(&d.to_ascii_lowercase()));
+            held |= mine;
+            !mine
+        })
+        .collect();
+    (keep, held)
+}
+
+/// A show's monitored episodes that have no file yet: what Sonarr would still go and get.
+fn wanted_episodes(eps: &[Value]) -> Vec<i64> {
+    eps.iter().filter(|e| e["monitored"] == true && e["hasFile"] != true).filter_map(|e| e["id"].as_i64()).collect()
+}
+
+/// A whole show stops being wanted: the series is unmonitored (so new
+/// episodes and seasons aren't grabbed as they air) and so is every episode
+/// it still lacks. What's on disk stays. Download on the show later turns
+/// monitoring back on (pick.rs).
+async fn unwant_series(a: &crate::arr::Arr, id: i64) {
+    if let Ok(mut s) = a.get_one(&format!("series/{id}")).await {
+        if s["monitored"] != false {
+            s["monitored"] = json!(false);
+            let _ = a.update(&format!("series/{id}"), &s).await;
+        }
+    }
+    let eps = a.list(&format!("episode?seriesId={id}")).await.unwrap_or_default();
+    let wanted = wanted_episodes(&eps);
+    if !wanted.is_empty() {
+        let _ = a.update("episode/monitor", &json!({ "episodeIds": wanted, "monitored": false })).await;
+    }
+}
+
 /// What a cancelled download was for stops being wanted: the movie, or just
 /// those episodes, so Radarr/Sonarr don't fetch it straight back.
 async fn unwant(a: &crate::arr::Arr, owner: AppId, id: i64, recs: &[Value]) {
@@ -842,8 +876,10 @@ pub async fn downloads(app: &AppHandle) -> Vec<Download> {
 /// Cancels one torrent: out of qBittorrent, and what it was for stops being
 /// wanted. A title left with nothing on disk and nothing else downloading
 /// leaves Radarr/Sonarr altogether, so it doesn't sit on the waiting list and
-/// get fetched again.
-pub async fn stop_download(app: &AppHandle, name: &str, download_id: &str) -> Result<String, String> {
+/// get fetched again. With `whole` set, a show's torrent stops the whole
+/// series instead (every download and every episode it still wants, see
+/// `stop_item`); a movie's is the same either way.
+pub async fn stop_download(app: &AppHandle, name: &str, download_id: &str, whole: bool) -> Result<String, String> {
     // The torrent can be one Radarr/Sonarr grabbed but hasn't queued (or has
     // already let go of): find its owner from the queue, then the history.
     let mut found: Option<(AppId, crate::arr::Arr, Vec<Value>, i64)> = None;
@@ -891,6 +927,18 @@ pub async fn stop_download(app: &AppHandle, name: &str, download_id: &str) -> Re
         log(app, Level::Ok, &msg);
         return Ok(msg);
     };
+    if whole && owner == AppId::Sonarr {
+        let msg = stop_item(app, owner, id, true).await?;
+        // A torrent with no grab record in Sonarr's history (seen by the
+        // queue only) isn't in stop_item's list; this one goes for sure.
+        if let Some(q) = qbit(app) {
+            if !app.state::<crate::watchnow::WatchNow>().owned_set().contains(&download_id.to_ascii_lowercase()) {
+                let _ = q.delete(&[download_id.to_ascii_lowercase()], true).await;
+            }
+        }
+        log(app, Level::Ok, &msg);
+        return Ok(msg);
+    }
     app.state::<Media>().stop_following(owner, id);
     remove_from_queue(&a, &recs).await?;
     // Removing a queue row takes the torrent with it; one that wasn't queued goes here.
@@ -1192,6 +1240,26 @@ mod tests {
     }
 
     #[test]
+    fn stopping_a_series_unwants_every_episode_it_still_lacks() {
+        let ep = |id: i64, monitored: bool, has: bool| json!({ "id": id, "monitored": monitored, "hasFile": has });
+        // 1-2 downloaded, 3-4 wanted, 5 already off, 6 missing its hasFile (counts as wanted).
+        let eps = [ep(1, true, true), ep(2, false, true), ep(3, true, false), ep(4, true, false), ep(5, false, false), json!({ "id": 6, "monitored": true })];
+        assert_eq!(wanted_episodes(&eps), vec![3, 4, 6]);
+        assert!(wanted_episodes(&[]).is_empty());
+    }
+
+    #[test]
+    fn stopping_a_series_leaves_watch_now_torrents_alone() {
+        let row = |id: i64, d: &str| json!({ "id": id, "downloadId": d, "seriesId": 7 });
+        let owned: HashSet<String> = ["abc".to_string()].into();
+        let (keep, held) = split_watch_now(vec![row(1, "ABC"), row(2, "DEF"), json!({ "id": 3, "seriesId": 7 })], &owned);
+        assert_eq!(keep.iter().filter_map(|r| r["id"].as_i64()).collect::<Vec<_>>(), vec![2, 3]);
+        assert!(held, "a Watch now torrent keeps the show in Sonarr");
+        let (keep, held) = split_watch_now(vec![row(2, "DEF")], &owned);
+        assert_eq!((keep.len(), held), (1, false));
+    }
+
+    #[test]
     fn a_show_stays_while_other_episodes_are_wanted() {
         let ep = |id: i64, monitored: bool, has: bool| json!({ "id": id, "monitored": monitored, "hasFile": has });
         let cancelled: HashSet<i64> = [1, 2].into_iter().collect();
@@ -1217,13 +1285,9 @@ mod tests {
         assert!(files_to_skip(&files, &release, &[]).is_empty());
     }
     #[test]
-    fn a_stop_right_after_a_grab_unwants_what_the_grab_was_for() {
+    fn grabbed_torrents_are_listed_once_in_lower_case() {
         let grab = |h: &str, e: i64| json!({ "eventType": "grabbed", "downloadId": h, "episodeId": e });
         let grabs = vec![grab("AAA", 1), grab("AAA", 2), grab("bbb", 3), grab("CCC", 4)];
         assert_eq!(hashes_of(&grabs), vec!["aaa", "bbb", "ccc"]);
-        // AAA was still downloading and got deleted; bbb had finished and stays.
-        let ids: Vec<i64> = grabs_of(&grabs, &["aaa".to_string()]).iter().filter_map(|r| r["episodeId"].as_i64()).collect();
-        assert_eq!(ids, vec![1, 2]);
-        assert!(grabs_of(&grabs, &["aaa".to_string()]).iter().all(|r| r["id"].is_null()), "no queue id: never sent to the queue");
     }
 }

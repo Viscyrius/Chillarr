@@ -133,10 +133,16 @@ export function toast(msg, bad = false) {
 
 /** The question on screen's answer, until it closes. */
 let answer = null;
-$("#ask").addEventListener("close", () => { const a = answer; answer = null; a?.($("#ask").returnValue === "yes"); });
+$("#ask").addEventListener("close", () => { const a = answer; answer = null; a?.($("#ask").returnValue); });
 
 /** A themed yes/no question. Resolves true on yes. `no` names the other button. */
 export function ask(title, body, items = [], yes = "Install", no = "Not now") {
+  return choose(title, body, items, yes, no).then((v) => v === "yes");
+}
+
+/** The same question with two real answers: resolves "yes", "no", or null
+ *  when it's closed without either (Esc, or another question taking over). */
+export function choose(title, body, items = [], yes = "Install", no = "Not now") {
   $("#ask-title").textContent = title;
   $("#ask-body").textContent = body;
   $("#ask-yes").textContent = yes;
@@ -148,13 +154,13 @@ export function ask(title, body, items = [], yes = "Install", no = "Not now") {
   // this one instead of closing under it.
   const before = answer;
   answer = null;
-  before?.((!d.open || d.classList.contains("closing")) && d.returnValue === "yes");
+  before?.((!d.open || d.classList.contains("closing")) && d.returnValue === "yes" ? "yes" : null);
   d.returnValue = "";
   d.classList.remove("closing");
   if (!d.open) d.showModal();
   d.querySelectorAll("button[value]").forEach((b) => (b.onclick = (e) => { e.preventDefault(); d.returnValue = b.value; closeDialog(d); }));
   $("#ask-yes").focus();
-  return new Promise((done) => (answer = done));
+  return new Promise((done) => (answer = (v) => done(v === "yes" || v === "no" ? v : null)));
 }
 
 /** Closes a dialog with its fade-out instead of snapping shut. Opened again
