@@ -1166,7 +1166,7 @@ async function pickChapters(c, x, state, list, mine, found, fill) {
   let last = null;
   const count = el("strong");
   const goBtn = el("button", { class: "btn primary" }, icon(ICON.download), "");
-  const newToo = el("input", { type: "checkbox", class: "switch", checked: true, "aria-label": "Also get new chapters" });
+  const newToo = el("input", { type: "checkbox", class: "switch", "aria-label": "Also get new chapters" });
   const from = el("input", { class: "read-from", type: "number", min: "0", step: "1", placeholder: "1", "aria-label": "From chapter" });
   const rows = chs.map((ch, i) => {
     const box = el("input", { type: "checkbox", "aria-label": chLabel(ch) });
@@ -1257,13 +1257,14 @@ async function showFollowed(key, mine, c0) {
     e.currentTarget.disabled = true;
     try { toast(await invoke("read_get_chapters", { key, ids: missing.map((r) => r.id) })); showFollowed(key, ++panelSeq, c0); } catch (err) { toast(String(err), true); }
   } }, icon(ICON.download), `Get the other ${missing.length}`));
-  const live = el("button", { class: "btn soft read-live" + (f.live ? " on" : ""), "aria-pressed": f.live ? "true" : "false",
-    title: "Checks the site for new chapters every few minutes instead of every few hours" }, icon(f.live ? ICON.check : "M12 7v5l3 2M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z"), f.live ? "Keeping up to date" : "Keep up to date");
+  const isOn = f.new_too !== false;
+  const live = el("button", { class: "btn soft read-live" + (isOn ? " on" : ""), "aria-pressed": isOn ? "true" : "false",
+    title: "Checks the site every few minutes and downloads new chapters" }, icon(isOn ? ICON.check : "M12 7v5l3 2M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z"), isOn ? "Getting new chapters" : "Get new chapters");
   live.addEventListener("click", async () => {
     live.disabled = true;
     try {
-      const on = await invoke("read_keep_up", { key, on: !f.live });
-      toast(on ? "Checking for new chapters every few minutes. You get a notification when one is ready." : "Back to checking every few hours.");
+      const on = await invoke("read_keep_up", { key, on: !isOn });
+      toast(on ? "New chapters download by themselves. You get a notification when one is ready." : "New chapters are off for this series.");
       showFollowed(key, ++panelSeq, c0);
     } catch (e) { toast(String(e), true); live.disabled = false; }
   });

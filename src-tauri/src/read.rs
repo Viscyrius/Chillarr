@@ -189,13 +189,19 @@ pub struct Followed {
     /// The translation it's read in ("en", "es", "pt-BR"...).
     #[serde(default)]
     pub lang: Option<String>,
-    /// New chapters download by themselves (off when chapters were picked one by one and the box unticked).
+    /// The one "Get new chapters" button: its sites are asked every few minutes
+    /// (keepup.rs) and new chapters download by themselves.
     #[serde(default = "yes")]
     pub new_too: bool,
+    /// The highest chapter number the site listed when it was followed (or last
+    /// checked). Only chapters above it are new; older ones left out were left out
+    /// on purpose. None: not known yet, the next check sets it and fetches nothing.
+    #[serde(default)]
+    pub known_upto: Option<f64>,
     /// Other copies filling in what this one lacks (a site further ahead).
     #[serde(default)]
     pub fill: Vec<Fill>,
-    /// Keep up to date: its sites are asked for new chapters every few minutes (keepup.rs).
+    /// From before the one button: Keep up to date. Read once as `new_too` on.
     #[serde(default)]
     pub live: bool,
     /// The newest chapter a "ready to read" notification has covered.
@@ -288,10 +294,18 @@ pub fn update_followed(app: &AppHandle, key: &str, change: impl FnOnce(&mut Foll
     }
 }
 
-/// Keep up to date on or off, for everyone (what's followed is shared).
+/// Get new chapters on or off, for everyone (what's followed is shared).
+/// Switched on, what the site lists now is the starting line: only chapters
+/// out after that come by themselves.
 pub fn set_live(app: &AppHandle, key: &str, on: bool) -> Result<bool, String> {
     find(app, key)?;
-    update_followed(app, key, |f| f.live = on);
+    update_followed(app, key, |f| {
+        f.new_too = on;
+        f.live = false;
+        if on {
+            f.known_upto = None;
+        }
+    });
     if on {
         crate::keepup::wake(key);
     }
@@ -307,7 +321,19 @@ fn followed_file(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 pub fn followed(app: &AppHandle) -> Vec<Followed> {
-    followed_file(app).map(|p| load_json(&p)).unwrap_or_default()
+    let mut all: Vec<Followed> = followed_file(app).map(|p| load_json(&p)).unwrap_or_default();
+    for f in &mut all {
+        one_button(f);
+    }
+    all
+}
+
+/// Follow's new chapters and Keep up to date are one button now: either one on is on.
+pub fn one_button(f: &mut Followed) {
+    if f.live {
+        f.new_too = true;
+        f.live = false;
+    }
 }
 
 fn save_followed(app: &AppHandle, all: &[Followed]) -> Result<(), String> {
@@ -1081,7 +1107,9 @@ pub async fn follow(app: &AppHandle, meta: Meta, pick: crate::suwayomi::Candidat
     for x in &fill {
         lists.push(crate::suwayomi::chapters(x.manga_id).await.unwrap_or_default());
     }
-    let wanted: Vec<i64> = merge_copies(lists)
+    let merged = merge_copies(lists);
+    let known_upto = top_number(merged.iter().map(|x| &x.0));
+    let wanted: Vec<i64> = merged
         .into_iter()
         .map(|x| x.0)
         .filter(|c| !c.downloaded)
@@ -1111,7 +1139,7 @@ pub async fn follow(app: &AppHandle, meta: Meta, pick: crate::suwayomi::Candidat
             }
         }
     }
-    let was_live = all.iter().any(|f| f.live && (f.key == key || old.iter().any(|o| o.key == f.key)));
+    let was_live = all.iter().any(|f| (f.live || f.new_too) && (f.key == key || old.iter().any(|o| o.key == f.key)));
     // Whoever followed the old copy follows the new one, and so does this profile.
     let mut owners: Vec<String> = all.iter().filter(|f| f.key == key || old.iter().any(|o| o.key == f.key)).flat_map(|f| owners_of(&f.owners, pc_owner.as_deref())).collect();
     owners.push(me.clone());
@@ -1138,10 +1166,11 @@ pub async fn follow(app: &AppHandle, meta: Meta, pick: crate::suwayomi::Candidat
         added: now(),
         from,
         lang,
-        new_too: sel.new_too,
+        // A changed copy keeps getting new chapters; what's been told starts over quietly.
+        new_too: sel.new_too || was_live,
+        known_upto,
         fill: fill.clone(),
-        // A changed copy stays kept up to date; what's been told starts over quietly.
-        live: was_live,
+        live: false,
         told: None,
         ahead_told: None,
         owners,
@@ -1254,24 +1283,39 @@ pub async fn fetch_new(app: &AppHandle) {
     let queued: std::collections::HashSet<i64> = crate::suwayomi::queue().await.into_iter().map(|q| q.1).collect();
     for f in list.into_iter().filter(|f| f.new_too) {
         let Ok(chs) = chapter_list(&f).await else { continue };
+        let top = top_number(chs.iter());
+        // Not known yet (followed before this was kept): what's listed now is the line.
+        let Some(mark) = f.known_upto else {
+            if top.is_some() {
+                update_followed(app, &f.key, |x| x.known_upto = top);
+            }
+            continue;
+        };
         // Deleted by hand counts like read: it was let go on purpose.
         let read_by_someone = |id: i64| f.removed.contains(&id) || profiles.iter().filter_map(|p| p.get(&f.key)).any(|s| s.read.contains_key(&id));
-        let want = new_wanted(&chs, &queued, &read_by_someone, f.from);
+        let want = new_wanted(&chs, &queued, &read_by_someone, f.from, mark);
+        if let Some(t) = top.filter(|&t| t > mark) {
+            update_followed(app, &f.key, |x| x.known_upto = Some(t));
+        }
         if !want.is_empty() && crate::suwayomi::enqueue(&want).await.is_ok() {
             crate::log::log(app, crate::model::Level::Ok, format!("Getting {} new chapter(s) of {}.", want.len(), f.title));
         }
     }
 }
 
-/// The chapters to fetch as new: only ones newer than everything here or already
-/// read (older ones left out were left out on purpose, and read ones the clean-up
-/// deleted must not come back).
-pub fn new_wanted(chs: &[crate::suwayomi::Chapter], queued: &std::collections::HashSet<i64>, read_by_someone: &dyn Fn(i64) -> bool, from: Option<f64>) -> Vec<i64> {
-    let newest_here = chs.iter().filter(|c| c.downloaded || read_by_someone(c.id)).filter_map(|c| c.number).fold(f64::MIN, f64::max);
+/// The highest chapter number in a list, if any has one.
+pub fn top_number<'a>(chs: impl Iterator<Item = &'a crate::suwayomi::Chapter>) -> Option<f64> {
+    chs.filter_map(|c| c.number).fold(None, |m: Option<f64>, n| Some(m.map_or(n, |m| m.max(n))))
+}
+
+/// The chapters to fetch as new: only ones the site listed after the series was
+/// followed (above `mark`). Older ones left out were left out on purpose, and
+/// read ones the clean-up deleted must not come back.
+pub fn new_wanted(chs: &[crate::suwayomi::Chapter], queued: &std::collections::HashSet<i64>, read_by_someone: &dyn Fn(i64) -> bool, from: Option<f64>, mark: f64) -> Vec<i64> {
     chs.iter()
         .filter(|c| !c.downloaded && !queued.contains(&c.id) && !read_by_someone(c.id))
         .filter(|c| from.is_none_or(|from| c.number.unwrap_or(f64::MAX) >= from))
-        .filter(|c| newest_here == f64::MIN || c.number.is_some_and(|n| n > newest_here))
+        .filter(|c| c.number.is_some_and(|n| n > mark))
         .map(|c| c.id)
         .collect()
 }
@@ -1735,15 +1779,40 @@ mod tests {
     #[test]
     fn deleted_read_chapters_dont_come_back() {
         let mut chs: Vec<Chapter> = (1..=6).map(|i| ch(i, i as f64, false)).collect();
-        chs[5].downloaded = true; // only chapter 6 is here
         let none = std::collections::HashSet::new();
-        // Chapters 3 to 5 were picked, read and cleaned up; 1 and 2 were never wanted.
+        // Followed at 6. Chapters 3 to 5 were picked, read and cleaned up; 1, 2 and 6 never wanted.
         let read = |id: i64| (3..=5).contains(&id);
-        assert!(new_wanted(&chs, &none, &read, None).is_empty(), "nothing newer than what was read or is here");
-        chs[5].downloaded = false;
+        assert!(new_wanted(&chs, &none, &read, None, 6.0).is_empty(), "nothing out since following");
         chs.push(ch(7, 7.0, false));
-        assert_eq!(new_wanted(&chs, &none, &read, None), vec![6, 7], "after the last read one: new");
-        assert_eq!(new_wanted(&chs, &none, &|_| false, None), (1..=7).collect::<Vec<i64>>(), "nothing here or read: everything");
+        chs.push(ch(8, 8.0, false));
+        assert_eq!(new_wanted(&chs, &none, &read, None, 6.0), vec![7, 8], "out since following: new");
+        let q: std::collections::HashSet<i64> = [7].into_iter().collect();
+        assert!(new_wanted(&chs, &q, &|id| id == 8, None, 6.0).is_empty(), "queued or read: not again");
+    }
+
+    #[test]
+    fn picked_chapters_of_a_finished_series_dont_pull_in_the_rest() {
+        // Noblesse: 545 chapters, 1 to 100 picked, none downloaded yet.
+        let mut chs: Vec<Chapter> = (1..=545).map(|i| ch(i, i as f64, false)).collect();
+        let picked: std::collections::HashSet<i64> = (1..=100).collect();
+        let mark = top_number(chs.iter()).unwrap();
+        assert_eq!(mark, 545.0);
+        assert!(new_wanted(&chs, &picked, &|_| false, None, mark).is_empty(), "nothing downloaded yet: still nothing new");
+        assert!(new_wanted(&chs, &std::collections::HashSet::new(), &|_| false, None, mark).is_empty(), "picked ones done: 101 to 545 stay left out");
+        chs.push(ch(546, 546.0, false));
+        assert_eq!(new_wanted(&chs, &picked, &|_| false, None, mark), vec![546], "a real new chapter comes");
+    }
+
+    #[test]
+    fn a_series_from_before_the_mark_wants_nothing_its_first_round() {
+        let raw = r#"{"key":"m1","manga_id":1,"anilist":null,"title":"X","cover":null,"banner":null,"country":null,"format":null,"status":null,"description":null,"mode":"manga","source":"S","source_title":"X","width":0,"added":0,"live":true,"new_too":false}"#;
+        let mut f: Followed = serde_json::from_str(raw).unwrap();
+        assert_eq!(f.known_upto, None, "not known: the first round only sets it");
+        one_button(&mut f);
+        assert!(f.new_too && !f.live, "Keep up to date on: the one button is on");
+        let chs: Vec<Chapter> = (1..=50).map(|i| ch(i, i as f64, false)).collect();
+        let mark = top_number(chs.iter()).unwrap();
+        assert!(new_wanted(&chs, &std::collections::HashSet::new(), &|_| false, None, mark).is_empty());
     }
 
     #[test]
