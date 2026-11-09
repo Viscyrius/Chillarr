@@ -296,7 +296,7 @@ fn open_while_locked(cmd: &str) -> bool {
 
 fn need(cmd: &str) -> Option<Need> {
     Some(match cmd {
-        "web_viewer" | "media_status" | "media_rows" | "media_episodes" | "media_search" | "media_search_live" | "media_play" | "media_report" | "media_forget_resume" | "media_get" | "media_get_picked" | "media_seasons" | "media_trailer"
+        "web_viewer" | "media_status" | "media_rows" | "watch_week" | "media_episodes" | "media_search" | "media_search_live" | "media_play" | "media_report" | "media_forget_resume" | "media_get" | "media_get_picked" | "media_seasons" | "media_trailer"
         | "media_explore" | "media_filter" | "media_filter_genres" | "media_filter_studios" | "media_anime_tags" | "media_details" | "media_similar" | "media_my_list" | "media_my_list_marks" | "media_completed"
         | "media_watched_keys" | "completed_remove" | "media_show_episodes" | "marker_set" | "marker_restart" | "media_set_watched" | "media_segments" | "subs_search" | "subs_download" | "subs_sync" | "subs_choice" | "subs_set"
         | "media_waiting" | "media_downloads" | "watchnow_start" | "watchnow_leave" | "watchnow_cancel" | "watchnow_progress" | "watchnow_list" | "watchnow_ready" | "night_prepare" | "syncplay_info" | "syncplay_call" | "syncplay_tile" | "syncplay_say"
@@ -315,9 +315,11 @@ fn need(cmd: &str) -> Option<Need> {
         | "read_rows" | "read_search" | "read_library" | "read_detail" | "read_sources" | "read_follow" | "read_open" | "read_progress" | "read_mode" | "read_hide_week" | "read_mark"
         // Each profile's own hidden list and password (hidden.rs).
         | "hidden_status" | "hidden_set_password" | "hidden_unlock" | "hidden_lock" | "hidden_set" | "hidden_list"
+        // Each profile's own Notify me list and notes (notify.rs).
+        | "notify_state" | "notify_set" | "notify_list" | "notify_unseen"
         | "readparty_start" | "readparty_join" | "readparty_state" | "readparty_move" | "readparty_leave"
         | "read_book_rows" | "read_book_more" | "read_book_search" | "read_comic_rows" | "read_comic_search" | "read_book_copies" | "read_book_get" | "read_books" | "read_book_open"
-        | "read_languages" | "read_copy_chapters" | "read_get_chapters" | "read_keep_up" | "read_list" | "read_list_set" | "read_explore" | "read_genres" | "read_filter_info" | "read_similar" | "read_downloads"
+        | "read_languages" | "read_copy_chapters" | "read_get_chapters" | "read_keep_up" | "read_list" | "read_list_set" | "read_explore" | "read_genres" | "read_filter_info" | "read_similar" | "read_about" | "read_downloads"
         | "read_delete_plan" => Need::Viewer,
         // Deleting reading's files (read_storage.rs), like a film's Delete.
         "read_unfollow" | "read_book_remove" | "read_stop_chapters" | "read_storage" | "read_delete_chapters" | "read_book_delete_file" => Need::Delete,
@@ -380,6 +382,7 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
             ok(st)
         }
         "media_rows" => res(media::rows(app, &arg::<String>(a, "tab")?).await),
+        "watch_week" => res(crate::week::list(app).await),
         "read_rows" => res(crate::read::rows(app).await),
         "read_book_rows" => ok(crate::books::rows().await),
         "readparty_start" => res(crate::readparty::start(app, &arg::<String>(a, "key")?, arg(a, "chapter")?, arg(a, "page")?)),
@@ -410,6 +413,7 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
         "read_list_set" => res(crate::read::toggle_list(app, &arg::<Value>(a, "card")?, arg(a, "on")?)),
         "read_explore" => res(crate::read::explore(app, &arg(a, "e")?).await),
         "read_similar" => res(crate::read::similar(app, arg(a, "anilist")?).await),
+        "read_about" => res(crate::read_about_any(arg(a, "anilist")?, arg(a, "olid")?).await),
         "read_filter_info" => ok(serde_json::json!({ "tags": crate::read::TAGS.to_vec(), "adult": crate::read::adult_ok(app) })),
         "read_genres" => ok(crate::read::GENRES.to_vec()),
         "read_downloads" => res(crate::read::downloads(app).await),
@@ -428,6 +432,10 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
         "hidden_lock" => res(crate::hidden::lock(app)),
         "hidden_set" => res(crate::hidden::set(app, &arg::<Vec<String>>(a, "keys")?, arg(a, "hide")?, arg::<Option<String>>(a, "label")?.as_deref())),
         "hidden_list" => res(crate::hidden::list(app)),
+        "notify_state" => res(crate::notify::state(app, &arg(a, "target")?)),
+        "notify_set" => res(crate::notify::set(app, &arg(a, "target")?, arg(a, "on")?, arg::<Option<bool>>(a, "auto")?.unwrap_or(false))),
+        "notify_list" => res(crate::notify::list(app)),
+        "notify_unseen" => res(crate::notify::unseen(app)),
         "read_mark" => res(crate::read::mark(app, &arg::<String>(a, "key")?, &arg::<Vec<i64>>(a, "chapters")?, arg(a, "read")?).await),
         "media_episodes" => ok(media::episodes(app, &arg::<String>(a, "seriesId")?).await),
         "media_search" => ok(media::search(app, &arg::<String>(a, "term")?).await),
@@ -468,7 +476,7 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
         "media_waiting" => ok(waiting::list(app).await),
         "media_downloads" => ok(waiting::downloads(app).await),
         "media_stop_waiting" => res(waiting::stop(app, &arg::<String>(a, "which")?, arg(a, "id")?).await),
-        "media_stop_download" => res(waiting::stop_download(app, &arg::<String>(a, "which")?, &arg::<String>(a, "downloadId")?).await),
+        "media_stop_download" => res(waiting::stop_download(app, &arg::<String>(a, "which")?, &arg::<String>(a, "downloadId")?, arg::<Option<bool>>(a, "whole")?.unwrap_or(false)).await),
         "media_delete" => res(waiting::delete_title(app, &arg::<Tile>(a, "tile")?).await),
         "media_delete_episodes" => res(waiting::delete_episodes(app, &arg::<Tile>(a, "tile")?, &arg::<Vec<(i64, i64)>>(a, "episodes")?).await),
         "watchnow_start" => res(watchnow::start(app, arg(a, "tile")?, arg(a, "season")?, arg(a, "episode")?).await),
