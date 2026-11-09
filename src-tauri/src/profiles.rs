@@ -366,6 +366,13 @@ fn pin_matches(stored: &str, pin: &str) -> bool {
     hash_pin(pin, &salt) == hash
 }
 
+/// Whether `text` is this profile's PIN (hidden.rs: its password must be another one).
+pub fn is_pin_of(app: &AppHandle, user_id: &str, text: &str) -> bool {
+    let profiles = app.state::<Profiles>();
+    let s = profiles.store.lock().unwrap();
+    s.list.iter().find(|p| p.id == user_id).and_then(|p| p.pin.as_deref()).is_some_and(|stored| pin_matches(stored, text))
+}
+
 /// Whether `pin` opens a profile whose PIN is `stored`, counting the try.
 /// A profile without a PIN needs none.
 fn pin_gate(tries: &Mutex<Tries>, id: &str, stored: Option<&str>, pin: Option<&str>, now: Instant) -> Result<(), String> {

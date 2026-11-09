@@ -19,7 +19,8 @@
 // IntersectionObserver (Chrome 51) for loading ahead, no Element.scrollBy
 // (Chrome 61; scrolling is eased by hand), CSS transitions on transform and
 // opacity only. Motion is cut when the system asks for less.
-import { el, icon, ICON, invoke, toast, WEB, getPref, setPref } from "./api.js";
+import { el, icon, ICON, invoke, toast, WEB, getPref, setPref, screenMode, windowFull } from "./api.js";
+import { attachReader, detachReader, moved as partyMoved, panel as partyPanel, partyIcon } from "./readparty.js";
 
 const MODES = [
   { id: "webtoon", label: "Scroll" },
@@ -57,6 +58,20 @@ export async function openReader(key, chapter, onClose = null) {
   if (!r) build(onClose);
   r.key = key;
   load(opened, root);
+  // Read Party: where this reader is, and how a party moves it.
+  attachReader({ where: () => (r && r.o && r.o.chapter ? { key: r.key, chapter: r.o.chapter.id, page: r.page } : null), go: partyGo });
+}
+
+/** A reading party moved: to that page, or that chapter first. */
+async function partyGo(chapter, page) {
+  if (!r || !r.o) return;
+  if (r.o.chapter && r.o.chapter.id === chapter) { goTo(Math.max(0, Math.min(page, r.o.pages.length - 1)), true, 0); return; }
+  try {
+    const o = await invoke("read_open", { key: r.key, chapter });
+    if (!r) return;
+    o.page = Math.max(0, Math.min(page, o.pages.length - 1));
+    load(o, await bridgeBase());
+  } catch (e) { toast(String(e), true); }
 }
 
 function build(onClose) {
@@ -72,7 +87,9 @@ function build(onClose) {
     el("button", { class: "rd-zbtn", "aria-label": "Zoom in", title: "Zoom in (+)", onclick: () => zoomStep(1) }, "+"));
   const top = el("div", { class: "rd-bar rd-top" },
     el("button", { class: "rd-btn", "aria-label": "Close", onclick: close }, icon(ICON.left)),
-    title, hd, el("div", { class: "rd-modes", role: "group", "aria-label": "Reading direction" }, modeBtns), zoomBox, count);
+    title, hd, el("div", { class: "rd-modes", role: "group", "aria-label": "Reading direction" }, modeBtns), zoomBox, count,
+    el("button", { class: "rd-btn rp-btn", "aria-label": "Read together", title: "Read together", onclick: () => partyPanel() }, partyIcon()),
+    el("button", { class: "rd-btn rd-full", "aria-label": "Full screen", title: "Full screen (F)", onclick: () => toggleFull() }, icon(FULL)));
   const prevCh = el("button", { class: "rd-btn rd-ch", onclick: () => jumpChapter(-1) }, "Previous chapter");
   const nextCh = el("button", { class: "rd-btn rd-ch", onclick: () => jumpChapter(1) }, "Next chapter");
   const slider = el("input", { class: "rd-slider", type: "range", min: "0", max: "0", value: "0", "aria-label": "Page" });
@@ -86,7 +103,7 @@ function build(onClose) {
   document.body.style.overflow = "hidden";
   r = { box, stage, title, count, hd, slider, prevCh, nextCh, modeBtns, zLabel, fill, onClose, hideT: 0, saveT: 0, io: null, page: 0, z: 1, glide: null, turning: null };
   box.addEventListener("keydown", onKey);
-  box.addEventListener("mousemove", showBars);
+  box.addEventListener("mousemove", onMove);
   box.addEventListener("touchstart", onTouchStart, { passive: true });
   box.addEventListener("touchmove", onTouchMove, { passive: false });
   box.addEventListener("touchend", onTouchEnd, { passive: true });
@@ -103,6 +120,9 @@ function build(onClose) {
 function close() {
   if (!r) return;
   saveNow();
+  // Full screen that the reader turned on goes off with it.
+  if (r.fullByMe) setFull(false);
+  detachReader();
   r.io?.disconnect();
   r.endIo?.forEach((o) => o.disconnect());
   clearTimeout(r.hideT);
@@ -373,7 +393,9 @@ function pageAt(y) {
 }
 
 function onScroll() {
-  if (!r || r.mode !== "webtoon" || !r.cells) return;
+  if (!r) return;
+  calmBars();
+  if (r.mode !== "webtoon" || !r.cells) return;
   // The page at the top third of the screen is the one you're on.
   const lo = pageAt(r.stage.scrollTop + r.stage.clientHeight / 3);
   if (lo !== r.page) { r.page = lo; paintCount(); saveSoon(); }
@@ -659,7 +681,8 @@ function onKey(e) {
   else if (k === " " || k === "PageDown" || k === "ArrowDown" || code === 40) { e.preventDefault(); pagedDown(1); }
   else if (k === "PageUp" || k === "ArrowUp" || code === 38) { e.preventDefault(); pagedDown(-1); }
   else if (k === "Enter" || code === 13) { e.preventDefault(); toggleBars(); }
-  showBars();
+  if (k === "f" || k === "F" || code === 70) { e.preventDefault(); toggleFull(); }
+  // Reading keys (down, space, page turns) leave the bars away: Enter brings them.
 }
 
 /** Down on a zoomed page scrolls it first, then turns. */
@@ -685,9 +708,54 @@ function onResize() {
 }
 
 /* ---------- bars, count, saving ---------- */
+// The bars stay away while you read. They come back when the mouse really
+// moves to the top or bottom of the screen, on a tap in the middle or Enter,
+// and go again as soon as you scroll or turn a page. (A still pointer over a
+// page scrolling under it fires mousemove too: that brought them back on
+// every scroll, user 2026-11-08.)
+const EDGE = 120;
+let lastXY = null;
+
+function onMove(e) {
+  if (!r) return;
+  const moved = !lastXY || Math.abs(e.clientX - lastXY[0]) + Math.abs(e.clientY - lastXY[1]) >= 4;
+  lastXY = [e.clientX, e.clientY];
+  if (!moved || Date.now() - (r.scrolledAt || 0) < 350) return;
+  const onBar = e.target && e.target.closest && e.target.closest(".rd-bar");
+  if (onBar || e.clientY < EDGE || e.clientY > window.innerHeight - EDGE) showBars();
+}
+
+/** Scrolling puts the bars away (unless the pointer is on one). */
+function calmBars() {
+  r.scrolledAt = Date.now();
+  if (!r.box.classList.contains("bars") || Date.now() - (r.shownAt || 0) < 700) return;
+  if (r.box.querySelector(".rd-bar:hover")) return;
+  clearTimeout(r.hideT);
+  r.box.classList.remove("bars");
+}
+
+const FULL = "M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5";
+async function setFull(on) {
+  if (!WEB) { screenMode.app = await windowFull(on); window.dispatchEvent(new Event("chillarr:full")); return screenMode.app; }
+  const d = document, x = d.documentElement;
+  try {
+    if (on) await (x.requestFullscreen || x.webkitRequestFullscreen || (() => {})).call(x);
+    else if (d.fullscreenElement || d.webkitFullscreenElement) await (d.exitFullscreen || d.webkitExitFullscreen).call(d);
+  } catch (e) { /* the browser said no */ }
+  return !!(d.fullscreenElement || d.webkitFullscreenElement);
+}
+function isFull() { return WEB ? !!(document.fullscreenElement || document.webkitFullscreenElement) : screenMode.app; }
+async function toggleFull() {
+  if (!r) return;
+  const want = !isFull();
+  const now = await setFull(want);
+  if (r) r.fullByMe = want && now;
+  if (r && now) { clearTimeout(r.hideT); r.box.classList.remove("bars"); }
+}
 
 function showBars() {
   if (!r) return;
+  if (!r.box.classList.contains("bars")) r.shownAt = Date.now();
   r.box.classList.add("bars");
   clearTimeout(r.hideT);
   r.hideT = setTimeout(() => r?.box.classList.remove("bars"), HIDE_BARS);
@@ -706,6 +774,7 @@ function paintCount() {
   r.slider.classList.toggle("rtl", r.mode === "manga");
   r.box.classList.toggle("rtl", r.mode === "manga");
   r.fill.style.transform = `scaleX(${n ? (last + 1) / n : 0})`;
+  partyMoved();
 }
 
 function saveSoon() {

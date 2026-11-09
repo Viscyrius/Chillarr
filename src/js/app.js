@@ -1,4 +1,5 @@
 // Routing between tabs, the top bar, search, and the first-run tutorial.
+import { refreshHidden } from "./hidden.js";
 import { $, el, getPref, invoke, personKey, screenMode, setPerson, setPref, store, viewer, WEB, windowFull } from "./api.js";
 import { renderTab, renderSearch, renderExplore, stopBrowse, warmTabs, markRestyle } from "./browse.js";
 import { renderFilter } from "./filter.js";
@@ -156,6 +157,8 @@ function drawAppFull() {
   $("#fs-btn").setAttribute("aria-label", screenMode.app ? "Exit full screen" : "Full screen");
 }
 $("#fs-btn").addEventListener("click", () => setAppFull(!screenMode.app));
+// The reader's own Full screen button.
+window.addEventListener("chillarr:full", drawAppFull);
 window.addEventListener("keydown", (e) => {
   if (e.key === "F11" && $("#player").hidden) { e.preventDefault(); setAppFull(!screenMode.app); }
 });
@@ -183,7 +186,7 @@ document.addEventListener("contextmenu", (e) => {
 /** Start in Jellyfin's web pages: no profiles, setup or app health, just the signed-in user. */
 async function startWeb() {
   document.body.classList.add("web");
-  try { Object.assign(viewer, await invoke("web_viewer")); setPerson(viewer.user_id); if (viewer.theme) applyTheme(viewer.theme); if (viewer.locked) await unlockWeb(viewer); }
+  try { Object.assign(viewer, await invoke("web_viewer")); setPerson(viewer.user_id); refreshHidden(); if (viewer.theme) applyTheme(viewer.theme); if (viewer.locked) await unlockWeb(viewer); }
   catch (e) {
     view.replaceChildren(el("div", { class: "web-down" }, el("h1", { text: "Chillarr isn't answering" }), el("p", { text: String(e) }),
       el("button", { class: "btn primary", onclick: () => location.reload() }, "Try again")));

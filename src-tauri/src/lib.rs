@@ -4,6 +4,8 @@ mod zipread;
 mod read_core;
 mod read;
 mod read_storage;
+mod hidden;
+mod readparty;
 mod suwayomi;
 mod manga_net;
 mod books;
@@ -777,6 +779,41 @@ fn read_mode(app: AppHandle, key: String, mode: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn hidden_status(app: AppHandle) -> Result<hidden::Status, String> {
+    hidden::status(&app)
+}
+
+#[tauri::command]
+fn hidden_set_password(app: AppHandle, password: String, old: Option<String>) -> Result<(), String> {
+    hidden::set_password(&app, &password, old.as_deref())
+}
+
+#[tauri::command]
+fn hidden_unlock(app: AppHandle, password: String) -> Result<(), String> {
+    hidden::unlock(&app, &password)
+}
+
+#[tauri::command]
+fn hidden_lock(app: AppHandle) -> Result<(), String> {
+    hidden::lock(&app)
+}
+
+#[tauri::command]
+fn hidden_set(app: AppHandle, keys: Vec<String>, hide: bool, label: Option<String>) -> Result<bool, String> {
+    hidden::set(&app, &keys, hide, label.as_deref())
+}
+
+#[tauri::command]
+fn hidden_list(app: AppHandle) -> Result<Vec<hidden::Entry>, String> {
+    hidden::list(&app)
+}
+
+#[tauri::command]
+fn read_hide_week(app: AppHandle, key: String, hide: bool) -> Result<bool, String> {
+    read::set_hide_week(&app, &key, hide)
+}
+
+#[tauri::command]
 async fn read_mark(app: AppHandle, key: String, chapters: Vec<i64>, read: bool) -> Result<(), String> {
     read::mark(&app, &key, &chapters, read).await
 }
@@ -784,6 +821,34 @@ async fn read_mark(app: AppHandle, key: String, chapters: Vec<i64>, read: bool) 
 #[tauri::command]
 async fn read_book_rows() -> Vec<serde_json::Value> {
     books::rows().await
+}
+
+/// The manga sites installed, for Settings > Download sites (PC window only).
+#[tauri::command]
+async fn manga_sites() -> Result<serde_json::Value, String> {
+    suwayomi::sites().await
+}
+
+// Read Party (readparty.rs): reading a series together.
+#[tauri::command]
+fn readparty_start(app: AppHandle, key: String, chapter: i64, page: u32) -> Result<readparty::State, String> {
+    readparty::start(&app, &key, chapter, page)
+}
+#[tauri::command]
+fn readparty_join(app: AppHandle, code: String) -> Result<readparty::State, String> {
+    readparty::join(&app, &code)
+}
+#[tauri::command]
+fn readparty_state(app: AppHandle, code: String) -> Result<readparty::State, String> {
+    readparty::state(&app, &code)
+}
+#[tauri::command]
+fn readparty_move(app: AppHandle, code: String, chapter: i64, page: u32) -> Result<readparty::State, String> {
+    readparty::moved(&app, &code, chapter, page)
+}
+#[tauri::command]
+fn readparty_leave(app: AppHandle, code: String) -> Result<(), String> {
+    readparty::leave(&app, &code)
 }
 
 /// One page of a book row's See all.
@@ -1096,6 +1161,7 @@ pub fn run() {
         .manage(login::Pending::default())
         .manage(onboard::Onboard::default())
         .manage(read::Reading::default())
+        .manage(hidden::Hidden::default())
         .invoke_handler(tauri::generate_handler![
             read_base,
             read_rows,
@@ -1108,6 +1174,13 @@ pub fn run() {
             read_open,
             read_progress,
             read_mode,
+            read_hide_week,
+            hidden_status,
+            hidden_set_password,
+            hidden_unlock,
+            hidden_lock,
+            hidden_set,
+            hidden_list,
             read_mark,
             read_folder,
             read_set_folder,
@@ -1125,6 +1198,12 @@ pub fn run() {
             read_downloads,
             read_book_rows,
             read_book_more,
+            manga_sites,
+            readparty_start,
+            readparty_join,
+            readparty_state,
+            readparty_move,
+            readparty_leave,
             read_book_search,
             read_book_copies,
             read_book_get,

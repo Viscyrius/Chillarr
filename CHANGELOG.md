@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.15.1 (2026-11-08)
+- Fixed: manga only searched a few sites. Every big manga site (Weeb Central, MangaDex, Mangakakalot, MangaFire and more) was being skipped as 18+ because it carries some adult titles, so only MANGA Plus and the manhua sites were asked. Black Clover showed 6 chapters and Darling in the Franxx none; now 16 sites have all 392 of Black Clover, 15 have Darling in the Franxx, and One Piece has all 1198. Only sites that are entirely 18+ wait for an 18+ search.
+- Fixed: a sharp copy with chapters missing in the middle now gets them filled in from the fullest copy.
+- New: Hidden. Every profile can hide films, series, anime, manga and books from all its pages, behind a password of its own (not the PIN). Press Hide on a title's page. Settings > Account & devices sets the password, shows hidden things until you lock them (or for an hour), and lists them to show again.
+- Reading: hide a series from Your week (and Latest updates) on your profile, so whoever looks at the screen doesn't see it. Use the button on its card in Your week or "Hide from Your week" on its page. "Show in Your week" brings it back. It is still in your list and opens as usual.
+- Many more manga sites: 73 now, up from 28. Every big English site in the list is searched, plus Comick Live, MangaBall, NiAdd, NovelCool and more.
+- Fixed: a series a site lists without chapters (often a licensed one, like Darling in the Franxx from Seven Seas) made that whole site give up. It now tries the site's next match and the series' other names. Sites are searched 12 at a time so the slow ones don't hold up the rest.
+
+## 0.15.0 (2026-11-08)
+- New: Read Party. Read a series together, like Watch together for films. Press the people button in the reader to start one and share the code; friends join from Read together in the top bar. Everyone stays on the same chapter and page, whoever turns it. Joining a series you don't follow adds it to your list without downloading it again.
+- Many more manga sites: Mangahere, MangaFox, Mangatown, MangaKatana, Manganato, MangaPill, MangaRead.org, Bato, Dynasty Scans and Manhwatop, plus MANGA Plus and Comikey from the publishers. Every series is looked for on all of them at once.
+- Fixed: the list of manga sites moved, so a new PC couldn't set up any. It uses the new list now.
+- Fixed: "No source has this one yet" for series that were there (Darling in the Franxx). A slow site no longer drops the copy it found, and if every site is slow, it says so and lets you try again.
+- Fixed: Best could pick a site that has only the first and newest few chapters (MANGA Plus with One Piece), so chapters like 1192 couldn't be downloaded. Best now picks a copy that has them all.
+- More books: TorrentDownload is added, and books are also searched by name on sites that don't file them as books (LimeTorrents, TorrentDownload and 1337x had many that were missed). Settings > Download sites shows which sites are searched for books, and lists the manga sites.
+- Books: where you stopped is kept, and a book counts as finished at 90%. Read again starts over; Resume still goes on from where you stopped.
+- The reader stays out of the way: its bars no longer pop up while you scroll. Move the mouse to the top or bottom, tap the middle or press Enter to bring them back. New Full screen button (or F).
+- Manhua and 18+ series without a banner now show their cover sharp at the top and in the series panel, not blurred.
+- Reading: delete a series' downloaded chapters (all or some) or a book's file without unfollowing, and see where reading lives and what takes the space in Settings > Library & storage.
+- Watch party chat: turn off "Show messages while watching" and messages wait in the chat with a count on the chat button, instead of popping up over the movie.
+- Watch party: closed the player by accident? Watch together now has Join back, which puts you at the party's spot, playing or paused like everyone else, without making anyone wait.
+
 ## 0.14.0 (2026-11-08)
 - Switching Style changes the page at once, also on Movies, Series and Anime (it could wait for the whole page to load again first).
 - A TV, phone or browser that typed its profile's PIN stays unlocked for 30 days, even when Chillarr restarts (it used to ask again after every restart). If one does need the PIN again, the PIN pad comes up instead of pages not loading.
