@@ -7,6 +7,7 @@ import { canWatchNow, confirmRemove, isWatchNow, movieLike, play, removeWatchNow
 import { completedActions, confirmRedownload, listable, markWatched, onMyList, removeCompleted, removeContinue, resumable, setMyList } from "./mylist.js";
 import { goBack, remember, restore } from "./place.js";
 import { inlinePicker, styleNow } from "./look.js";
+import { tabbed } from "./read.js";
 
 const WIDE = new Set(["continue", "downloading"]);
 let refreshTimer;
@@ -1135,6 +1136,40 @@ function patchRows(view, tab, entry, fresh, seq) {
   startRefresh(view, tab, entry, seq);
 }
 
+const WEEK = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+/** Classic's Your week (issue #44): your series and anime by the day their
+ *  episodes air, today first, UP on what aired today. Like reading's. Fills in
+ *  when Sonarr answers; left out on Movies, and when nothing of yours airs. */
+function yourWeek(tab, seq) {
+  if (styleNow("watch") !== "classic" || (tab !== "home" && tab !== "series" && tab !== "anime")) return null;
+  const sec = el("section", { class: "cl-block mw-week" });
+  invoke("watch_week").then((all) => {
+    if (seq !== renderSeq) return;
+    const list = all.filter((x) => (tab === "anime" ? x.anime : tab === "series" ? !x.anime : true));
+    if (!list.length) { sec.remove(); return; }
+    const now = new Date();
+    const today = now.getDay();
+    const sameDay = (d) => d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+    const tabs = WEEK.map((d, i) => [i === today ? d + " (today)" : d, () => Promise.resolve(list.filter((x) => new Date(x.air).getDay() === i))]);
+    // Today first, then the days after it.
+    const order = [0, 1, 2, 3, 4, 5, 6].map((k) => (today + k) % 7);
+    const cardFor = (x, i) => {
+      const b = tile(x.tile);
+      b.classList.add("rise", "cl-card");
+      b.style.setProperty("--i", String(i));
+      if (x.aired && sameDay(new Date(x.air))) b.querySelector(".art").append(el("span", { class: "cl-up", text: "UP" }));
+      return b;
+    };
+    sec.append(el("h2", { class: "cl-h", text: "Your week" }),
+      el("p", { class: "cl-sub", text: tab === "anime" ? "Your anime by the day new episodes come out." : "Your shows by the day new episodes come out." }),
+      tabbed("cl-week", order.map((i) => tabs[i]), (items) => (items.length
+        ? [el("div", { class: "cl-grid" }, items.map(cardFor))]
+        : [el("p", { class: "cl-empty", text: "Nothing of yours comes out that day." })])));
+  }).catch(() => sec.remove());
+  return sec;
+}
+
 /** Builds a tab's page from its rows and puts it in (`mode` as for renderTab). */
 async function draw(view, tab, rows, mode, seq) {
   if (tab === "mylist") {
@@ -1163,7 +1198,7 @@ async function draw(view, tab, rows, mode, seq) {
     ? el("div", { class: "tip", style: "margin:0 var(--gutter) 28px" }, el("span", { text: "Sign in to Jellyfin to see your own movies and series here and play them." }), el("a", { class: "btn small primary", href: "#settings/account", style: "margin-left:auto" }, "Sign in"))
     : null;
   const side = styleNow("watch") === "midnight" ? rankSide(rows) : null;
-  const box = el("div", { class: side ? "rows mn-rows" : "rows" }, side, inlinePicker(), chipBar(rows, tab), banner, rows.map((r, i) => rowEl(r, i)));
+  const box = el("div", { class: side ? "rows mn-rows" : "rows" }, side, inlinePicker(), chipBar(rows, tab), banner, yourWeek(tab, seq), rows.map((r, i) => rowEl(r, i)));
   swapIn(view, [h, box], mode);
   const entry = keep(tab, "rows", [h, box], rows);
   watchLazyRows(view, rows, seq);
