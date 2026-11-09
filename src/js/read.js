@@ -336,6 +336,7 @@ export async function renderRead(view, tab) {
   drawPickers(); // the top bar's Style picker, on every reading tab
   if (TAB_TITLE[tab]) return explorePage(view, tab, my);
   if (tab === "r-all") return allPage(view, my);
+  if (tab === "r-author") return authorPage(view, my);
   if (tab === "r-books") return booksPage(view, my);
   if (tab === "r-mylist") return listPage(view, my);
   if (tab === "r-downloads") return downloadsPage(view, my);
@@ -884,6 +885,23 @@ async function allPage(view, my) {
   io.observe(more);
   window.addEventListener("hashchange", () => io.disconnect(), { once: true });
   await next();
+  return true;
+}
+
+/** Every book by one author, opened from the author's name on a book. Looks like the watching side's maker page. */
+async function authorPage(view, my) {
+  clearInterval(heroTimer);
+  const name = decodeURIComponent(location.hash.slice(1).split("/")[1] || "");
+  const grid = el("div", { class: "grid read-grid" });
+  const more = el("div", { class: "read-more" }, el("div", { class: "skel skel-row" }));
+  const back = el("button", { class: "btn soft read-back", onclick: () => (history.length > 1 ? history.back() : (location.hash = "#r-books")) }, icon(ICON.left), "Back");
+  view.replaceChildren(page(inlinePicker(), el("header", { class: "read-head maker-head" }, back, el("div", {}, el("h1", { text: name }), el("p", { class: "maker-sub", text: "All their books" }))), grid, more));
+  let books;
+  try { books = await invoke("read_book_author", { name }); }
+  catch (e) { if (my === seq) more.replaceChildren(note(String(e))); return true; }
+  if (my !== seq) return;
+  grid.append(...books.map((c, k) => { const t = card(c); t.style.setProperty("--i", String(Math.min(k, 20))); t.classList.add("rise"); return t; }));
+  more.replaceChildren(note(books.length ? (books.length === 1 ? "That's the only book found." : `That's all ${books.length} books found.`) : "No books found for this author."));
   return true;
 }
 
@@ -1488,7 +1506,13 @@ export async function openBookPanel(c, mine = null) {
   }
   const shown = { ...c, chapters: null, status: null, genres: c.genres || [] };
   const { actions, body, hideOn } = shell(shown);
-  if (c.author) actions.parentElement.querySelector(".meta").prepend(el("span", { text: c.author }), el("span", { class: "sep" }));
+  if (c.author) {
+    const by = el("button", { class: "maker-link", title: `All books by ${c.author}`, onclick: () => {
+      if (dlg) dlg.close();
+      location.hash = `#r-author/${encodeURIComponent(c.author)}`;
+    } }, c.author);
+    actions.parentElement.querySelector(".meta").prepend(by, el("span", { class: "sep" }));
+  }
   if (mine) {
     if (mine.ready) {
       const go = (fromStart) => () => { if (dlg) dlg.close(); openBook(mine.key, () => openBookPanel(c), fromStart); };

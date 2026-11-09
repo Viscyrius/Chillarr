@@ -1,7 +1,7 @@
 // Routing between tabs, the top bar, search, and the first-run tutorial.
 import { refreshHidden } from "./hidden.js";
 import { $, el, getPref, invoke, personKey, screenMode, setPerson, setPref, store, viewer, WEB, windowFull } from "./api.js";
-import { renderTab, renderSearch, renderExplore, stopBrowse, warmTabs, markRestyle } from "./browse.js";
+import { renderTab, renderSearch, renderExplore, renderMaker, stopBrowse, warmTabs, markRestyle } from "./browse.js";
 import { renderFilter } from "./filter.js";
 import { renderRead, renderReadSearch, stopRead } from "./read.js";
 import { renderSettings, stopSettings } from "./settings.js";
@@ -14,8 +14,8 @@ import { applyTheme, syncIcons } from "./theme.js";
 import { applyLook, drawPickers, onStyle } from "./look.js";
 
 const view = $("#view");
-const TABS = ["home", "movies", "series", "anime", "downloads", "mylist", "settings", "explore", "filter",
-  "r-home", "r-manhwa", "r-manhua", "r-manga", "r-novels", "r-books", "r-downloads", "r-mylist", "r-all"];
+const TABS = ["home", "movies", "series", "anime", "downloads", "mylist", "settings", "explore", "filter", "maker",
+  "r-home", "r-manhwa", "r-manhua", "r-manga", "r-novels", "r-books", "r-downloads", "r-mylist", "r-all", "r-author"];
 
 /* ---------- watching and reading ----------
    Two Chillarrs in one: the book button switches to reading (its own tabs,
@@ -70,7 +70,7 @@ function route(redraw = false) {
   const left = place.current();
   const { id, fresh } = place.entry();
   document.querySelectorAll("[data-tab]").forEach((a) => a.classList.toggle("on", a.dataset.tab === tab));
-  if (tab === current && tab !== "settings" && tab !== "explore" && tab !== "filter" && tab !== "r-all") return;
+  if (tab === current && tab !== "settings" && tab !== "explore" && tab !== "filter" && tab !== "r-all" && tab !== "maker" && tab !== "r-author") return;
   // Leaving a page: remember where you were on it. Search results aren't a
   // page of their own; the place from before the search stays.
   if (left && left !== id && current && current !== "search") place.remember(left);
@@ -94,6 +94,7 @@ function route(redraw = false) {
     drawn = renderFilter(view, kind, f, mode, want);
   }
   else if (tab === "explore") { const [, cat, title] = hash.split("/"); drawn = renderExplore(view, decodeURIComponent(cat || ""), decodeURIComponent(title || "Explore"), mode, want); }
+  else if (tab === "maker") { const [, mid, name] = hash.split("/"); drawn = renderMaker(view, decodeURIComponent(mid || ""), decodeURIComponent(name || ""), mode, want); }
   else drawn = renderTab(view, tab, mode);
   // Once the page is in (it runs before that frame is drawn); what loads after it is followed too.
   if (mode) Promise.resolve(drawn).then(() => { if (place.current() === id) place.restore(id); });

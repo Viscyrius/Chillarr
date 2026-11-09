@@ -712,6 +712,21 @@ function deleteButton(t) {
   }
 }
 
+/** A crew line's names, each one a link to everything that person made when it can be looked up. */
+function crewNames(job, names, makers) {
+  const out = [];
+  names.split(", ").forEach((name, i) => {
+    if (i) out.push(", ");
+    const m = makers.find((x) => x.job === job && x.name === name);
+    if (!m) { out.push(name); return; }
+    out.push(el("button", { class: "maker-link", title: `Everything by ${name}`, onclick: () => {
+      shut();
+      location.hash = `#maker/${encodeURIComponent(m.id)}/${encodeURIComponent(name)}`;
+    } }, name));
+  });
+  return out;
+}
+
 /** Ratings, runtime, who made it, and the cast, below the overview. */
 async function loadAbout(t) {
   const seq = openSeq;
@@ -721,7 +736,8 @@ async function loadAbout(t) {
   if (seq !== openSeq || !d || (!d.facts.length && !d.cast.length && !d.crew.length)) return;
   const parts = [];
   if (d.facts.length || d.crew.length) {
-    parts.push(el("dl", { class: "facts" }, [...d.facts, ...d.crew].map(([k, v]) => el("div", {}, el("dt", { text: k }), el("dd", { text: v })))));
+    parts.push(el("dl", { class: "facts" }, d.facts.map(([k, v]) => el("div", {}, el("dt", { text: k }), el("dd", { text: v }))),
+      d.crew.map(([k, v]) => el("div", {}, el("dt", { text: k }), el("dd", {}, crewNames(k, v, d.makers || []))))));
   }
   if (d.cast.length) {
     parts.push(el("h3", { text: "Cast" }), el("div", { class: "cast" }, d.cast.map((p, i) => {
