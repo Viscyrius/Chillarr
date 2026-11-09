@@ -39,6 +39,7 @@ mod night;
 mod search_tap;
 mod sharpen;
 mod keepup;
+mod notify;
 mod procs;
 mod qbit;
 mod settings;
@@ -820,6 +821,26 @@ fn hidden_lock(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn notify_state(app: AppHandle, target: notify::Target) -> Result<notify::State, String> {
+    notify::state(&app, &target)
+}
+
+#[tauri::command]
+fn notify_set(app: AppHandle, target: notify::Target, on: bool, auto: Option<bool>) -> Result<String, String> {
+    notify::set(&app, &target, on, auto.unwrap_or(false))
+}
+
+#[tauri::command]
+fn notify_list(app: AppHandle) -> Result<Vec<notify::Watch>, String> {
+    notify::list(&app)
+}
+
+#[tauri::command]
+fn notify_unseen(app: AppHandle) -> Result<Vec<notify::Note>, String> {
+    notify::unseen(&app)
+}
+
+#[tauri::command]
 fn hidden_set(app: AppHandle, keys: Vec<String>, hide: bool, label: Option<String>) -> Result<bool, String> {
     hidden::set(&app, &keys, hide, label.as_deref())
 }
@@ -1201,6 +1222,10 @@ pub fn run() {
             hidden_unlock,
             hidden_lock,
             hidden_set,
+            notify_state,
+            notify_set,
+            notify_list,
+            notify_unseen,
             hidden_list,
             read_mark,
             read_folder,
@@ -1430,6 +1455,7 @@ pub fn run() {
             limit::spawn(app.handle().clone());
             sharpen::spawn(app.handle().clone());
             keepup::spawn(app.handle().clone());
+            notify::spawn(app.handle().clone());
             indexers::spawn(app.handle().clone());
             subfetch::spawn(app.handle().clone());
             search_tap::spawn(app.handle().clone());

@@ -9,6 +9,7 @@ import { hideButton, isHidden, markHidden } from "./hidden.js";
 import { ask, canDelete, el, expandRow, getPref, icon, ICON, invoke, setPref, toast } from "./api.js";
 import { openReader } from "./reader.js";
 import { openBook } from "./bookreader.js";
+import { notifyButton } from "./notify.js";
 import { applyLook, drawPickers, inlinePicker, onStyle, styleNow } from "./look.js";
 
 const KIND = { KR: "Manhwa", CN: "Manhua", TW: "Manhua", JP: "Manga" };
@@ -1560,17 +1561,23 @@ export async function openBookPanel(c, mine = null) {
       actions.append(el("span", { class: "status-pill", text: mine.problem || (mine.progress != null ? `Downloading ${Math.round(mine.progress * 100)}%` : "Starting the download") }));
       poll = setTimeout(() => { if (my === panelSeq && dlg && dlg.open) openBookPanel(c); }, 4000);
     }
-    actions.append(el("button", { class: "btn soft", onclick: () => removeBook(mine) }, "Remove"));
+    actions.append(el("button", { class: "btn soft", onclick: () => removeBook(mine) }, "Remove"), ...bookNotify(c));
     hideOn();
     if (mine.problem) { const list = el("section", { class: "read-sources" }); body.append(list); bookCopies(c, list, el("button", {}, "x"), my); }
     return;
   }
   const find = el("button", { class: "btn primary" }, icon(ICON.download), "Find copies");
-  actions.append(find, listButton(c));
+  actions.append(find, listButton(c), ...bookNotify(c));
   hideOn();
   const list = el("section", { class: "read-sources" });
   body.prepend(list);
   find.addEventListener("click", () => bookCopies(c, list, find, my));
+}
+
+/** Notify me for a light novel's new volumes, or a book author's new books (notify.js). */
+function bookNotify(c) {
+  if (!c.anilist && !c.author) return [];
+  return notifyButton({ book: { title: c.title, author: c.author || null, cover: c.cover || null, anilist: c.anilist || null } }, c.anilist ? "Notify me of new volumes" : "Notify me of new books");
 }
 
 async function bookCopies(c, list, btn, my) {
