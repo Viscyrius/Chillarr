@@ -12,7 +12,7 @@
 - Book and manga pages list their details under the description: genres, author and artist, status, chapters, volumes, the latest chapter and when it came out.
 - My List is one row in Movies and Reading, with Show all to open it.
 - Reader: the mouse no longer hides by itself while you read. Turn it on with the new mouse button in the top bar (or M) if you want it gone.
-- Reader on phones: one reading direction button (tap to switch between Scroll, Right to left and Left to right) in place of three that squeezed the top bar.
+- Reader on phones: one reading direction button (tap to switch between Scroll, Right to left and Left to right) in place of three that squeezed the top bar, and the top and bottom bars fit the screen.
 - A director's or anime staff member's page leaves out R and NC-17 films and ecchi anime unless 18+ is on, like the rest of the app. Their page and a series' details also load faster when TVmaze or Wikidata is slow.
 - Fixed: if the manga downloader didn't answer when new chapters came out, those chapters were skipped for good. They're tried again next round.
 - Watch party locks and Only I control can't be got around any more by writing a request in different letters.

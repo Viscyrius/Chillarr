@@ -141,8 +141,8 @@ function build(onClose) {
     title, hd, el("div", { class: "rd-modes", role: "group", "aria-label": "Reading direction" }, modeBtns), modeOne, zoomBox, count, mouseBtn,
     el("button", { class: "rd-btn rp-btn rd-party", "aria-label": "Read together", title: "Read together", onclick: () => partyPanel() }, partyIcon()),
     el("button", { class: "rd-btn rd-full", "aria-label": "Full screen", title: "Full screen (F)", onclick: () => toggleFull() }, icon(FULL)));
-  const prevCh = el("button", { class: "rd-btn rd-ch", onclick: () => jumpChapter(-1) }, "Previous chapter");
-  const nextCh = el("button", { class: "rd-btn rd-ch", onclick: () => jumpChapter(1) }, "Next chapter");
+  const prevCh = el("button", { class: "rd-btn rd-ch", onclick: () => jumpChapter(-1), "aria-label": "Previous chapter" }, "Previous", el("span", { class: "rd-ch-long" }, " chapter"));
+  const nextCh = el("button", { class: "rd-btn rd-ch", onclick: () => jumpChapter(1), "aria-label": "Next chapter" }, "Next", el("span", { class: "rd-ch-long" }, " chapter"));
   const slider = el("input", { class: "rd-slider", type: "range", min: "0", max: "0", value: "0", "aria-label": "Page" });
   slider.addEventListener("input", () => { if (partyFollowing()) { slider.value = String(r.page); partyNudge(); return; } goTo(+slider.value, false, 0); });
   const bottom = el("div", { class: "rd-bar rd-bottom" }, prevCh, slider, nextCh);
