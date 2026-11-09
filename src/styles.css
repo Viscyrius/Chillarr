@@ -2825,3 +2825,9 @@ body[data-rshade="light"] .fresh-track .tile.fresh-tile { background: rgba(15, 2
 .read-head.maker-head { justify-content: flex-start; align-items: center; gap: 20px; }
 .read-head.maker-head > div { text-align: left; }
 .selecting .sel-able .art .badge:not(.fresh-badge) { opacity: 0; transition: opacity 0.2s; }
+
+/* A row whose title opens it (expandRow): it looks pressable. */
+.row-head h2.row-toggle { cursor: pointer; transition: color 0.2s; }
+.row-head h2.row-toggle:hover { color: var(--accent); }
+.row.expanded .row-head .row-expand { color: var(--text); }
+.row-head .row-expand { margin-left: 10px; }

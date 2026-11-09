@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.17.1 (2026-11-10)
+- Manga, Manhwa, Manhua and Novels open on rows now, like Movies: Top 10 today, Most popular, Top rated, Ongoing, New and rising, then a row for each genre (Action, Fantasy, Romance, Comedy, Drama and more). Every row's title and Explore all open the whole list. Pick a filter or another order and the matching titles take the rows' place; Back to all rows brings them back.
+- Your week shows every show of yours that is still running, not only ones with an episode in Sonarr this week. Your shows are the ones you download, watch, put on My List or favourite. Each sits on the day it airs, with the episode out this week or the next one announced; a show between seasons says so ("Between seasons, usually Wednesdays"). Air days come from Sonarr, TVmaze and AniList. On Series and Anime it stays on the page with a short note when nothing of yours is running.
+- My List rows open and close from their title too, not just the Show all link, in watching and reading.
+
 ## 0.17.0 (2026-11-10)
 - Movies, Series and Anime have their filters right on the page, like the reading tabs. Filters and Order sit above the rows with the genre chips beside them; pick anything and the matching titles take the rows' place. Back to all rows (or Clear filters) brings the rows back. Home's Filters still opens them on their own page.
 - Your week now shows on Series, Anime and Home in every style, not just Classic: your shows by the day their episodes come out, each card with the episode (S2 E7) and when it's out ("Out today", "Fri at 21:00"). It opens on today, or on the next day something of yours comes out.

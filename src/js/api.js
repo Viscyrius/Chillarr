@@ -99,12 +99,24 @@ export function expandRow(section, key) {
     b.setAttribute("aria-expanded", on ? "true" : "false");
     b.replaceChildren(on ? "Show less" : "Show all", icon(on ? "M6 15l6-6 6 6" : "M6 9l6 6 6-6"));
   };
-  b.addEventListener("click", () => {
+  const flip = () => {
     if (openRows.has(key)) openRows.delete(key); else openRows.add(key);
     draw();
-  });
+  };
+  b.addEventListener("click", flip);
   draw();
-  if (head) head.append(b);
+  if (head) {
+    head.append(b);
+    // The row's title opens and closes it too, like a heading you can press.
+    const h = head.querySelector("h2");
+    if (h && !h.closest("a")) {
+      h.classList.add("row-toggle");
+      h.setAttribute("role", "button");
+      h.setAttribute("tabindex", "0");
+      h.addEventListener("click", flip);
+      h.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); flip(); } });
+    }
+  }
   return section;
 }
 

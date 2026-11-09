@@ -478,6 +478,8 @@ struct Ticket {
 pub struct Reading {
     tickets: Mutex<HashMap<String, Ticket>>,
     rows: tokio::sync::Mutex<Option<(Instant, Value)>>,
+    /// kind_rows' answers, per kind.
+    kind_rows: tokio::sync::Mutex<HashMap<String, (Instant, Value)>>,
     /// for_you's rows, per profile and the series they were made from.
     for_you: Mutex<HashMap<String, (Instant, Value)>>,
 }
@@ -1769,6 +1771,80 @@ pub fn explore_args(e: &Explore, adult_allowed: bool) -> Result<String, String> 
     Ok(a.join(","))
 }
 
+/// The genres a Manga, Manhwa, Manhua or Novels tab has a row for, in order.
+pub const KIND_GENRES: [&str; 14] = ["Action", "Fantasy", "Romance", "Comedy", "Drama", "Adventure", "Slice of Life", "Supernatural", "Mystery", "Psychological", "Sci-Fi", "Horror", "Sports", "Thriller"];
+
+/// The row ids of a reading tab: "trending", "popular", "top", "ongoing",
+/// "new", then "g:<Genre>". Each is also how its "Explore all" page asks
+/// (explore_for_row), so the row and its page always agree.
+pub fn kind_row_query(kind: &str, id: &str) -> Option<Explore> {
+    let base = Explore { kind: kind.to_string(), ..Default::default() };
+    let year = chrono::Datelike::year(&chrono::Utc::now()) as u32;
+    Some(match id {
+        "trending" => Explore { sort: Some("trending".into()), ..base },
+        "popular" => Explore { sort: Some("popular".into()), ..base },
+        "top" => Explore { sort: Some("score".into()), ..base },
+        "ongoing" => Explore { sort: Some("popular".into()), status: Some("RELEASING".into()), ..base },
+        "new" => Explore { sort: Some("popular".into()), year_from: Some(year - 1), ..base },
+        g => {
+            let g = g.strip_prefix("g:")?;
+            if !KIND_GENRES.contains(&g) {
+                return None;
+            }
+            Explore { sort: Some("popular".into()), genres: vec![g.to_string()], ..base }
+        }
+    })
+}
+
+/// A Manga, Manhwa, Manhua or Novels tab's rows, like Movies' tabs: trending,
+/// most popular, top rated, ongoing and new, then one row per genre. A few
+/// AniList calls (it limits how much one call may ask), kept six hours.
+/// Never 18+: those are for the filters, where it can be turned on.
+pub async fn kind_rows(app: &AppHandle, kind: &str) -> Result<Value, String> {
+    if !matches!(kind, "manga" | "manhwa" | "manhua" | "novels") {
+        return Err("Unknown kind.".into());
+    }
+    let state = app.state::<Reading>();
+    let mut cache = state.kind_rows.lock().await;
+    if let Some((at, v)) = cache.get(kind) {
+        if at.elapsed() < ROWS_LIFE {
+            return Ok(v.clone());
+        }
+    }
+    let what = match kind { "manga" => "manga", "manhwa" => "manhwa", "manhua" => "manhua", _ => "light novels" };
+    let mut defs: Vec<(String, String)> = vec![
+        ("trending".into(), "Trending now".into()),
+        ("popular".into(), format!("Most popular {what}")),
+        ("top".into(), "Top rated".into()),
+        ("ongoing".into(), "Ongoing".into()),
+        ("new".into(), "New and rising".into()),
+    ];
+    defs.extend(KIND_GENRES.iter().map(|g| (format!("g:{g}"), g.to_string())));
+    let mut out = Vec::new();
+    for chunk in defs.chunks(7) {
+        let mut q = String::from("{");
+        for (i, (id, _)) in chunk.iter().enumerate() {
+            let Some(e) = kind_row_query(kind, id) else { continue };
+            let args = explore_args(&e, false)?;
+            q.push_str(&format!("r{i}:Page(perPage:24){{media({args}){{{MEDIA_FIELDS}}}}} "));
+        }
+        q.push('}');
+        let v = crate::media::anilist(&json!({ "query": q })).await?;
+        if v["data"].is_null() {
+            return Err("AniList didn't answer. Try again in a minute.".into());
+        }
+        for (i, (id, title)) in chunk.iter().enumerate() {
+            let items: Vec<Value> = v["data"][format!("r{i}")]["media"].as_array().map(|a| a.iter().map(card).collect()).unwrap_or_default();
+            if items.len() >= 4 {
+                out.push(json!({ "id": id, "title": title, "items": items }));
+            }
+        }
+    }
+    let v = json!(out);
+    cache.insert(kind.to_string(), (Instant::now(), v.clone()));
+    Ok(v)
+}
+
 pub async fn explore(app: &AppHandle, e: &Explore) -> Result<Value, String> {
     let args = explore_args(e, adult_ok(app))?;
     let page = e.page.clamp(1, 200);
@@ -2106,6 +2182,17 @@ mod tests {
         let fill = vec![ch(11, 1.0, false), ch(12, 2.0, true), ch(13, 3.0, false), ch(14, 4.0, false), ch(15, 5.0, false)];
         let m: Vec<(i64, usize)> = merge_copies(vec![main, fill]).into_iter().map(|(c, i)| (c.id, i)).collect();
         assert_eq!(m, vec![(1, 0), (12, 1), (3, 0), (14, 1), (15, 1)], "sharp where it has it, a copy already here is kept, the rest filled");
+    }
+
+    #[test]
+    fn kind_rows_ask_what_they_say() {
+        let e = kind_row_query("manhwa", "g:Romance").unwrap();
+        assert_eq!(e.genres, vec!["Romance".to_string()]);
+        let args = explore_args(&e, false).unwrap();
+        assert!(args.contains("countryOfOrigin:\"KR\"") && args.contains("genre_in:[\"Romance\"]") && args.contains("isAdult:false"), "{args}");
+        assert!(kind_row_query("manga", "g:Made up").is_none());
+        assert!(kind_row_query("manga", "nope").is_none());
+        assert_eq!(kind_row_query("novels", "ongoing").unwrap().status.as_deref(), Some("RELEASING"));
     }
 
     #[test]
