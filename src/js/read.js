@@ -9,6 +9,7 @@ import { hideButton, isHidden, markHidden } from "./hidden.js";
 import { ask, canDelete, el, expandRow, getPref, icon, ICON, invoke, setPref, toast } from "./api.js";
 import { openReader } from "./reader.js";
 import { openBook } from "./bookreader.js";
+import { adultFields, chipKit, pornOn, clearButton, filtersButton, moreButton, orderSelect } from "./filterpanel.js";
 import { notifyButton } from "./notify.js";
 import { applyLook, drawPickers, inlinePicker, onStyle, styleNow } from "./look.js";
 
@@ -687,7 +688,7 @@ async function homePage(view, my) {
 /* Filters, like Movies': genres and tags in or out (click once for only these,
    again to leave them out, again to clear), status, rating, years, length and,
    for the PC owner or a Jellyfin admin, 18+. Kept per profile, per tab. */
-const BLANK_FILTER = { genres: [], not_genres: [], tags: [], not_tags: [], status: null, sort: "popular", min_score: null, year_from: null, year_to: null, length: 0, adult: "hide" };
+const BLANK_FILTER = { genres: [], not_genres: [], tags: [], not_tags: [], status: null, sort: "popular", min_score: null, year_from: null, year_to: null, length: 0, adult: "hide", porn: "hide" };
 const LENGTHS = [[null, null, "Any length"], [null, 50, "Up to 50"], [50, 150, "50 to 150"], [150, null, "150 or more"]];
 const SCORES = [[null, "Any"], [60, "6+"], [70, "7+"], [80, "8+"], [90, "9+"]];
 const STATUSES = [[null, "Any"], ["RELEASING", "Ongoing"], ["FINISHED", "Finished"], ["HIATUS", "On hiatus"], ["NOT_YET_RELEASED", "Coming soon"]];
@@ -696,7 +697,7 @@ let filterInfo = null;
 
 function filterCount(f) {
   return f.genres.length + f.not_genres.length + f.tags.length + f.not_tags.length + (f.status ? 1 : 0) + (f.min_score ? 1 : 0)
-    + (f.year_from || f.year_to ? 1 : 0) + (f.length ? 1 : 0) + (f.adult !== "hide" ? 1 : 0);
+    + (f.year_from || f.year_to ? 1 : 0) + (f.length ? 1 : 0) + (f.adult !== "hide" ? 1 : 0) + (pornOn(f) ? 1 : 0);
 }
 
 async function explorePage(view, tab, my) {
@@ -708,52 +709,25 @@ async function explorePage(view, tab, my) {
   filterInfo = info;
   if (my !== seq) return;
   // Only the PC owner or a Jellyfin admin gets 18+; the PC refuses it for anyone else too.
-  if (!info.adult) f.adult = "hide";
+  if (!info.adult) { f.adult = "hide"; f.porn = "hide"; }
   const grid = el("div", { class: "grid read-grid" });
   const more = el("div", { class: "read-more" });
   const panel = el("div", { class: "fl-bar read-fl" });
-  let open = getPref("read-filters-open") === "1";
   let moreOpen = false;
-  const countBadge = el("span", { class: "read-fl-count" });
-  const toggle = el("button", { class: "btn soft read-fl-toggle", "aria-expanded": String(open), onclick: () => {
-    open = !open;
-    setPref("read-filters-open", open ? "1" : "0");
-    toggle.setAttribute("aria-expanded", String(open));
-    panel.classList.toggle("shut", !open);
-  } }, icon("M4 6h16M7 12h10M10 18h4"), "Filters", countBadge);
-  const order = el("select", { class: "quality", "aria-label": "Order" }, SORTS.map(([v, t]) => el("option", { value: v, text: t, selected: f.sort === v })));
-  order.addEventListener("change", () => change((x) => (x.sort = order.value)));
-  panel.classList.toggle("shut", !open);
+  const { button: toggle, count: showCount } = filtersButton(panel, "read-filters-open");
+  const order = orderSelect(SORTS, f.sort, (v) => change((x) => (x.sort = v)));
 
   function change(mut) {
     mut(f);
     drawPanel();
     restart();
   }
-  const cycle = (inKey, outKey, v) => change((x) => {
-    if (x[inKey].includes(v)) { x[inKey] = x[inKey].filter((g) => g !== v); x[outKey] = [...x[outKey], v]; }
-    else if (x[outKey].includes(v)) x[outKey] = x[outKey].filter((g) => g !== v);
-    else x[inKey] = [...x[inKey], v];
-  });
-  const triChip = (v, inKey, outKey) => {
-    const on = f[inKey].includes(v), out = f[outKey].includes(v);
-    return el("button", { class: `chip${on ? " on" : ""}${out ? " out" : ""}`, "aria-pressed": on ? "true" : out ? "mixed" : "false",
-      title: on ? "Showing only these. Click to leave them out." : out ? "Leaving these out. Click to clear." : "Click to show only these",
-      onclick: () => cycle(inKey, outKey, v) }, ...[out ? icon("M5 12h14") : on ? icon(ICON.check) : null, v].filter(Boolean));
-  };
-  const oneOf = (options, isOn, pick) => el("div", { class: "chips" }, options.map((o) =>
-    el("button", { class: `chip${isOn(o) ? " on" : ""}`, onclick: () => change((x) => pick(x, o)) }, o[o.length - 1])));
-  const field = (label, ...kids) => el("div", { class: "fl-field" }, el("h3", { text: label }), ...kids);
-  const yearBox = (key, label) => {
-    const i = el("input", { class: "read-from", type: "number", min: "1900", max: "2100", step: "1", placeholder: label, "aria-label": label, value: f[key] ? String(f[key]) : "" });
-    i.addEventListener("change", () => change((x) => { const n = parseInt(i.value, 10); x[key] = n >= 1900 && n <= 2100 ? n : null; }));
-    return i;
-  };
+  const kit = chipKit(f, change);
+  const { triChip, oneOf, field, years } = kit;
   function drawPanel() {
     const n = filterCount(f);
-    countBadge.textContent = n ? String(n) : "";
-    countBadge.hidden = !n;
-    const gs = f.adult !== "hide" && info.adult ? [...genres, "Hentai"] : genres;
+    showCount(n);
+    const gs = pornOn(f) && info.adult ? [...genres, "Hentai"] : genres;
     const parts = [
       field("Genres", el("div", { class: "chips" }, gs.map((g) => triChip(g, "genres", "not_genres")))),
       // AniList has 18 manga genres; its most used tags carry the rest.
@@ -761,20 +735,19 @@ async function explorePage(view, tab, my) {
       el("div", { class: "fl-row" },
         field("Status", oneOf(STATUSES, (o) => f.status === o[0], (x, o) => (x.status = o[0]))),
         field("Rating", oneOf(SCORES, (o) => f.min_score === o[0], (x, o) => (x.min_score = o[0])))),
-      el("button", { class: "linkish fl-more" + (moreOpen ? " open" : ""), onclick: () => { moreOpen = !moreOpen; drawPanel(); } }, "More filters", icon("m6 9 6 6 6-6")),
+      moreButton(moreOpen, () => { moreOpen = !moreOpen; drawPanel(); }),
     ];
     if (moreOpen) {
       parts.push(
         field("More themes", el("div", { class: "chips" }, info.tags.slice(20).map((t) => triChip(t, "tags", "not_tags")))),
         el("div", { class: "fl-row" },
           field("Length", oneOf(LENGTHS.map((l, i) => [i, l[2]]), (o) => f.length === o[0], (x, o) => (x.length = o[0]))),
-          field("Years", el("div", { class: "read-years" }, yearBox("year_from", "From"), el("span", { text: "to" }), yearBox("year_to", "To")))));
+          field("Years", years())));
       if (info.adult) {
-        parts.push(field("18+", oneOf([["hide", "Hidden"], ["include", "Include"], ["only", "Only 18+"]], (o) => f.adult === o[0], (x, o) => (x.adult = o[0])),
-          el("small", { class: "read-fl-hint", text: "Off until you pick Include or Only 18+." })));
+        parts.push(...adultFields(f, kit, true));
       }
     }
-    if (n) parts.push(el("button", { class: "linkish read-fl-clear", onclick: () => change((x) => Object.assign(x, { ...BLANK_FILTER, sort: x.sort })) }, "Clear filters"));
+    if (n) parts.push(clearButton(() => change((x) => Object.assign(x, { ...BLANK_FILTER, sort: x.sort }))));
     panel.replaceChildren(...parts);
   }
   drawPanel();
@@ -822,7 +795,7 @@ async function explorePage(view, tab, my) {
     try {
       const [cmin, cmax] = LENGTHS[f.length] || LENGTHS[0];
       const got = await invoke("read_explore", { e: { kind, genres: f.genres, not_genres: f.not_genres, tags: f.tags, not_tags: f.not_tags, status: f.status, sort: f.sort,
-        min_score: f.min_score, year_from: f.year_from, year_to: f.year_to, chapters_min: cmin, chapters_max: cmax, adult: f.adult, page: ++pageNo } });
+        min_score: f.min_score, year_from: f.year_from, year_to: f.year_to, chapters_min: cmin, chapters_max: cmax, adult: f.adult, porn: f.porn, page: ++pageNo } });
       if (my !== seq || mine !== run) return;
       // Each new page's covers come in one after another.
       const start = grid.childElementCount;
@@ -948,10 +921,11 @@ async function downloadsPage(view, my) {
 }
 
 /** The top bar's search, in reading mode. */
-/** This profile turned 18+ on in any reading tab's filters (Include or Only). */
-function adultOn() {
+/** This profile turned 18+ on in any reading tab's filters (Included or Only),
+    and, with `porn`, Porn too in that same tab. */
+function adultOn(porn) {
   return ["manga", "manhwa", "manhua", "novels"].some((k) => {
-    try { const f = JSON.parse(getPref(`read-filter-${k}`) || "{}"); return f.adult === "include" || f.adult === "only"; } catch (e) { return false; }
+    try { const f = JSON.parse(getPref(`read-filter-${k}`) || "{}"); return porn ? pornOn(f) : f.adult === "include" || f.adult === "only"; } catch (e) { return false; }
   });
 }
 
@@ -960,7 +934,7 @@ export async function renderReadSearch(view, term) {
   const body = el("div", {}, ...skel());
   view.replaceChildren(page(head(`"${term}"`), body));
   const [found, books, comics] = (await Promise.all([
-    invoke("read_search", { term, adult: adultOn() }).catch(() => []),
+    invoke("read_search", { term, adult: adultOn(false), porn: adultOn(true) }).catch(() => []),
     invoke("read_book_search", { term }).catch(() => []),
     invoke("read_comic_search", { term }).catch(() => []),
   ])).map((x) => x || []);
