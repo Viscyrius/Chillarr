@@ -124,6 +124,13 @@ function build(onClose) {
   const count = el("span", { class: "rd-count" });
   const hd = el("span", { class: "rd-hd", title: "Sharpened by your graphics card", hidden: true }, "HD");
   const modeBtns = MODES.map((m) => el("button", { class: "rd-mode", dataset: { mode: m.id }, onclick: () => setMode(m.id, true) }, m.label));
+  // Phones: one button with the current direction; a tap moves to the next.
+  const modeOne = el("button", { class: "rd-mode-one", "aria-label": "Reading direction", onclick: () => {
+    const i = MODES.findIndex((m) => m.id === r.mode);
+    setMode(MODES[(i + 1) % MODES.length].id, true);
+  } });
+  // The mouse hides while reading only if you ask for it (this button, or M).
+  const mouseBtn = el("button", { class: "rd-btn rd-mouse", onclick: () => toggleMouse() }, icon(MOUSE));
   const zLabel = el("button", { class: "rd-zval", title: "Reset zoom", "aria-label": "Reset zoom", onclick: () => zoomReset() });
   const zoomBox = el("div", { class: "rd-zoom", role: "group", "aria-label": "Zoom" },
     el("button", { class: "rd-zbtn", "aria-label": "Zoom out", title: "Zoom out (-)", onclick: () => zoomStep(-1) }, "−"),
@@ -131,7 +138,7 @@ function build(onClose) {
     el("button", { class: "rd-zbtn", "aria-label": "Zoom in", title: "Zoom in (+)", onclick: () => zoomStep(1) }, "+"));
   const top = el("div", { class: "rd-bar rd-top" },
     el("button", { class: "rd-btn", "aria-label": "Close", onclick: close }, icon(ICON.left)),
-    title, hd, el("div", { class: "rd-modes", role: "group", "aria-label": "Reading direction" }, modeBtns), zoomBox, count,
+    title, hd, el("div", { class: "rd-modes", role: "group", "aria-label": "Reading direction" }, modeBtns), modeOne, zoomBox, count, mouseBtn,
     el("button", { class: "rd-btn rp-btn rd-party", "aria-label": "Read together", title: "Read together", onclick: () => partyPanel() }, partyIcon()),
     el("button", { class: "rd-btn rd-full", "aria-label": "Full screen", title: "Full screen (F)", onclick: () => toggleFull() }, icon(FULL)));
   const prevCh = el("button", { class: "rd-btn rd-ch", onclick: () => jumpChapter(-1) }, "Previous chapter");
@@ -145,7 +152,8 @@ function build(onClose) {
   box.append(stage, progress, top, bottom);
   document.body.append(box);
   document.body.style.overflow = "hidden";
-  r = { box, stage, title, count, hd, slider, prevCh, nextCh, modeBtns, zLabel, fill, onClose, hideT: 0, saveT: 0, io: null, page: 0, z: 1, glide: null, turning: null };
+  r = { box, stage, title, count, hd, slider, prevCh, nextCh, modeBtns, modeOne, mouseBtn, zLabel, fill, onClose, hideT: 0, saveT: 0, io: null, page: 0, z: 1, glide: null, turning: null };
+  paintMouse();
   box.addEventListener("keydown", onKey);
   box.addEventListener("mousemove", onMove);
   box.addEventListener("touchstart", onTouchStart, { passive: true });
@@ -222,6 +230,7 @@ function setMode(mode, save, page = r.page) {
   const was = r.mode;
   r.mode = MODES.some((m) => m.id === mode) ? mode : "manga";
   r.modeBtns.forEach((b) => b.classList.toggle("on", b.dataset.mode === r.mode));
+  r.modeOne.textContent = MODES.find((m) => m.id === r.mode).label;
   if (save) invoke("read_mode", { key: r.key, mode: r.mode }).catch(() => {});
   cancelAnimationFrame(r.zoomRaf);
   r.zTo = null;
@@ -742,6 +751,7 @@ function onKey(e) {
   else if (k === "PageUp" || k === "ArrowUp" || code === 38) { e.preventDefault(); pagedDown(-1); }
   else if (k === "Enter" || code === 13) { e.preventDefault(); toggleBars(); }
   if (k === "f" || k === "F" || code === 70) { e.preventDefault(); toggleFull(); }
+  else if (k === "m" || k === "M" || code === 77) { e.preventDefault(); toggleMouse(); }
   // Reading keys (down, space, page turns) leave the bars away: Enter brings them.
 }
 
@@ -795,6 +805,25 @@ function calmBars() {
 }
 
 const FULL = "M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5";
+const MOUSE = "M12 3a6 6 0 0 0-6 6v6a6 6 0 0 0 12 0V9a6 6 0 0 0-6-6zM12 7v4";
+
+/** Hide the mouse while reading: off unless chosen, kept for next time. */
+function hideMouse() { return getPref("reader-hide-mouse") === "1"; }
+function paintMouse() {
+  if (!r) return;
+  const on = hideMouse();
+  r.box.classList.toggle("hide-mouse", on);
+  r.mouseBtn.classList.toggle("on", on);
+  const t = on ? "Mouse hides while reading (M)" : "Mouse stays on screen (M)";
+  r.mouseBtn.title = t;
+  r.mouseBtn.setAttribute("aria-label", t);
+  r.mouseBtn.setAttribute("aria-pressed", on ? "true" : "false");
+}
+function toggleMouse() {
+  setPref("reader-hide-mouse", hideMouse() ? "0" : "1");
+  paintMouse();
+  toast(hideMouse() ? "The mouse hides while you read." : "The mouse stays on screen.");
+}
 async function setFull(on) {
   if (!WEB) { screenMode.app = await windowFull(on); window.dispatchEvent(new Event("chillarr:full")); return screenMode.app; }
   const d = document, x = d.documentElement;

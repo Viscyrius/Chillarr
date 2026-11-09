@@ -31,19 +31,21 @@ pub fn parse(id: &str) -> Option<(&str, i64)> {
 }
 
 /// Everything the person made, newest first, your copies swapped in.
-pub async fn works(app: &AppHandle, id: &str) -> Result<Vec<Tile>, String> {
+/// `adult`: R and NC-17 films and ecchi anime too (the profile's 18+ is on).
+pub async fn works(app: &AppHandle, id: &str, adult: bool) -> Result<Vec<Tile>, String> {
     let (src, n) = parse(id).ok_or("That person can't be looked up.")?;
-    let cached = CACHE.lock().unwrap().get(id).filter(|(at, _)| at.elapsed() < FRESH).map(|(_, t)| t.clone());
+    let ck = format!("{id}:{adult}");
+    let cached = CACHE.lock().unwrap().get(&ck).filter(|(at, _)| at.elapsed() < FRESH).map(|(_, t)| t.clone());
     let list = match cached {
         Some(t) => t,
         None => {
             let mut t = match src {
-                "tmdb" => from_wikidata(app, n).await?,
+                "tmdb" => from_wikidata(app, n, adult).await?,
                 "tvmaze" => tvmaze_shows(n).await?,
-                _ => anilist(n).await?,
+                _ => anilist(n, adult).await?,
             };
             newest_first(&mut t);
-            CACHE.lock().unwrap().insert(id.to_string(), (Instant::now(), t.clone()));
+            CACHE.lock().unwrap().insert(ck, (Instant::now(), t.clone()));
             t
         }
     };
@@ -83,7 +85,7 @@ pub fn wikidata_ids(v: &Value) -> (Vec<i64>, Vec<i64>) {
     (movies, shows)
 }
 
-async fn from_wikidata(app: &AppHandle, tmdb_person: i64) -> Result<Vec<Tile>, String> {
+async fn from_wikidata(app: &AppHandle, tmdb_person: i64, adult: bool) -> Result<Vec<Tile>, String> {
     // Directed (P57) or created (P170); P4985 is the person's TMDb id.
     let q = format!(
         "SELECT DISTINCT ?tm ?tvdb WHERE {{ ?p wdt:P4985 \"{tmdb_person}\" . {{ ?w wdt:P57 ?p }} UNION {{ ?w wdt:P170 ?p }} OPTIONAL {{ ?w wdt:P4947 ?tm }} OPTIONAL {{ ?w wdt:P4835 ?tvdb }} }}"
@@ -94,7 +96,7 @@ async fn from_wikidata(app: &AppHandle, tmdb_person: i64) -> Result<Vec<Tile>, S
         .header("Accept", "application/sparql-results+json")
         // Wikidata asks for a name it can reach.
         .header("User-Agent", "Chillarr (https://github.com/Viscyrius/Chillarr)")
-        .timeout(Duration::from_secs(30))
+        .timeout(Duration::from_secs(20))
         .send()
         .await
         .map_err(|_| "Wikidata isn't answering. Try again in a minute.".to_string())?
@@ -106,14 +108,22 @@ async fn from_wikidata(app: &AppHandle, tmdb_person: i64) -> Result<Vec<Tile>, S
     if !movies.is_empty() {
         if let Ok(r) = http().post(format!("{RADARR_META}/bulk")).json(&movies.iter().take(MAX).collect::<Vec<_>>()).send().await {
             let list: Vec<Value> = r.json().await.unwrap_or_default();
-            out.extend(list.iter().map(crate::catalog::from_meta));
+            out.extend(list.iter().filter(|m| adult || !crate::catalog::adult_cert(m["certification"].as_str().unwrap_or_default())).map(crate::catalog::from_meta));
         }
     }
+    // Shows not known here are looked up all at once, not one after another.
+    let mut lookups = tokio::task::JoinSet::new();
     for tvdb in shows.into_iter().take(20) {
         let known = app.state::<Media>().shows.lock().unwrap().by_tvdb(tvdb);
-        if let Some(t) = known {
-            out.push(t);
-        } else if let Some(v) = get(&format!("https://api.tvmaze.com/lookup/shows?thetvdb={tvdb}")).await {
+        match known {
+            Some(t) => out.push(t),
+            None => {
+                lookups.spawn(async move { get(&format!("https://api.tvmaze.com/lookup/shows?thetvdb={tvdb}")).await });
+            }
+        }
+    }
+    while let Some(r) = lookups.join_next().await {
+        if let Ok(Some(v)) = r {
             out.push(crate::tiles::from_tvmaze(&v));
         }
     }
@@ -144,7 +154,7 @@ async fn tvmaze_shows(person: i64) -> Result<Vec<Tile>, String> {
         .collect())
 }
 
-async fn anilist(staff: i64) -> Result<Vec<Tile>, String> {
+async fn anilist(staff: i64, adult: bool) -> Result<Vec<Tile>, String> {
     let q = format!(
         "{{ Staff(id: {staff}) {{ staffMedia(type: ANIME, sort: POPULARITY_DESC, perPage: 50) {{ nodes {{ id isAdult format genres title {{ english romaji }} coverImage {{ extraLarge }} bannerImage averageScore description(asHtml: false) seasonYear trailer {{ id site }} }} }} }} }}"
     );
@@ -154,6 +164,7 @@ async fn anilist(staff: i64) -> Result<Vec<Tile>, String> {
         .into_iter()
         .flatten()
         .filter(|m| m["isAdult"] != true)
+        .filter(|m| adult || !m["genres"].as_array().is_some_and(|g| g.iter().any(|g| g == "Ecchi")))
         .map(crate::tiles::from_anilist)
         .collect())
 }

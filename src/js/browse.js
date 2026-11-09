@@ -1371,11 +1371,16 @@ export async function renderExplore(view, category, title, mode = null, want = 0
   if (seq === renderSeq) swapIn(view, [page], mode);
 }
 
+/** 18+ on in this profile's Movies or Anime filters: R films and ecchi anime show on a person's page. */
+function makerAdult() {
+  return ["filter-movie", "filter-anime"].some((k) => { try { const a = JSON.parse(getPref(k) || "{}").adult; return a === "include" || a === "only"; } catch (e) { return false; } });
+}
+
 /** Everything one director, creator or anime staff member made (makers.rs). */
 export async function renderMaker(view, id, name, mode = null, want = 0) {
   stopBrowse();
   const seq = renderSeq;
-  const g = infiniteGrid(seq, (page) => (page ? Promise.resolve([]) : invoke("media_maker", { id })),
+  const g = infiniteGrid(seq, (page) => (page ? Promise.resolve([]) : invoke("media_maker", { id, adult: makerAdult() })),
     (n) => (n ? (n === 1 ? "That's the only title found." : `That's all ${n} titles found.`) : "Nothing found for this person yet."));
   const page = el("div", { class: "enter maker-page" },
     el("div", { class: "lib-head" }, el("div", {},
