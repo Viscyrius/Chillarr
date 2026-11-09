@@ -189,13 +189,19 @@ pub struct Followed {
     /// The translation it's read in ("en", "es", "pt-BR"...).
     #[serde(default)]
     pub lang: Option<String>,
-    /// New chapters download by themselves (off when chapters were picked one by one and the box unticked).
+    /// The one "Get new chapters" button: its sites are asked every few minutes
+    /// (keepup.rs) and new chapters download by themselves.
     #[serde(default = "yes")]
     pub new_too: bool,
+    /// The highest chapter number the site listed when it was followed (or last
+    /// checked). Only chapters above it are new; older ones left out were left out
+    /// on purpose. None: not known yet, the next check sets it and fetches nothing.
+    #[serde(default)]
+    pub known_upto: Option<f64>,
     /// Other copies filling in what this one lacks (a site further ahead).
     #[serde(default)]
     pub fill: Vec<Fill>,
-    /// Keep up to date: its sites are asked for new chapters every few minutes (keepup.rs).
+    /// From before the one button: Keep up to date. Read once as `new_too` on.
     #[serde(default)]
     pub live: bool,
     /// The newest chapter a "ready to read" notification has covered.
@@ -288,10 +294,18 @@ pub fn update_followed(app: &AppHandle, key: &str, change: impl FnOnce(&mut Foll
     }
 }
 
-/// Keep up to date on or off, for everyone (what's followed is shared).
+/// Get new chapters on or off, for everyone (what's followed is shared).
+/// Switched on, what the site lists now is the starting line: only chapters
+/// out after that come by themselves.
 pub fn set_live(app: &AppHandle, key: &str, on: bool) -> Result<bool, String> {
     find(app, key)?;
-    update_followed(app, key, |f| f.live = on);
+    update_followed(app, key, |f| {
+        f.new_too = on;
+        f.live = false;
+        if on {
+            f.known_upto = None;
+        }
+    });
     if on {
         crate::keepup::wake(key);
     }
@@ -307,7 +321,19 @@ fn followed_file(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 pub fn followed(app: &AppHandle) -> Vec<Followed> {
-    followed_file(app).map(|p| load_json(&p)).unwrap_or_default()
+    let mut all: Vec<Followed> = followed_file(app).map(|p| load_json(&p)).unwrap_or_default();
+    for f in &mut all {
+        one_button(f);
+    }
+    all
+}
+
+/// Follow's new chapters and Keep up to date are one button now: either one on is on.
+pub fn one_button(f: &mut Followed) {
+    if f.live {
+        f.new_too = true;
+        f.live = false;
+    }
 }
 
 fn save_followed(app: &AppHandle, all: &[Followed]) -> Result<(), String> {
@@ -586,6 +612,7 @@ pub fn serve(app: &AppHandle, path: &str) -> (&'static str, &'static str, Vec<u8
 pub fn set_spot(app: &AppHandle, key: &str, chapter: i64, page: usize, pages: usize) -> Result<(), String> {
     let uid = uid(app)?;
     known(app, key)?;
+    let comic = key.starts_with('b') && crate::books::find(app, key).is_ok_and(|b| b.comic);
     let mut all = spots(app, &uid);
     let s = all.entry(key.to_string()).or_default();
     s.chapter = chapter;
@@ -595,7 +622,9 @@ pub fn set_spot(app: &AppHandle, key: &str, chapter: i64, page: usize, pages: us
     if key.starts_with('b') {
         // A book: chapter = part of the book, page = how far into it (0..1000).
         // Done when the last part is read to its end (kept under -1).
-        if pages > 0 && chapter as usize + 1 >= pages && page >= 990 {
+        // A comic: chapter 0, page = the page it's on, of `pages`.
+        let done = if comic { page + 1 >= pages } else { chapter as usize + 1 >= pages && page >= 990 };
+        if pages > 0 && done {
             s.read.entry(-1).or_insert(now());
         }
     } else if pages > 0 && page + 1 >= pages {
@@ -637,6 +666,11 @@ pub struct OpenedBook {
     pub chapter: usize,
     /// How far into that spine item, 0..1000.
     pub at: usize,
+    /// A comic ("comic"): each page's width and height, the page it's on,
+    /// and how it's read. Its pages are `/read/<ticket>/<n>`.
+    pub pages: Vec<(u32, u32)>,
+    pub page: usize,
+    pub mode: String,
 }
 
 pub async fn open_book(app: &AppHandle, key: &str) -> Result<OpenedBook, String> {
@@ -645,10 +679,13 @@ pub async fn open_book(app: &AppHandle, key: &str) -> Result<OpenedBook, String>
     let file = crate::books::path_of(app, &b).ok_or("That book isn't downloaded yet.")?;
     let ext = file.extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
     let spot = spots(app, &uid).remove(key);
+    if ext == "cbz" {
+        return open_comic(app, b, file, spot).await;
+    }
     let (chapter, at) = spot.map(|s| (s.chapter.max(0) as usize, s.page)).unwrap_or((0, 0));
     if ext != "epub" {
         let ticket = app.state::<Reading>().issue_kind(file, Arc::new(vec![]), vec![], "file");
-        return Ok(OpenedBook { ticket, kind: if ext == "pdf" { "pdf".into() } else { "other".into() }, spine: vec![], title: b.title, chapter: 0, at: 0 });
+        return Ok(OpenedBook { ticket, kind: if ext == "pdf" { "pdf".into() } else { "other".into() }, spine: vec![], title: b.title, chapter: 0, at: 0, pages: vec![], page: 0, mode: String::new() });
     }
     let (entries, spine) = tokio::task::spawn_blocking({
         let file = file.clone();
@@ -664,7 +701,31 @@ pub async fn open_book(app: &AppHandle, key: &str) -> Result<OpenedBook, String>
     .map_err(|e| e.to_string())??;
     let chapter = chapter.min(spine.len().saturating_sub(1));
     let ticket = app.state::<Reading>().issue_kind(file, Arc::new(entries), vec![], "epub");
-    Ok(OpenedBook { ticket, kind: "epub".into(), spine, title: b.title, chapter, at })
+    Ok(OpenedBook { ticket, kind: "epub".into(), spine, title: b.title, chapter, at, pages: vec![], page: 0, mode: String::new() })
+}
+
+/// A comic's pages, like a chapter's: read straight out of its CBZ.
+async fn open_comic(app: &AppHandle, b: crate::books::Book, file: PathBuf, spot: Option<Spot>) -> Result<OpenedBook, String> {
+    let (entries, pages, sizes) = tokio::task::spawn_blocking({
+        let file = file.clone();
+        move || -> Result<_, String> {
+            let entries = zipread::entries(&file)?;
+            let names: Vec<String> = entries.iter().map(|e| e.name.clone()).collect();
+            let pages = read_core::page_order(&names);
+            let sizes = pages.iter().map(|&i| page_head(&file, &entries[i]).unwrap_or((0, 0))).collect::<Vec<_>>();
+            Ok((entries, pages, sizes))
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    if pages.is_empty() {
+        return Err("This comic has no pages in it.".into());
+    }
+    let page = spot.as_ref().map(|s| s.page.min(pages.len() - 1)).unwrap_or(0);
+    // Western comics read left to right unless the profile picked another way.
+    let mode = spot.and_then(|s| s.mode).unwrap_or_else(|| "ltr".into());
+    let ticket = app.state::<Reading>().issue(file, Arc::new(entries), pages);
+    Ok(OpenedBook { ticket, kind: "comic".into(), spine: vec![], title: b.title, chapter: 0, at: 0, pages: sizes, page, mode })
 }
 
 #[derive(Serialize)]
@@ -699,7 +760,17 @@ pub async fn books(app: &AppHandle) -> Result<Vec<BookShelf>, String> {
             let spot = s.get(&b.key);
             let progress = b.hash.as_ref().and_then(|h| torrents.iter().find(|t| t["hash"].as_str() == Some(h.as_str()))).and_then(|t| t["progress"].as_f64());
             let read = spot
-                .map(|s| if s.read.contains_key(&-1) { 1.0 } else if s.pages > 0 { ((s.chapter as f64) + s.page as f64 / 1000.0) / s.pages as f64 } else { 0.0 })
+                .map(|s| {
+                    if s.read.contains_key(&-1) {
+                        1.0
+                    } else if s.pages == 0 {
+                        0.0
+                    } else if b.comic {
+                        (s.page + 1) as f64 / s.pages as f64
+                    } else {
+                        ((s.chapter as f64) + s.page as f64 / 1000.0) / s.pages as f64
+                    }
+                })
                 .unwrap_or(0.0)
                 .clamp(0.0, 1.0);
             // Most books end in notes, thanks and previews: 90% in counts as read
@@ -1081,7 +1152,9 @@ pub async fn follow(app: &AppHandle, meta: Meta, pick: crate::suwayomi::Candidat
     for x in &fill {
         lists.push(crate::suwayomi::chapters(x.manga_id).await.unwrap_or_default());
     }
-    let wanted: Vec<i64> = merge_copies(lists)
+    let merged = merge_copies(lists);
+    let known_upto = top_number(merged.iter().map(|x| &x.0));
+    let wanted: Vec<i64> = merged
         .into_iter()
         .map(|x| x.0)
         .filter(|c| !c.downloaded)
@@ -1111,7 +1184,7 @@ pub async fn follow(app: &AppHandle, meta: Meta, pick: crate::suwayomi::Candidat
             }
         }
     }
-    let was_live = all.iter().any(|f| f.live && (f.key == key || old.iter().any(|o| o.key == f.key)));
+    let was_live = all.iter().any(|f| (f.live || f.new_too) && (f.key == key || old.iter().any(|o| o.key == f.key)));
     // Whoever followed the old copy follows the new one, and so does this profile.
     let mut owners: Vec<String> = all.iter().filter(|f| f.key == key || old.iter().any(|o| o.key == f.key)).flat_map(|f| owners_of(&f.owners, pc_owner.as_deref())).collect();
     owners.push(me.clone());
@@ -1138,10 +1211,11 @@ pub async fn follow(app: &AppHandle, meta: Meta, pick: crate::suwayomi::Candidat
         added: now(),
         from,
         lang,
-        new_too: sel.new_too,
+        // A changed copy keeps getting new chapters; what's been told starts over quietly.
+        new_too: sel.new_too || was_live,
+        known_upto,
         fill: fill.clone(),
-        // A changed copy stays kept up to date; what's been told starts over quietly.
-        live: was_live,
+        live: false,
         told: None,
         ahead_told: None,
         owners,
@@ -1254,24 +1328,39 @@ pub async fn fetch_new(app: &AppHandle) {
     let queued: std::collections::HashSet<i64> = crate::suwayomi::queue().await.into_iter().map(|q| q.1).collect();
     for f in list.into_iter().filter(|f| f.new_too) {
         let Ok(chs) = chapter_list(&f).await else { continue };
+        let top = top_number(chs.iter());
+        // Not known yet (followed before this was kept): what's listed now is the line.
+        let Some(mark) = f.known_upto else {
+            if top.is_some() {
+                update_followed(app, &f.key, |x| x.known_upto = top);
+            }
+            continue;
+        };
         // Deleted by hand counts like read: it was let go on purpose.
         let read_by_someone = |id: i64| f.removed.contains(&id) || profiles.iter().filter_map(|p| p.get(&f.key)).any(|s| s.read.contains_key(&id));
-        let want = new_wanted(&chs, &queued, &read_by_someone, f.from);
+        let want = new_wanted(&chs, &queued, &read_by_someone, f.from, mark);
+        if let Some(t) = top.filter(|&t| t > mark) {
+            update_followed(app, &f.key, |x| x.known_upto = Some(t));
+        }
         if !want.is_empty() && crate::suwayomi::enqueue(&want).await.is_ok() {
             crate::log::log(app, crate::model::Level::Ok, format!("Getting {} new chapter(s) of {}.", want.len(), f.title));
         }
     }
 }
 
-/// The chapters to fetch as new: only ones newer than everything here or already
-/// read (older ones left out were left out on purpose, and read ones the clean-up
-/// deleted must not come back).
-pub fn new_wanted(chs: &[crate::suwayomi::Chapter], queued: &std::collections::HashSet<i64>, read_by_someone: &dyn Fn(i64) -> bool, from: Option<f64>) -> Vec<i64> {
-    let newest_here = chs.iter().filter(|c| c.downloaded || read_by_someone(c.id)).filter_map(|c| c.number).fold(f64::MIN, f64::max);
+/// The highest chapter number in a list, if any has one.
+pub fn top_number<'a>(chs: impl Iterator<Item = &'a crate::suwayomi::Chapter>) -> Option<f64> {
+    chs.filter_map(|c| c.number).fold(None, |m: Option<f64>, n| Some(m.map_or(n, |m| m.max(n))))
+}
+
+/// The chapters to fetch as new: only ones the site listed after the series was
+/// followed (above `mark`). Older ones left out were left out on purpose, and
+/// read ones the clean-up deleted must not come back.
+pub fn new_wanted(chs: &[crate::suwayomi::Chapter], queued: &std::collections::HashSet<i64>, read_by_someone: &dyn Fn(i64) -> bool, from: Option<f64>, mark: f64) -> Vec<i64> {
     chs.iter()
         .filter(|c| !c.downloaded && !queued.contains(&c.id) && !read_by_someone(c.id))
         .filter(|c| from.is_none_or(|from| c.number.unwrap_or(f64::MAX) >= from))
-        .filter(|c| newest_here == f64::MIN || c.number.is_some_and(|n| n > newest_here))
+        .filter(|c| c.number.is_some_and(|n| n > mark))
         .map(|c| c.id)
         .collect()
 }
@@ -1487,6 +1576,9 @@ pub struct Explore {
     /// "hide" (the default), "include" or "only".
     #[serde(default)]
     pub adult: Option<String>,
+    /// Porn inside 18+: "hide" (the default) or "include".
+    #[serde(default)]
+    pub porn: Option<String>,
     #[serde(default)]
     pub page: u32,
 }
@@ -1501,10 +1593,20 @@ pub fn adult_ok(_app: &AppHandle) -> bool {
 
 pub fn explore_args(e: &Explore, adult_allowed: bool) -> Result<String, String> {
     let mut a = vec!["type:MANGA".to_string()];
-    match (adult_allowed, e.adult.as_deref()) {
-        (true, Some("include")) => {}
-        (true, Some("only")) => a.push("isAdult:true".into()),
-        _ => a.push("isAdult:false".into()),
+    // 18+ is Ecchi and the like; porn is AniList's isAdult (see adult_rule).
+    let rule = if adult_allowed { crate::catalog::adult_rule(e.adult.as_deref(), e.porn.as_deref()) } else { crate::catalog::adult_rule(None, None) };
+    match rule.is_adult {
+        Some(true) => a.push("isAdult:true".into()),
+        Some(false) => a.push("isAdult:false".into()),
+        None => {}
+    }
+    let mut genres = e.genres.clone();
+    let mut not_genres = e.not_genres.clone();
+    match rule.ecchi {
+        Some(true) if !genres.iter().any(|g| g == "Ecchi") => genres.push("Ecchi".into()),
+        // Picking the Ecchi chip asks for it by itself.
+        Some(false) if !not_genres.iter().chain(&genres).any(|g| g == "Ecchi") => not_genres.push("Ecchi".into()),
+        _ => {}
     }
     match e.kind.as_str() {
         "manga" => a.extend(["countryOfOrigin:\"JP\"".into(), "format_in:[MANGA,ONE_SHOT]".into()]),
@@ -1517,7 +1619,7 @@ pub fn explore_args(e: &Explore, adult_allowed: bool) -> Result<String, String> 
     // Names go into the query as strings: letters, digits, spaces, - and ' only.
     let word = |s: &str| !s.is_empty() && s.len() <= 40 && s.chars().all(|c| c.is_ascii_alphanumeric() || c == ' ' || c == '-' || c == '\'');
     let list = |v: &[String]| -> Vec<String> { v.iter().filter(|g| word(g)).take(10).map(|g| format!("\"{g}\"")).collect() };
-    let pairs = [("genre_in", list(&e.genres)), ("genre_not_in", list(&e.not_genres)), ("tag_in", list(&e.tags)), ("tag_not_in", list(&e.not_tags))];
+    let pairs = [("genre_in", list(&genres)), ("genre_not_in", list(&not_genres)), ("tag_in", list(&e.tags)), ("tag_not_in", list(&e.not_tags))];
     for (k, v) in pairs {
         if !v.is_empty() {
             a.push(format!("{k}:[{}]", v.join(",")));
@@ -1601,17 +1703,130 @@ pub async fn similar(app: &AppHandle, anilist: i64) -> Result<Vec<Value>, String
         .unwrap_or_default())
 }
 
+/// The details under a series' description, like a film's: who made it, how
+/// many chapters and volumes, how far along it is, and when it ran.
+pub async fn about(anilist: i64) -> Result<Vec<(String, String)>, String> {
+    if anilist <= 0 {
+        return Ok(vec![]);
+    }
+    let q = "query($id:Int){Media(id:$id,type:MANGA){format status chapters volumes genres countryOfOrigin source averageScore synonyms startDate{year month day} endDate{year month day} staff(perPage:12,sort:RELEVANCE){edges{role node{name{full}}}} tags{name rank isMediaSpoiler}}}";
+    let v = crate::media::anilist(&json!({ "query": q, "variables": { "id": anilist } })).await?;
+    Ok(about_facts(&v["data"]["Media"]))
+}
+
+/// AniList's Media as (label, value) pairs, in the order they show.
+fn about_facts(m: &Value) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    let mut put = |k: &str, v: String| {
+        if !v.trim().is_empty() {
+            out.push((k.to_string(), v));
+        }
+    };
+    let strs = |v: &Value| -> Vec<String> { v.as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default() };
+    put("Genres", strs(&m["genres"]).join(", "));
+    // The people who made it, by what they did: "Story", "Art", "Story & Art".
+    let mut roles: Vec<(String, Vec<String>)> = Vec::new();
+    for e in m["staff"]["edges"].as_array().into_iter().flatten() {
+        let role = e["role"].as_str().unwrap_or_default();
+        let role = role.split(" (").next().unwrap_or_default().trim();
+        let keep = ["Story", "Art", "Original Creator", "Original Story", "Author", "Illustration"].iter().any(|r| role.starts_with(r));
+        let Some(name) = e["node"]["name"]["full"].as_str() else { continue };
+        if !keep {
+            continue;
+        }
+        match roles.iter_mut().find(|(r, _)| r == role) {
+            Some((_, names)) => {
+                if !names.iter().any(|n| n == name) {
+                    names.push(name.to_string());
+                }
+            }
+            None => roles.push((role.to_string(), vec![name.to_string()])),
+        }
+    }
+    for (role, names) in roles.into_iter().take(4) {
+        put(&role.replace(" & ", " and "), names.join(", "));
+    }
+    let status = match m["status"].as_str().unwrap_or_default() {
+        "RELEASING" => "Ongoing",
+        "FINISHED" => "Finished",
+        "HIATUS" => "On hiatus",
+        "CANCELLED" => "Cancelled",
+        "NOT_YET_RELEASED" => "Coming soon",
+        _ => "",
+    };
+    put("Status", status.to_string());
+    if let Some(n) = m["chapters"].as_i64() {
+        put("Chapters", n.to_string());
+    }
+    if let Some(n) = m["volumes"].as_i64() {
+        put("Volumes", n.to_string());
+    }
+    let date = |d: &Value| -> Option<String> {
+        let y = d["year"].as_i64()?;
+        const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+        Some(match d["month"].as_i64().filter(|m| (1..=12).contains(m)) {
+            Some(mo) => format!("{} {y}", MONTHS[mo as usize - 1]),
+            None => y.to_string(),
+        })
+    };
+    match (date(&m["startDate"]), date(&m["endDate"])) {
+        (Some(a), Some(b)) if a != b => put("Ran", format!("{a} to {b}")),
+        (Some(a), Some(_)) => put("Year", a),
+        (Some(a), None) if status == "Ongoing" || status == "On hiatus" => put("Started", a),
+        (Some(a), None) => put("Year", a),
+        _ => {}
+    }
+    let kind = match (m["format"].as_str().unwrap_or_default(), m["countryOfOrigin"].as_str().unwrap_or_default()) {
+        ("NOVEL", _) => "Light novel",
+        ("ONE_SHOT", _) => "One shot",
+        (_, "KR") => "Manhwa (Korea)",
+        (_, "CN") | (_, "TW") => "Manhua (China)",
+        ("MANGA", _) => "Manga (Japan)",
+        _ => "",
+    };
+    put("Type", kind.to_string());
+    let source = match m["source"].as_str().unwrap_or_default() {
+        "LIGHT_NOVEL" => "A light novel",
+        "NOVEL" => "A novel",
+        "WEB_NOVEL" => "A web novel",
+        "VIDEO_GAME" | "GAME" => "A game",
+        "ANIME" => "An anime",
+        _ => "",
+    };
+    put("Based on", source.to_string());
+    if let Some(s) = m["averageScore"].as_i64() {
+        put("Score", format!("{s}%"));
+    }
+    let themes: Vec<String> = m["tags"]
+        .as_array()
+        .map(|a| a.iter().filter(|t| t["isMediaSpoiler"] != true && t["rank"].as_i64().unwrap_or(0) >= 60).filter_map(|t| t["name"].as_str().map(String::from)).take(6).collect())
+        .unwrap_or_default();
+    put("Themes", themes.join(", "));
+    put("Also known as", strs(&m["synonyms"]).into_iter().take(3).collect::<Vec<_>>().join(", "));
+    out
+}
+
 /// `adult`: this profile turned 18+ on (Include or Only in a reading tab), so
-/// 18+ titles are found too. Otherwise they never are.
-pub async fn search(app: &AppHandle, term: &str, adult: bool) -> Result<Vec<Value>, String> {
+/// Ecchi titles are found too. `porn`: porn is on there as well, so isAdult
+/// titles are found too. Otherwise they never are.
+pub async fn search(app: &AppHandle, term: &str, adult: bool, porn: bool) -> Result<Vec<Value>, String> {
     let term = term.trim();
     if term.is_empty() {
         return Ok(vec![]);
     }
-    let only_safe = if adult && adult_ok(app) { "" } else { "isAdult:false," };
+    let only_safe = search_args(adult && adult_ok(app), porn);
     let q = format!("query($s:String){{Page(perPage:30){{media(type:MANGA,{only_safe}search:$s,sort:SEARCH_MATCH){{{MEDIA_FIELDS}}}}}}}");
     let v = crate::media::anilist(&json!({ "query": q, "variables": { "s": term } })).await?;
     Ok(v["data"]["Page"]["media"].as_array().map(|a| a.iter().map(card).collect()).unwrap_or_default())
+}
+
+/// The 18+ part of a search: Ecchi only with 18+ on, isAdult only with porn on too.
+fn search_args(adult: bool, porn: bool) -> &'static str {
+    match (adult, porn) {
+        (true, true) => "",
+        (true, false) => "isAdult:false,",
+        _ => "isAdult:false,genre_not_in:[\"Ecchi\"],",
+    }
 }
 
 #[cfg(test)]
@@ -1634,6 +1849,32 @@ mod tests {
     }
 
     #[test]
+    fn about_reads_anilist_plainly() {
+        let m = json!({
+            "format": "MANGA", "status": "RELEASING", "chapters": null, "volumes": 12, "genres": ["Action", "Drama"], "countryOfOrigin": "KR",
+            "source": "WEB_NOVEL", "averageScore": 84, "synonyms": ["Solo Leveling"], "startDate": { "year": 2018, "month": 3 }, "endDate": {},
+            "staff": { "edges": [
+                { "role": "Story", "node": { "name": { "full": "A" } } },
+                { "role": "Art (Ch. 1-10)", "node": { "name": { "full": "B" } } },
+                { "role": "Art", "node": { "name": { "full": "C" } } },
+                { "role": "Translator", "node": { "name": { "full": "D" } } }
+            ] },
+            "tags": [{ "name": "Dungeon", "rank": 90 }, { "name": "Twist", "rank": 95, "isMediaSpoiler": true }, { "name": "Weak", "rank": 20 }]
+        });
+        let f: HashMap<String, String> = about_facts(&m).into_iter().collect();
+        assert_eq!(f["Genres"], "Action, Drama");
+        assert_eq!(f["Story"], "A");
+        assert_eq!(f["Art"], "B, C");
+        assert!(!f.contains_key("Translator") && !f.contains_key("Chapters"));
+        assert_eq!(f["Volumes"], "12");
+        assert_eq!(f["Status"], "Ongoing");
+        assert_eq!(f["Started"], "Mar 2018");
+        assert_eq!(f["Type"], "Manhwa (Korea)");
+        assert_eq!(f["Based on"], "A web novel");
+        assert_eq!(f["Themes"], "Dungeon");
+    }
+
+    #[test]
     fn explore_only_builds_safe_queries() {
         let e = Explore { kind: "manhua".into(), genres: vec!["Action".into(), "x\"}){evil".into()], status: Some("FINISHED".into()), sort: Some("score".into()), page: 1, ..Default::default() };
         let a = explore_args(&e, false).unwrap();
@@ -1643,20 +1884,28 @@ mod tests {
         // Out, tags, rating, years, length.
         let e = Explore { kind: "all".into(), not_genres: vec!["Romance".into()], tags: vec!["Boys' Love".into()], not_tags: vec!["Isekai".into()], min_score: Some(80), year_from: Some(2018), year_to: Some(2020), chapters_min: Some(50), chapters_max: Some(150), ..Default::default() };
         let a = explore_args(&e, false).unwrap();
-        for want in ["genre_not_in:[\"Romance\"]", "tag_in:[\"Boys\' Love\"]", "tag_not_in:[\"Isekai\"]", "averageScore_greater:79", "startDate_greater:20180000", "startDate_lesser:20210000", "chapters_greater:49", "chapters_lesser:151", "format_in:[MANGA,ONE_SHOT]"] {
+        for want in ["genre_not_in:[\"Romance\",\"Ecchi\"]", "tag_in:[\"Boys\' Love\"]", "tag_not_in:[\"Isekai\"]", "averageScore_greater:79", "startDate_greater:20180000", "startDate_lesser:20210000", "chapters_greater:49", "chapters_lesser:151", "format_in:[MANGA,ONE_SHOT]"] {
             assert!(a.contains(want), "{want} in {a}");
         }
     }
 
     #[test]
     fn adult_only_for_those_allowed() {
-        let ask = |adult: &str| Explore { kind: "manhwa".into(), adult: Some(adult.into()), ..Default::default() };
-        assert!(explore_args(&ask("include"), false).unwrap().contains("isAdult:false"), "not allowed: hidden whatever is asked");
-        assert!(explore_args(&ask("only"), false).unwrap().contains("isAdult:false"));
-        assert!(!explore_args(&ask("include"), true).unwrap().contains("isAdult"), "allowed, included: both");
-        assert!(explore_args(&ask("only"), true).unwrap().contains("isAdult:true"));
-        assert!(explore_args(&ask("hide"), true).unwrap().contains("isAdult:false"));
+        let ask = |adult: &str, porn: &str| Explore { kind: "manhwa".into(), adult: Some(adult.into()), porn: Some(porn.into()), ..Default::default() };
+        let hidden = explore_args(&ask("include", "include"), false).unwrap();
+        assert!(hidden.contains("isAdult:false") && hidden.contains("genre_not_in:[\"Ecchi\"]"), "not allowed: hidden whatever is asked");
+        let a = explore_args(&ask("include", "hide"), true).unwrap();
+        assert!(a.contains("isAdult:false") && !a.contains("Ecchi"), "18+ without porn: {a}");
+        assert!(!explore_args(&ask("include", "include"), true).unwrap().contains("isAdult"), "with porn: both");
+        let a = explore_args(&ask("only", "hide"), true).unwrap();
+        assert!(a.contains("isAdult:false") && a.contains("genre_in:[\"Ecchi\"]"), "{a}");
+        assert!(explore_args(&ask("only", "include"), true).unwrap().contains("isAdult:true"));
+        let a = explore_args(&ask("hide", "include"), true).unwrap();
+        assert!(a.contains("isAdult:false") && a.contains("genre_not_in:[\"Ecchi\"]"), "porn needs 18+: {a}");
         assert!(explore_args(&Explore { kind: "manhwa".into(), ..Default::default() }, true).unwrap().contains("isAdult:false"), "off unless asked");
+        assert_eq!(search_args(true, true), "");
+        assert_eq!(search_args(true, false), "isAdult:false,");
+        assert!(search_args(false, true).contains("Ecchi"));
     }
 
     #[test]
@@ -1735,15 +1984,40 @@ mod tests {
     #[test]
     fn deleted_read_chapters_dont_come_back() {
         let mut chs: Vec<Chapter> = (1..=6).map(|i| ch(i, i as f64, false)).collect();
-        chs[5].downloaded = true; // only chapter 6 is here
         let none = std::collections::HashSet::new();
-        // Chapters 3 to 5 were picked, read and cleaned up; 1 and 2 were never wanted.
+        // Followed at 6. Chapters 3 to 5 were picked, read and cleaned up; 1, 2 and 6 never wanted.
         let read = |id: i64| (3..=5).contains(&id);
-        assert!(new_wanted(&chs, &none, &read, None).is_empty(), "nothing newer than what was read or is here");
-        chs[5].downloaded = false;
+        assert!(new_wanted(&chs, &none, &read, None, 6.0).is_empty(), "nothing out since following");
         chs.push(ch(7, 7.0, false));
-        assert_eq!(new_wanted(&chs, &none, &read, None), vec![6, 7], "after the last read one: new");
-        assert_eq!(new_wanted(&chs, &none, &|_| false, None), (1..=7).collect::<Vec<i64>>(), "nothing here or read: everything");
+        chs.push(ch(8, 8.0, false));
+        assert_eq!(new_wanted(&chs, &none, &read, None, 6.0), vec![7, 8], "out since following: new");
+        let q: std::collections::HashSet<i64> = [7].into_iter().collect();
+        assert!(new_wanted(&chs, &q, &|id| id == 8, None, 6.0).is_empty(), "queued or read: not again");
+    }
+
+    #[test]
+    fn picked_chapters_of_a_finished_series_dont_pull_in_the_rest() {
+        // Noblesse: 545 chapters, 1 to 100 picked, none downloaded yet.
+        let mut chs: Vec<Chapter> = (1..=545).map(|i| ch(i, i as f64, false)).collect();
+        let picked: std::collections::HashSet<i64> = (1..=100).collect();
+        let mark = top_number(chs.iter()).unwrap();
+        assert_eq!(mark, 545.0);
+        assert!(new_wanted(&chs, &picked, &|_| false, None, mark).is_empty(), "nothing downloaded yet: still nothing new");
+        assert!(new_wanted(&chs, &std::collections::HashSet::new(), &|_| false, None, mark).is_empty(), "picked ones done: 101 to 545 stay left out");
+        chs.push(ch(546, 546.0, false));
+        assert_eq!(new_wanted(&chs, &picked, &|_| false, None, mark), vec![546], "a real new chapter comes");
+    }
+
+    #[test]
+    fn a_series_from_before_the_mark_wants_nothing_its_first_round() {
+        let raw = r#"{"key":"m1","manga_id":1,"anilist":null,"title":"X","cover":null,"banner":null,"country":null,"format":null,"status":null,"description":null,"mode":"manga","source":"S","source_title":"X","width":0,"added":0,"live":true,"new_too":false}"#;
+        let mut f: Followed = serde_json::from_str(raw).unwrap();
+        assert_eq!(f.known_upto, None, "not known: the first round only sets it");
+        one_button(&mut f);
+        assert!(f.new_too && !f.live, "Keep up to date on: the one button is on");
+        let chs: Vec<Chapter> = (1..=50).map(|i| ch(i, i as f64, false)).collect();
+        let mark = top_number(chs.iter()).unwrap();
+        assert!(new_wanted(&chs, &std::collections::HashSet::new(), &|_| false, None, mark).is_empty());
     }
 
     #[test]

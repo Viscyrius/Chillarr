@@ -57,9 +57,19 @@ export async function openReader(key, chapter, onClose = null) {
   }
   if (!r) build(onClose);
   r.key = key;
+  r.comic = false;
   load(opened, root);
   // Read Party: where this reader is, and how a party moves it.
   attachReader({ where: partyWhere, go: partyGo });
+}
+
+/** A comic from Books (read_book_open's "comic"): its pages here, as one
+ * chapter with none before or after. Progress goes to the book's key. */
+export function openComic(key, o, root, onClose = null) {
+  if (!r) build(onClose);
+  r.key = key;
+  r.comic = true;
+  load({ ticket: o.ticket, pages: o.pages, chapter: { id: 0, name: "" }, prev: null, next: null, mode: o.mode, page: o.page, title: o.title, sharp: false }, root);
 }
 
 /** Where this reader is for a reading party: the page, and how far down it
@@ -122,7 +132,7 @@ function build(onClose) {
   const top = el("div", { class: "rd-bar rd-top" },
     el("button", { class: "rd-btn", "aria-label": "Close", onclick: close }, icon(ICON.left)),
     title, hd, el("div", { class: "rd-modes", role: "group", "aria-label": "Reading direction" }, modeBtns), zoomBox, count,
-    el("button", { class: "rd-btn rp-btn", "aria-label": "Read together", title: "Read together", onclick: () => partyPanel() }, partyIcon()),
+    el("button", { class: "rd-btn rp-btn rd-party", "aria-label": "Read together", title: "Read together", onclick: () => partyPanel() }, partyIcon()),
     el("button", { class: "rd-btn rd-full", "aria-label": "Full screen", title: "Full screen (F)", onclick: () => toggleFull() }, icon(FULL)));
   const prevCh = el("button", { class: "rd-btn rd-ch", onclick: () => jumpChapter(-1) }, "Previous chapter");
   const nextCh = el("button", { class: "rd-btn rd-ch", onclick: () => jumpChapter(1) }, "Next chapter");
@@ -180,6 +190,10 @@ function load(o, root) {
   r.slider.max = String(Math.max(0, o.pages.length - 1));
   r.prevCh.disabled = o.prev == null;
   r.nextCh.disabled = o.next == null;
+  // A comic is one book: no other chapters, and no reading party.
+  r.prevCh.hidden = r.nextCh.hidden = !!r.comic;
+  const party = r.box.querySelector(".rd-party");
+  if (party) party.hidden = !!r.comic;
   // A new chapter fades over the old one; the first one draws at once.
   if (first) setMode(o.mode, false, o.page);
   else fade(() => setMode(o.mode, false, o.page));
@@ -403,7 +417,7 @@ function endCard() {
   }, { root: r.stage, threshold: 0.2 });
   r.endIo.push(seen);
   const watchEnd = (card) => { seen.observe(card); return card; };
-  if (o.next == null) return watchEnd(el("div", { class: "rd-end" }, el("p", { text: "You're up to date." }), el("button", { class: "btn soft", onclick: close }, "Close")));
+  if (o.next == null) return watchEnd(el("div", { class: "rd-end" }, el("p", { text: r.comic ? "The end." : "You're up to date." }), el("button", { class: "btn soft", onclick: close }, "Close")));
   const card = el("div", { class: "rd-end" }, el("p", { text: "Next chapter" }), el("button", { class: "btn play", onclick: () => jumpChapter(1) }, "Keep reading"));
   // Rolled into view and left there: the next chapter follows on.
   let t = 0;
@@ -589,7 +603,7 @@ function step(dir) {
   if (r.mode === "webtoon") { glideBy(dir * r.stage.clientHeight * 0.85); return; }
   const at = r.spreads.findIndex((s) => s.includes(r.page));
   const next = at + dir;
-  if (next >= r.spreads.length) { if (r.o.next != null) jumpChapter(1); else toast("That's the last chapter for now."); return; }
+  if (next >= r.spreads.length) { if (r.o.next != null) jumpChapter(1); else toast(r.comic ? "That's the last page." : "That's the last chapter for now."); return; }
   if (next < 0) { if (r.o.prev != null) jumpChapter(-1, true); return; }
   goTo(r.spreads[next][0], true, dir);
 }

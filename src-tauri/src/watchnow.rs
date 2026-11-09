@@ -1700,7 +1700,7 @@ pub async fn remove(app: &tauri::AppHandle, key: &str) -> Result<String, String>
         Some((hash, Removal::Finished)) => drop_finished(app, &e, &hash).await.map(|_| ()),
         Some((hash, Removal::Partial(OnRemove::Delete))) => {
             let which = if e.kind == "movie" { "radarr" } else { "sonarr" };
-            crate::waiting::stop_download(app, which, &hash).await.map(|_| ())
+            crate::waiting::stop_download(app, which, &hash, false).await.map(|_| ())
         }
         Some((hash, Removal::Partial(OnRemove::Skip(ids)))) => {
             let skipped = match crate::waiting::qbit(app) {

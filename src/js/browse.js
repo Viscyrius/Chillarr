@@ -1,12 +1,13 @@
 // Home, Movies, Series, Anime and My downloads: a hero, genre chips and rows
 // of posters; hover previews; Top 10; and "Explore all" pages that keep loading.
 import { isHidden, markHidden } from "./hidden.js";
-import { $, canDelete, el, genresAZ, getPref, icon, ICON, invoke, listen, metaBits, personKey, store, toast } from "./api.js";
+import { $, canDelete, choose, el, expandRow, genresAZ, getPref, icon, ICON, invoke, listen, metaBits, personKey, store, toast } from "./api.js";
 import { openDetail, playShowNow } from "./detail.js";
 import { canWatchNow, confirmRemove, isWatchNow, movieLike, play, removeWatchNow, watchNow } from "./player.js";
 import { completedActions, confirmRedownload, listable, markWatched, onMyList, removeCompleted, removeContinue, resumable, setMyList } from "./mylist.js";
 import { goBack, remember, restore } from "./place.js";
 import { inlinePicker, styleNow } from "./look.js";
+import { tabbed } from "./read.js";
 
 const WIDE = new Set(["continue", "downloading"]);
 let refreshTimer;
@@ -684,6 +685,21 @@ function stopSection(cls, title, note, items, stop, label = "Stop") {
   return section;
 }
 
+/** Stop on a download. A series' (or anime's) asks first whether to stop
+ *  just that download or the whole show: every episode download, and
+ *  nothing more fetched for it. Closing the question stops nothing. */
+async function stopDownload(d) {
+  let whole = false;
+  if (d.app === "sonarr") {
+    const pick = await choose(`Stop ${d.tile.title}?`,
+      "The whole series cancels every episode it's downloading and stops getting new ones. What's already downloaded stays.",
+      [], "The whole series", "Just this download");
+    if (pick == null) return null;
+    whole = pick === "yes";
+  }
+  return invoke("media_stop_download", { which: d.app, downloadId: d.download_id, whole });
+}
+
 /** Downloading now on My downloads: one entry per torrent, each with Stop. Kept current. */
 async function fillDownloads(view, seq) {
   const slot = view.querySelector(".downloads-slot");
@@ -693,7 +709,7 @@ async function fillDownloads(view, seq) {
   const sig = sigFor(view, ".downloads-slot", list);
   if (sig == null) return;
   const section = list.length
-    ? stopSection("downloads", "Downloading now", null, list, canDelete() && ((d) => invoke("media_stop_download", { which: d.app, downloadId: d.download_id })))
+    ? stopSection("downloads", "Downloading now", null, list, canDelete() && stopDownload)
     : el("div");
   section.classList.add("downloads-slot");
   section._sig = sig;
@@ -790,20 +806,27 @@ async function myListPage(rows, seq) {
   const me = (await invoke("profiles_list").catch(() => [])).find((p) => p.active);
   const groups = { all, ready: all.filter((t) => t.jf_id), notyet: all.filter((t) => !t.jf_id) };
   const names = { all: "All", ready: "Downloaded", notyet: "Not downloaded" };
-  const grid = el("div", { class: "grid-lib" });
+  // One row, like Reading's My List: Show all opens it into the whole list.
+  let grid = el("div");
   const chips = el("div", { class: "chips" }, Object.keys(groups).map((k) => el("button", { class: "chip", dataset: { key: k }, onclick: () => draw(k) }, `${names[k]} ${groups[k].length}`)));
   function draw(key) {
-    grid.replaceChildren(...groups[key].map(listTile));
+    const section = rowEl({ id: "saved", title: names[key] === "All" ? "Saved for later" : names[key], tiles: [] });
+    const track = section.querySelector(".track");
+    track.replaceChildren(...groups[key].map(listTile));
+    section.querySelector(".count").textContent = String(groups[key].length);
+    expandRow(section, "mylist");
+    if (grid.parentNode) { unwatchFits(grid.querySelector(".track")); grid.replaceWith(section); }
+    grid = section;
     chips.querySelectorAll(".chip").forEach((c) => c.classList.toggle("on", c.dataset.key === key));
   }
   const lead = me ? `${me.name}'s list. Other profiles have their own.` : "Titles you saved for later.";
   if (seq !== renderSeq) return null;
+  draw("all");
   const page = el("div", { class: "enter" },
     el("div", { class: "lib-head" }, el("div", {}, el("h1", { text: "My List" }), el("p", { text: lead })), all.length ? chips : null),
     all.length ? grid : el("div", { class: "empty-state", style: "padding-top:6vh" }, el("h2", { text: "Your list is empty" }), el("p", { text: "Press + on anything to save it here. It doesn't download until you say so." }), el("a", { class: "btn primary", href: "#home" }, "Find something")),
     el("div", { class: "watchnow-slot" }),
     el("div", { class: "completed-slot" }));
-  draw("all");
   fillWatchNow(page, seq);
   fillCompleted(page, seq);
   return page;
@@ -1113,6 +1136,40 @@ function patchRows(view, tab, entry, fresh, seq) {
   startRefresh(view, tab, entry, seq);
 }
 
+const WEEK = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+/** Classic's Your week (issue #44): your series and anime by the day their
+ *  episodes air, today first, UP on what aired today. Like reading's. Fills in
+ *  when Sonarr answers; left out on Movies, and when nothing of yours airs. */
+function yourWeek(tab, seq) {
+  if (styleNow("watch") !== "classic" || (tab !== "home" && tab !== "series" && tab !== "anime")) return null;
+  const sec = el("section", { class: "cl-block mw-week" });
+  invoke("watch_week").then((all) => {
+    if (seq !== renderSeq) return;
+    const list = all.filter((x) => (tab === "anime" ? x.anime : tab === "series" ? !x.anime : true));
+    if (!list.length) { sec.remove(); return; }
+    const now = new Date();
+    const today = now.getDay();
+    const sameDay = (d) => d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+    const tabs = WEEK.map((d, i) => [i === today ? d + " (today)" : d, () => Promise.resolve(list.filter((x) => new Date(x.air).getDay() === i))]);
+    // Today first, then the days after it.
+    const order = [0, 1, 2, 3, 4, 5, 6].map((k) => (today + k) % 7);
+    const cardFor = (x, i) => {
+      const b = tile(x.tile);
+      b.classList.add("rise", "cl-card");
+      b.style.setProperty("--i", String(i));
+      if (x.aired && sameDay(new Date(x.air))) b.querySelector(".art").append(el("span", { class: "cl-up", text: "UP" }));
+      return b;
+    };
+    sec.append(el("h2", { class: "cl-h", text: "Your week" }),
+      el("p", { class: "cl-sub", text: tab === "anime" ? "Your anime by the day new episodes come out." : "Your shows by the day new episodes come out." }),
+      tabbed("cl-week", order.map((i) => tabs[i]), (items) => (items.length
+        ? [el("div", { class: "cl-grid" }, items.map(cardFor))]
+        : [el("p", { class: "cl-empty", text: "Nothing of yours comes out that day." })])));
+  }).catch(() => sec.remove());
+  return sec;
+}
+
 /** Builds a tab's page from its rows and puts it in (`mode` as for renderTab). */
 async function draw(view, tab, rows, mode, seq) {
   if (tab === "mylist") {
@@ -1141,7 +1198,7 @@ async function draw(view, tab, rows, mode, seq) {
     ? el("div", { class: "tip", style: "margin:0 var(--gutter) 28px" }, el("span", { text: "Sign in to Jellyfin to see your own movies and series here and play them." }), el("a", { class: "btn small primary", href: "#settings/account", style: "margin-left:auto" }, "Sign in"))
     : null;
   const side = styleNow("watch") === "midnight" ? rankSide(rows) : null;
-  const box = el("div", { class: side ? "rows mn-rows" : "rows" }, side, inlinePicker(), chipBar(rows, tab), banner, rows.map((r, i) => rowEl(r, i)));
+  const box = el("div", { class: side ? "rows mn-rows" : "rows" }, side, inlinePicker(), chipBar(rows, tab), banner, yourWeek(tab, seq), rows.map((r, i) => rowEl(r, i)));
   swapIn(view, [h, box], mode);
   const entry = keep(tab, "rows", [h, box], rows);
   watchLazyRows(view, rows, seq);
@@ -1384,7 +1441,9 @@ export function renderSearch(view, term) {
   clearTimeout(page.holdTimer);
   // What's on screen stays, dimmed, until the new results are in.
   page.root.classList.add("stale");
-  invoke("media_search_live", { term, seq })
+  // R and NC-17 films only once 18+ is on in this profile's movie filters.
+  const adult = (() => { try { const a = JSON.parse(getPref("filter-movie") || "{}").adult; return a === "include" || a === "only"; } catch (e) { return false; } })();
+  invoke("media_search_live", { term, seq, adult })
     .catch(() => null)
     .then(() => setTimeout(() => {
       // Every source has answered. If nothing was drawn (nothing found, or the
