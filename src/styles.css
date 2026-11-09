@@ -2659,6 +2659,16 @@ body[data-rshade="light"] .rp-dialog { box-shadow: 0 30px 80px rgba(20, 30, 50, 
 .rp-lock svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; }
 .rp-note { position: fixed; left: 50%; bottom: 72px; transform: translateX(-50%); z-index: var(--z-overlay); z-index: calc(var(--z-player) + 1); padding: 8px 16px; border-radius: 999px; background: rgba(0, 0, 0, 0.72); color: #fff; font: 600 14px var(--display); pointer-events: none; }
 .rp-note[hidden] { display: none; }
+.rp-note { display: flex; align-items: center; pointer-events: auto; }
+.rp-note-x { margin-left: 10px; width: 24px; height: 24px; border: 0; border-radius: 50%; background: rgba(255, 255, 255, 0.16); color: #fff; font: 600 16px/1 var(--display); cursor: pointer; }
+.rp-note-x:hover, .rp-note-x:focus-visible { background: rgba(255, 255, 255, 0.3); outline: none; }
+.rp-note-sw { width: 20px; height: 20px; accent-color: var(--accent); }
+/* Which chapter you're in: shows on a tap or a new chapter, then fades. */
+.rd-where { position: absolute; top: 72px; left: 50%; transform: translate(-50%, -6px); z-index: 3; padding: 6px 14px; border-radius: 999px; background: rgba(0, 0, 0, 0.72); color: #fff; font: 600 14px var(--display); white-space: nowrap; pointer-events: none; opacity: 0; transition: opacity 0.25s var(--ease), transform 0.25s var(--ease); }
+.rd-where.on { opacity: 1; transform: translate(-50%, 0); }
+.reader.bars .rd-where { top: 120px; }
+html.tv .rd-where { font-size: 18px; }
+@media (prefers-reduced-motion: reduce) { .rd-where { transition: none; } }
 html.no-flexgap .rp-row > * + *, html.no-flexgap .rp-person > * + * { margin-left: 10px; }
 html.no-grid .rp-list { display: flex; flex-direction: column; }
 html.no-grid .rp-list > * + * { margin-top: 8px; }
