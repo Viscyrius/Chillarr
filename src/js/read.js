@@ -12,9 +12,9 @@ import { openBook } from "./bookreader.js";
 import { applyLook, drawPickers, inlinePicker, onStyle, styleNow } from "./look.js";
 
 const KIND = { KR: "Manhwa", CN: "Manhua", TW: "Manhua", JP: "Manga" };
-const kindOf = (c) => (c.kind === "book" ? "Book" : c.format === "NOVEL" ? "Light novel" : KIND[c.country] || "Comic");
-/** Books and light novels open the book panel; the rest are comics. */
-const isBook = (c) => c.kind === "book" || c.format === "NOVEL";
+const kindOf = (c) => (c.kind === "book" ? "Book" : c.kind === "comic" ? "Comic" : c.format === "NOVEL" ? "Light novel" : KIND[c.country] || "Comic");
+/** Books, light novels and Western comics (got as one file, like a book) open the book panel. */
+const isBook = (c) => c.kind === "book" || c.kind === "comic" || c.format === "NOVEL";
 const STATUS = { RELEASING: "Ongoing", FINISHED: "Finished", HIATUS: "On hiatus", CANCELLED: "Cancelled", NOT_YET_RELEASED: "Coming soon" };
 const TAB_TITLE = { "r-manga": "Manga", "r-manhwa": "Manhwa", "r-manhua": "Manhua", "r-novels": "Light novels" };
 
@@ -197,7 +197,7 @@ function card(c, shelf = null) {
   b.addEventListener("click", () => pvOpen(c, shelf));
   b.addEventListener("mouseenter", () => pvSchedule(b, c, shelf));
   b.addEventListener("mouseleave", () => pvSoon());
-  if (styleNow() === "classic" && c.kind !== "book") classicCaption(b, c, shelf);
+  if (styleNow() === "classic" && c.kind !== "book" && c.kind !== "comic") classicCaption(b, c, shelf);
   return markHidden(b, c, shelf);
 }
 
@@ -226,18 +226,18 @@ function topTen(c, rank) {
 /** A card for a book on your list. */
 function bookCard(x) {
   const box = cover(x.cover, x.title);
-  box.append(el("span", { class: "badge", text: "Book" }));
+  box.append(el("span", { class: "badge", text: x.comic ? "Comic" : "Book" }));
   const done = x.finished || x.read >= 1;
   if (x.read > 0 && !done) box.append(el("div", { class: "bar" }, el("span", { style: `width:${Math.round(x.read * 100)}%` })));
   const sub = x.problem ? "Needs a look" : !x.ready ? (x.progress != null ? `Downloading ${Math.round(x.progress * 100)}%` : "Starting") : done ? "Finished" : x.read > 0 ? `${Math.round(x.read * 100)}% read` : x.author || "";
   const b = el("button", { class: "tile", "aria-label": x.title }, box, el("div", { class: "cap" }, el("strong", { text: x.title }), sub ? ` · ${sub}` : ""));
-  b.addEventListener("click", () => openBookPanel({ kind: "book", title: x.title, author: x.author, cover: x.cover, description: x.description, olid: x.olid, anilist: x.anilist }, x));
+  b.addEventListener("click", () => openBookPanel({ kind: x.comic ? "comic" : "book", title: x.title, author: x.author, cover: x.cover, description: x.description, olid: x.olid, anilist: x.anilist }, x));
   return markHidden(b, x);
 }
 
 /** Where a row's "Explore all" goes: every title in it, a page at a time (allPage). */
 const allHref = (id, title) => `#r-all/${encodeURIComponent(id)}/${encodeURIComponent(title)}`;
-const hasAll = (id) => id in ROW_EXPLORE || id.startsWith("books-");
+const hasAll = (id) => id in ROW_EXPLORE || id.startsWith("books-") || id.startsWith("comics-");
 
 function row(id, title, cards, allId = id) {
   const track = el("div", { class: "track" }, cards);
@@ -856,7 +856,7 @@ async function allPage(view, my) {
   const [, rawId, rawTitle] = location.hash.slice(1).split("/");
   const id = decodeURIComponent(rawId || "");
   const title = decodeURIComponent(rawTitle || "") || "Explore";
-  const books = id.startsWith("books-");
+  const books = id.startsWith("books-") || id.startsWith("comics-");
   const grid = el("div", { class: "grid read-grid" });
   const more = el("div", { class: "read-more" });
   const back = el("button", { class: "btn soft read-back", onclick: () => (history.length > 1 ? history.back() : (location.hash = "#r-home")) }, icon(ICON.left), "Back");
@@ -894,10 +894,16 @@ async function booksPage(view, my) {
   myBooks = await invoke("read_books").catch(() => []);
   if (my !== seq) return;
   if (myBooks.length) mine.replaceChildren(row("books", "Your books", myBooks.map(bookCard)));
+  const comics = el("div");
+  // Comics and graphic novels come after the books, as soon as they're in.
+  const cm = invoke("read_comic_rows").catch(() => []);
   const bk = await invoke("read_book_rows").catch(() => []);
   if (my !== seq) return;
-  rows.replaceChildren(...(bk.filter((r) => r.items.length).map((r) => row(r.id, r.title, r.items.map((c) => card(c))))));
-  if (!rows.childElementCount) rows.replaceChildren(note("Open Library isn't answering. Try again in a minute."));
+  rows.replaceChildren(...(bk.filter((r) => r.items.length).map((r) => row(r.id, r.title, r.items.map((c) => card(c))))), comics);
+  const cr = await cm;
+  if (my !== seq) return;
+  comics.replaceChildren(...(cr.filter((r) => r.items.length).map((r) => row(r.id, r.title, r.items.map((c) => card(c))))));
+  if (!rows.querySelector(".track")) rows.replaceChildren(note("Open Library isn't answering. Try again in a minute."));
   return true;
 }
 
@@ -952,15 +958,17 @@ export async function renderReadSearch(view, term) {
   const my = ++seq;
   const body = el("div", {}, ...skel());
   view.replaceChildren(page(head(`"${term}"`), body));
-  const [found, books] = (await Promise.all([
+  const [found, books, comics] = (await Promise.all([
     invoke("read_search", { term, adult: adultOn() }).catch(() => []),
     invoke("read_book_search", { term }).catch(() => []),
+    invoke("read_comic_search", { term }).catch(() => []),
   ])).map((x) => x || []);
   if (my !== seq) return;
   await know();
   const out = [];
   if (found.length) out.push(el("h2", { class: "read-grid-title", text: "Manga, manhwa, manhua and novels" }), el("div", { class: "grid read-grid" }, found.map((c) => card(c))));
   if (books.length) out.push(el("h2", { class: "read-grid-title", text: "Books" }), el("div", { class: "grid read-grid" }, books.map((c) => card(c))));
+  if (comics.length) out.push(el("h2", { class: "read-grid-title", text: "Comics and graphic novels" }), el("div", { class: "grid read-grid" }, comics.map((c) => card(c))));
   body.replaceChildren(...(out.length ? out : [note("Nothing found.")]));
 }
 
@@ -1474,8 +1482,10 @@ async function unfollow(f) {
 
 /* ---------- the book panel ---------- */
 
-const sameBook = (c, x) => (c.olid && x.olid === c.olid) || (c.anilist && x.anilist === c.anilist) || (x.title || "").toLowerCase() === (c.title || "").toLowerCase();
-const bookMeta = (c) => ({ title: c.title, author: c.author ?? null, cover: c.cover ?? null, description: c.description ?? null, olid: c.olid ?? null, anilist: c.anilist ?? null });
+const isComic = (c) => c.kind === "comic";
+// A book and the comic of the same story are two things to get.
+const sameBook = (c, x) => isComic(c) === !!x.comic && ((c.olid && x.olid === c.olid) || (c.anilist && x.anilist === c.anilist) || (x.title || "").toLowerCase() === (c.title || "").toLowerCase());
+const bookMeta = (c) => ({ title: c.title, author: c.author ?? null, cover: c.cover ?? null, description: c.description ?? null, olid: c.olid ?? null, anilist: c.anilist ?? null, comic: isComic(c) });
 
 /** A book or light novel: read it if it's here, else find a copy. */
 export async function openBookPanel(c, mine = null) {
@@ -1531,7 +1541,7 @@ async function bookCopies(c, list, btn, my) {
   catch (e) { if (my !== panelSeq) return; list.replaceChildren(note(String(e))); btn.disabled = false; return; }
   if (my !== panelSeq) return;
   btn.remove();
-  if (!found.length) { list.replaceChildren(note("No copy of this book was found. Try again another day, or search with another title.")); return; }
+  if (!found.length) { list.replaceChildren(note(`No copy of this ${isComic(c) ? "comic" : "book"} was found. Try again another day, or search with another title.`)); return; }
   const mb = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
   list.replaceChildren(el("div", { class: "read-sources-head" }, el("h3", { text: "Pick a copy" })),
     ...found.slice(0, 8).map((x, i) => {
@@ -1542,13 +1552,13 @@ async function bookCopies(c, list, btn, my) {
         catch (e) { toast(String(e), true); go.disabled = false; }
       });
       return el("div", { class: "read-source" + (i === 0 ? " best" : "") },
-        el("div", { class: "read-source-text" }, el("strong", { text: (x.format || "ebook").toUpperCase() }), i === 0 ? el("span", { class: "read-best", text: "Best" }) : null,
+        el("div", { class: "read-source-text" }, el("strong", { text: (x.format || (isComic(c) ? "comic" : "ebook")).toUpperCase() }), i === 0 ? el("span", { class: "read-best", text: "Best" }) : null,
           el("small", { text: `${mb(x.size)} · ${x.seeders} sharing · ${x.indexer}` }), el("small", { class: "read-alt", text: x.title })), go);
     }));
 }
 
 async function removeBook(x) {
-  if (!(await ask(`Remove ${x.title}?`, "The book's file is deleted from your PC. You can download it again.", [], "Remove", "Cancel"))) return;
+  if (!(await ask(`Remove ${x.title}?`, `The ${x.comic ? "comic" : "book"}'s file is deleted from your PC. You can download it again.`, [], "Remove", "Cancel"))) return;
   try { toast(await invoke("read_book_remove", { key: x.key })); if (dlg) dlg.close(); window.dispatchEvent(new Event("chillarr:refresh")); }
   catch (e) { toast(String(e), true); }
 }

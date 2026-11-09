@@ -184,7 +184,7 @@ export async function suggestions(onAdded) {
     });
     const line = r.state === "waiting" ? `Down right now. Trying again in ${inMinutes(r.next_in || 0)}.` : r.state === "removed" ? "You took this one out, so it stays out." : r.why;
     const note = el("span", { text: line, title: r.note || "" });
-    const name = el("strong", { text: r.name }, r.books ? el("small", { class: "site-tag", text: "Books" }) : null);
+    const name = el("strong", { text: r.name }, r.books ? el("small", { class: "site-tag", text: "Books and comics" }) : null);
     return el("div", { class: "suggest-card", dataset: { state: r.state } }, el("div", {}, name, note), btn);
   });
   return el("div", {}, el("div", { class: "suggest" }, cards));
@@ -214,7 +214,7 @@ async function indexers(panel) {
     td.append(el("span", { class: "dot", dataset: { level: c.level } }), c.level === "ok" ? "Working" : c.reason);
     return td;
   };
-  // Books are searched straight through Prowlarr, on the sites marked for books.
+  // Books and comics are searched straight through Prowlarr, on the sites marked for books.
   let bookSites = new Set();
   const bookCell = (r) => {
     if (!bookSites.has(r.name)) return el("td", { class: "none", text: "Not used" });
@@ -226,8 +226,8 @@ async function indexers(panel) {
   const sites = await invoke("setup_indexers").catch(() => ({ sites: [] }));
   bookSites = new Set((sites.sites || []).filter((s) => s.books).map((s) => s.name));
   panel.append(
-    el("div", { class: "panel-head" }, el("div", {}, el("h2", { text: "Download sites" }), el("p", { class: "sub", text: "Where Chillarr looks for movies, shows and books. It adds and checks these by itself." })), test),
-    el("table", { class: "grid" }, el("thead", {}, el("tr", {}, ["Site", "Prowlarr", "Sonarr", "Radarr", "Books"].map((h) => el("th", { text: h })))), table),
+    el("div", { class: "panel-head" }, el("div", {}, el("h2", { text: "Download sites" }), el("p", { class: "sub", text: "Where Chillarr looks for movies, shows, books and comics. It adds and checks these by itself." })), test),
+    el("table", { class: "grid" }, el("thead", {}, el("tr", {}, ["Site", "Prowlarr", "Sonarr", "Radarr", "Books and comics"].map((h) => el("th", { text: h })))), table),
     el("h2", { text: "Sites Chillarr adds for you", style: "margin-top:36px;font-size:1.2rem" }),
     el("p", { class: "sub", text: "Each one is added by itself. A site that's down is tried again later until it works." }),
     await suggestions(async () => draw(await invoke("indexer_table"))),

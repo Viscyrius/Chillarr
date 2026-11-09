@@ -863,6 +863,16 @@ async fn read_book_search(term: String) -> Result<Vec<serde_json::Value>, String
 }
 
 #[tauri::command]
+async fn read_comic_rows() -> Vec<serde_json::Value> {
+    books::comic_rows_now().await
+}
+
+#[tauri::command]
+async fn read_comic_search(term: String) -> Result<Vec<serde_json::Value>, String> {
+    books::search_comics(&term).await
+}
+
+#[tauri::command]
 async fn read_book_copies(app: AppHandle, meta: books::BookMeta) -> Result<Vec<books::Release>, String> {
     books::copies(&app, &meta).await
 }
@@ -1205,6 +1215,8 @@ pub fn run() {
             readparty_move,
             readparty_leave,
             read_book_search,
+            read_comic_rows,
+            read_comic_search,
             read_book_copies,
             read_book_get,
             read_book_remove,

@@ -586,6 +586,7 @@ pub fn serve(app: &AppHandle, path: &str) -> (&'static str, &'static str, Vec<u8
 pub fn set_spot(app: &AppHandle, key: &str, chapter: i64, page: usize, pages: usize) -> Result<(), String> {
     let uid = uid(app)?;
     known(app, key)?;
+    let comic = key.starts_with('b') && crate::books::find(app, key).is_ok_and(|b| b.comic);
     let mut all = spots(app, &uid);
     let s = all.entry(key.to_string()).or_default();
     s.chapter = chapter;
@@ -595,7 +596,9 @@ pub fn set_spot(app: &AppHandle, key: &str, chapter: i64, page: usize, pages: us
     if key.starts_with('b') {
         // A book: chapter = part of the book, page = how far into it (0..1000).
         // Done when the last part is read to its end (kept under -1).
-        if pages > 0 && chapter as usize + 1 >= pages && page >= 990 {
+        // A comic: chapter 0, page = the page it's on, of `pages`.
+        let done = if comic { page + 1 >= pages } else { chapter as usize + 1 >= pages && page >= 990 };
+        if pages > 0 && done {
             s.read.entry(-1).or_insert(now());
         }
     } else if pages > 0 && page + 1 >= pages {
@@ -637,6 +640,11 @@ pub struct OpenedBook {
     pub chapter: usize,
     /// How far into that spine item, 0..1000.
     pub at: usize,
+    /// A comic ("comic"): each page's width and height, the page it's on,
+    /// and how it's read. Its pages are `/read/<ticket>/<n>`.
+    pub pages: Vec<(u32, u32)>,
+    pub page: usize,
+    pub mode: String,
 }
 
 pub async fn open_book(app: &AppHandle, key: &str) -> Result<OpenedBook, String> {
@@ -645,10 +653,13 @@ pub async fn open_book(app: &AppHandle, key: &str) -> Result<OpenedBook, String>
     let file = crate::books::path_of(app, &b).ok_or("That book isn't downloaded yet.")?;
     let ext = file.extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
     let spot = spots(app, &uid).remove(key);
+    if ext == "cbz" {
+        return open_comic(app, b, file, spot).await;
+    }
     let (chapter, at) = spot.map(|s| (s.chapter.max(0) as usize, s.page)).unwrap_or((0, 0));
     if ext != "epub" {
         let ticket = app.state::<Reading>().issue_kind(file, Arc::new(vec![]), vec![], "file");
-        return Ok(OpenedBook { ticket, kind: if ext == "pdf" { "pdf".into() } else { "other".into() }, spine: vec![], title: b.title, chapter: 0, at: 0 });
+        return Ok(OpenedBook { ticket, kind: if ext == "pdf" { "pdf".into() } else { "other".into() }, spine: vec![], title: b.title, chapter: 0, at: 0, pages: vec![], page: 0, mode: String::new() });
     }
     let (entries, spine) = tokio::task::spawn_blocking({
         let file = file.clone();
@@ -664,7 +675,31 @@ pub async fn open_book(app: &AppHandle, key: &str) -> Result<OpenedBook, String>
     .map_err(|e| e.to_string())??;
     let chapter = chapter.min(spine.len().saturating_sub(1));
     let ticket = app.state::<Reading>().issue_kind(file, Arc::new(entries), vec![], "epub");
-    Ok(OpenedBook { ticket, kind: "epub".into(), spine, title: b.title, chapter, at })
+    Ok(OpenedBook { ticket, kind: "epub".into(), spine, title: b.title, chapter, at, pages: vec![], page: 0, mode: String::new() })
+}
+
+/// A comic's pages, like a chapter's: read straight out of its CBZ.
+async fn open_comic(app: &AppHandle, b: crate::books::Book, file: PathBuf, spot: Option<Spot>) -> Result<OpenedBook, String> {
+    let (entries, pages, sizes) = tokio::task::spawn_blocking({
+        let file = file.clone();
+        move || -> Result<_, String> {
+            let entries = zipread::entries(&file)?;
+            let names: Vec<String> = entries.iter().map(|e| e.name.clone()).collect();
+            let pages = read_core::page_order(&names);
+            let sizes = pages.iter().map(|&i| page_head(&file, &entries[i]).unwrap_or((0, 0))).collect::<Vec<_>>();
+            Ok((entries, pages, sizes))
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    if pages.is_empty() {
+        return Err("This comic has no pages in it.".into());
+    }
+    let page = spot.as_ref().map(|s| s.page.min(pages.len() - 1)).unwrap_or(0);
+    // Western comics read left to right unless the profile picked another way.
+    let mode = spot.and_then(|s| s.mode).unwrap_or_else(|| "ltr".into());
+    let ticket = app.state::<Reading>().issue(file, Arc::new(entries), pages);
+    Ok(OpenedBook { ticket, kind: "comic".into(), spine: vec![], title: b.title, chapter: 0, at: 0, pages: sizes, page, mode })
 }
 
 #[derive(Serialize)]
@@ -699,7 +734,17 @@ pub async fn books(app: &AppHandle) -> Result<Vec<BookShelf>, String> {
             let spot = s.get(&b.key);
             let progress = b.hash.as_ref().and_then(|h| torrents.iter().find(|t| t["hash"].as_str() == Some(h.as_str()))).and_then(|t| t["progress"].as_f64());
             let read = spot
-                .map(|s| if s.read.contains_key(&-1) { 1.0 } else if s.pages > 0 { ((s.chapter as f64) + s.page as f64 / 1000.0) / s.pages as f64 } else { 0.0 })
+                .map(|s| {
+                    if s.read.contains_key(&-1) {
+                        1.0
+                    } else if s.pages == 0 {
+                        0.0
+                    } else if b.comic {
+                        (s.page + 1) as f64 / s.pages as f64
+                    } else {
+                        ((s.chapter as f64) + s.page as f64 / 1000.0) / s.pages as f64
+                    }
+                })
                 .unwrap_or(0.0)
                 .clamp(0.0, 1.0);
             // Most books end in notes, thanks and previews: 90% in counts as read
