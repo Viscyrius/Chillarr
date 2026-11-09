@@ -1,6 +1,6 @@
 //! New chapters, sooner and said out loud (issue #18, reading part).
 //!
-//! * Keep up to date: a series switched on asks its site(s) for new chapters every
+//! * Get new chapters: a series switched on asks its site(s) for new chapters every
 //!   10 minutes or so, instead of with Suwayomi's own round every 6 hours. One series
 //!   at a time, a few seconds apart, with a random spread so it never beats in step,
 //!   and a site that errors is asked half as often each time (up to every 2 hours)
@@ -76,7 +76,7 @@ async fn round(app: &AppHandle) {
         return;
     }
     let mut asked = false;
-    for f in list.iter().filter(|f| f.live) {
+    for f in list.iter().filter(|f| f.new_too) {
         let due = with_due(|d| d.keep_up.get(&f.key).is_none_or(|(at, _)| Instant::now() >= *at));
         if !due {
             continue;
