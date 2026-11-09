@@ -300,6 +300,9 @@ fn need(cmd: &str) -> Option<Need> {
         | "media_explore" | "media_filter" | "media_filter_genres" | "media_filter_studios" | "media_anime_tags" | "media_details" | "media_similar" | "media_my_list" | "media_my_list_marks" | "media_completed"
         | "media_watched_keys" | "completed_remove" | "media_show_episodes" | "marker_set" | "marker_restart" | "media_set_watched" | "media_segments" | "subs_search" | "subs_download" | "subs_sync" | "subs_choice" | "subs_set"
         | "media_waiting" | "media_downloads" | "watchnow_start" | "watchnow_leave" | "watchnow_cancel" | "watchnow_progress" | "watchnow_list" | "watchnow_ready" | "night_prepare" | "syncplay_info" | "syncplay_call" | "syncplay_tile" | "syncplay_say"
+        // Watch together host tools: run as the viewer; the host-only ones
+        // check the viewer is the party's host (syncplay.rs `as_host`).
+        | "syncplay_join" | "syncplay_room" | "syncplay_locks" | "syncplay_set" | "syncplay_kick" | "syncplay_allow" | "syncplay_host" | "syncplay_seen" | "syncplay_gone"
         // Takes a title off the viewer's own Watch now (watchnow.rs keeps one
         // list per Jellyfin user), and only stops a download Watch now itself
         // started and nobody else wants.
@@ -317,7 +320,8 @@ fn need(cmd: &str) -> Option<Need> {
         | "hidden_status" | "hidden_set_password" | "hidden_unlock" | "hidden_lock" | "hidden_set" | "hidden_list"
         // Each profile's own Notify me list and notes (notify.rs).
         | "notify_state" | "notify_set" | "notify_list" | "notify_unseen"
-        | "readparty_start" | "readparty_join" | "readparty_state" | "readparty_move" | "readparty_leave"
+        // Host-only ones check the viewer is the party's host (readparty.rs).
+        | "readparty_start" | "readparty_join" | "readparty_state" | "readparty_move" | "readparty_leave" | "readparty_set" | "readparty_kick" | "readparty_allow" | "readparty_host"
         | "read_book_rows" | "read_book_more" | "read_book_search" | "read_comic_rows" | "read_comic_search" | "read_book_copies" | "read_book_get" | "read_books" | "read_book_open"
         | "read_languages" | "read_copy_chapters" | "read_get_chapters" | "read_keep_up" | "read_list" | "read_list_set" | "read_explore" | "read_genres" | "read_filter_info" | "read_similar" | "read_about" | "read_downloads"
         | "read_delete_plan" => Need::Viewer,
@@ -386,9 +390,13 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
         "read_rows" => res(crate::read::rows(app).await),
         "read_book_rows" => ok(crate::books::rows().await),
         "readparty_start" => res(crate::readparty::start(app, &arg::<String>(a, "key")?, arg(a, "chapter")?, arg(a, "page")?)),
-        "readparty_join" => res(crate::readparty::join(app, &arg::<String>(a, "code")?)),
+        "readparty_join" => res(crate::readparty::join(app, &arg::<String>(a, "code")?, arg::<Option<String>>(a, "password")?.as_deref())),
         "readparty_state" => res(crate::readparty::state(app, &arg::<String>(a, "code")?)),
-        "readparty_move" => res(crate::readparty::moved(app, &arg::<String>(a, "code")?, arg(a, "chapter")?, arg(a, "page")?)),
+        "readparty_move" => res(crate::readparty::moved(app, &arg::<String>(a, "code")?, arg(a, "chapter")?, arg(a, "page")?, arg(a, "frac")?)),
+        "readparty_set" => res(crate::readparty::set(app, &arg::<String>(a, "code")?, arg::<Option<String>>(a, "mode")?.as_deref(), arg::<Option<String>>(a, "lock")?.as_deref(), arg::<Option<String>>(a, "password")?.as_deref())),
+        "readparty_kick" => res(crate::readparty::kick(app, &arg::<String>(a, "code")?, &arg::<String>(a, "who")?)),
+        "readparty_allow" => res(crate::readparty::allow(app, &arg::<String>(a, "code")?, &arg::<String>(a, "who")?)),
+        "readparty_host" => res(crate::readparty::make_host(app, &arg::<String>(a, "code")?, &arg::<String>(a, "who")?)),
         "readparty_leave" => res(crate::readparty::leave(app, &arg::<String>(a, "code")?)),
         "read_book_more" => res(crate::books::more(&arg::<String>(a, "id")?, arg::<u32>(a, "page")?).await),
         "read_comic_rows" => ok(crate::books::comic_rows_now().await),
@@ -500,6 +508,15 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
         "syncplay_info" => res(syncplay::info(app)),
         "syncplay_call" => res(syncplay::call(app, &arg::<String>(a, "method")?, &arg::<String>(a, "path")?, arg(a, "body")?).await),
         "syncplay_tile" => ok(syncplay::tile(app, &arg::<String>(a, "id")?).await),
+        "syncplay_join" => res(syncplay::join(app, &arg::<String>(a, "group")?, arg::<Option<String>>(a, "password")?.as_deref()).await),
+        "syncplay_room" => ok(syncplay::room(app, &arg::<String>(a, "group")?)),
+        "syncplay_locks" => ok(syncplay::locks()),
+        "syncplay_set" => res(syncplay::set(app, &arg::<String>(a, "group")?, arg::<Option<String>>(a, "lock")?.as_deref(), arg::<Option<String>>(a, "password")?.as_deref(), arg(a, "hostOnly")?)),
+        "syncplay_kick" => res(syncplay::kick(app, &arg::<String>(a, "group")?, &arg::<String>(a, "who")?).await),
+        "syncplay_allow" => res(syncplay::allow(app, &arg::<String>(a, "group")?, &arg::<String>(a, "who")?)),
+        "syncplay_host" => res(syncplay::make_host(app, &arg::<String>(a, "group")?, &arg::<String>(a, "who")?)),
+        "syncplay_seen" => res(syncplay::seen(app, &arg::<String>(a, "group")?, &arg::<String>(a, "name")?).await),
+        "syncplay_gone" => res(syncplay::gone(app, &arg::<String>(a, "group")?, &arg::<String>(a, "name")?).await),
         // Sent as the viewer, and only into a party they're in (syncplay.rs).
         "syncplay_say" => res(syncplay::say(app, &arg::<String>(a, "group")?, &arg::<String>(a, "text")?).await),
         "web_unlock" => res(crate::profiles::web_unlock(app, &me.session.user_id, &me.session.token, arg::<String>(a, "pin")?).await.map(|_| json!(true))),

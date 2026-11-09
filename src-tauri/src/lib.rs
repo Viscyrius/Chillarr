@@ -7,6 +7,7 @@ mod read;
 mod read_storage;
 mod hidden;
 mod readparty;
+mod party;
 mod suwayomi;
 mod manga_net;
 mod books;
@@ -257,6 +258,44 @@ async fn syncplay_say(app: AppHandle, group: String, text: String) -> Result<(),
 #[tauri::command]
 async fn syncplay_tile(app: AppHandle, id: String) -> Option<tiles::Tile> {
     syncplay::tile(&app, &id).await
+}
+
+// Watch together host tools (syncplay.rs `Room`). Host-only ones check it there.
+#[tauri::command]
+async fn syncplay_join(app: AppHandle, group: String, password: Option<String>) -> Result<(), String> {
+    syncplay::join(&app, &group, password.as_deref()).await
+}
+#[tauri::command]
+fn syncplay_room(app: AppHandle, group: String) -> Option<syncplay::RoomView> {
+    syncplay::room(&app, &group)
+}
+#[tauri::command]
+fn syncplay_locks() -> std::collections::HashMap<String, party::Lock> {
+    syncplay::locks()
+}
+#[tauri::command]
+fn syncplay_set(app: AppHandle, group: String, lock: Option<String>, password: Option<String>, host_only: Option<bool>) -> Result<syncplay::RoomView, String> {
+    syncplay::set(&app, &group, lock.as_deref(), password.as_deref(), host_only)
+}
+#[tauri::command]
+async fn syncplay_kick(app: AppHandle, group: String, who: String) -> Result<syncplay::RoomView, String> {
+    syncplay::kick(&app, &group, &who).await
+}
+#[tauri::command]
+fn syncplay_allow(app: AppHandle, group: String, who: String) -> Result<syncplay::RoomView, String> {
+    syncplay::allow(&app, &group, &who)
+}
+#[tauri::command]
+fn syncplay_host(app: AppHandle, group: String, who: String) -> Result<syncplay::RoomView, String> {
+    syncplay::make_host(&app, &group, &who)
+}
+#[tauri::command]
+async fn syncplay_seen(app: AppHandle, group: String, name: String) -> Result<(), String> {
+    syncplay::seen(&app, &group, &name).await
+}
+#[tauri::command]
+async fn syncplay_gone(app: AppHandle, group: String, name: String) -> Result<(), String> {
+    syncplay::gone(&app, &group, &name).await
 }
 
 #[tauri::command]
@@ -877,16 +916,32 @@ fn readparty_start(app: AppHandle, key: String, chapter: i64, page: u32) -> Resu
     readparty::start(&app, &key, chapter, page)
 }
 #[tauri::command]
-fn readparty_join(app: AppHandle, code: String) -> Result<readparty::State, String> {
-    readparty::join(&app, &code)
+fn readparty_join(app: AppHandle, code: String, password: Option<String>) -> Result<readparty::State, String> {
+    readparty::join(&app, &code, password.as_deref())
 }
 #[tauri::command]
 fn readparty_state(app: AppHandle, code: String) -> Result<readparty::State, String> {
     readparty::state(&app, &code)
 }
 #[tauri::command]
-fn readparty_move(app: AppHandle, code: String, chapter: i64, page: u32) -> Result<readparty::State, String> {
-    readparty::moved(&app, &code, chapter, page)
+fn readparty_move(app: AppHandle, code: String, chapter: i64, page: u32, frac: Option<f32>) -> Result<readparty::State, String> {
+    readparty::moved(&app, &code, chapter, page, frac)
+}
+#[tauri::command]
+fn readparty_set(app: AppHandle, code: String, mode: Option<String>, lock: Option<String>, password: Option<String>) -> Result<readparty::State, String> {
+    readparty::set(&app, &code, mode.as_deref(), lock.as_deref(), password.as_deref())
+}
+#[tauri::command]
+fn readparty_kick(app: AppHandle, code: String, who: String) -> Result<readparty::State, String> {
+    readparty::kick(&app, &code, &who)
+}
+#[tauri::command]
+fn readparty_allow(app: AppHandle, code: String, who: String) -> Result<readparty::State, String> {
+    readparty::allow(&app, &code, &who)
+}
+#[tauri::command]
+fn readparty_host(app: AppHandle, code: String, who: String) -> Result<readparty::State, String> {
+    readparty::make_host(&app, &code, &who)
 }
 #[tauri::command]
 fn readparty_leave(app: AppHandle, code: String) -> Result<(), String> {
@@ -1261,6 +1316,10 @@ pub fn run() {
             readparty_state,
             readparty_move,
             readparty_leave,
+            readparty_set,
+            readparty_kick,
+            readparty_allow,
+            readparty_host,
             read_book_search,
             read_comic_rows,
             read_comic_search,
@@ -1329,6 +1388,15 @@ pub fn run() {
             syncplay_call,
             syncplay_tile,
             syncplay_say,
+            syncplay_join,
+            syncplay_room,
+            syncplay_locks,
+            syncplay_set,
+            syncplay_kick,
+            syncplay_allow,
+            syncplay_host,
+            syncplay_seen,
+            syncplay_gone,
             profiles_add,
             profiles_switch,
             profiles_check_pin,
