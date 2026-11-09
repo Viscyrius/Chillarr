@@ -83,6 +83,31 @@ export const ICON = {
   right: "m9 5 7 7-7 7",
 };
 
+/** Rows left open with Show all, so a redraw keeps them open (My List, Watch and Read). */
+const openRows = new Set();
+
+/**
+ * Show all on a My List row: the row opens into every title, wrapped onto as
+ * many lines as it takes, and Show less closes it. Movies and Reading share it.
+ */
+export function expandRow(section, key) {
+  const head = section.querySelector(".row-head");
+  const b = el("button", { class: "row-expand" });
+  const draw = () => {
+    const on = openRows.has(key);
+    section.classList.toggle("expanded", on);
+    b.setAttribute("aria-expanded", on ? "true" : "false");
+    b.replaceChildren(on ? "Show less" : "Show all", icon(on ? "M6 15l6-6 6 6" : "M6 9l6 6 6-6"));
+  };
+  b.addEventListener("click", () => {
+    if (openRows.has(key)) openRows.delete(key); else openRows.add(key);
+    draw();
+  });
+  draw();
+  if (head) head.append(b);
+  return section;
+}
+
 export const LABEL = {
   Prowlarr: "Prowlarr", Sonarr: "Sonarr", Radarr: "Radarr",
   FlareSolverr: "FlareSolverr", QBittorrent: "qBittorrent", Jellyfin: "Jellyfin", Suwayomi: "Manga downloader",
