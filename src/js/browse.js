@@ -1371,6 +1371,23 @@ export async function renderExplore(view, category, title, mode = null, want = 0
   if (seq === renderSeq) swapIn(view, [page], mode);
 }
 
+/** Everything one director, creator or anime staff member made (makers.rs). */
+export async function renderMaker(view, id, name, mode = null, want = 0) {
+  stopBrowse();
+  const seq = renderSeq;
+  const g = infiniteGrid(seq, (page) => (page ? Promise.resolve([]) : invoke("media_maker", { id })),
+    (n) => (n ? (n === 1 ? "That's the only title found." : `That's all ${n} titles found.`) : "Nothing found for this person yet."));
+  const page = el("div", { class: "enter maker-page" },
+    el("div", { class: "lib-head" }, el("div", {},
+      el("button", { class: "back-link", onclick: () => goBack() }, icon(ICON.left), "Back"),
+      el("h1", { text: name }),
+      el("p", { class: "maker-sub", text: "Everything they made" }))),
+    ...g.nodes);
+  if (!mode) { view.replaceChildren(page); g.fill(); return; }
+  await g.fill(want);
+  if (seq === renderSeq) swapIn(view, [page], mode);
+}
+
 /* ---------- Filters (the page itself is in filter.js) ---------- */
 const KIND_FOR_TAB = { home: "movie", movies: "movie", series: "series", anime: "anime" };
 

@@ -61,6 +61,7 @@ mod subsync;
 mod trickplay;
 mod syncplay;
 mod details;
+mod makers;
 mod similar;
 mod remote;
 mod search;
@@ -528,6 +529,12 @@ async fn media_details(app: AppHandle, tile: tiles::Tile) -> details::Details {
     details::details(&app, &tile).await
 }
 
+/// Everything one director, creator or anime staff member made.
+#[tauri::command]
+async fn media_maker(app: AppHandle, id: String) -> Result<Vec<tiles::Tile>, String> {
+    makers::works(&app, &id).await
+}
+
 #[tauri::command]
 async fn media_similar(app: AppHandle, tile: tiles::Tile) -> Vec<tiles::Tile> {
     similar::similar(&app, &tile).await
@@ -954,6 +961,12 @@ async fn read_book_more(id: String, page: u32) -> Result<serde_json::Value, Stri
     books::more(&id, page).await
 }
 
+/// Every book by one author.
+#[tauri::command]
+async fn read_book_author(name: String) -> Result<Vec<serde_json::Value>, String> {
+    books::by_author(&name).await
+}
+
 #[tauri::command]
 async fn read_book_search(term: String) -> Result<Vec<serde_json::Value>, String> {
     books::search(&term).await
@@ -1321,6 +1334,7 @@ pub fn run() {
             readparty_allow,
             readparty_host,
             read_book_search,
+            read_book_author,
             read_comic_rows,
             read_comic_search,
             read_book_copies,
@@ -1364,6 +1378,7 @@ pub fn run() {
             subs_status,
             media_details,
             media_similar,
+            media_maker,
             download_folder,
             seeding,
             set_seeding,

@@ -26,6 +26,17 @@ pub struct Details {
     /// (job, names): "Director" "Jon Watts".
     pub crew: Vec<(String, String)>,
     pub cast: Vec<Person>,
+    /// The people in `crew` whose other work can be listed (makers.rs).
+    pub makers: Vec<Maker>,
+}
+
+/// A name in `crew` that opens everything the person made.
+#[derive(Serialize, Clone, Debug, Default, PartialEq)]
+pub struct Maker {
+    pub job: String,
+    pub name: String,
+    /// "tmdb:<id>", "tvmaze:<id>" or "anilist:<id>".
+    pub id: String,
 }
 
 fn runtime(minutes: i64) -> Option<String> {
@@ -89,6 +100,11 @@ async fn movie(tmdb: i64) -> Option<Details> {
     if let Some(n) = names(&|c| c["Job"] == "Director") {
         d.crew.push(("Director".into(), n));
     }
+    for c in crew.iter().filter(|c| c["Job"] == "Director").take(4) {
+        if let (Some(name), Some(id)) = (c["Name"].as_str(), c["TmdbId"].as_i64()) {
+            d.makers.push(Maker { job: "Director".into(), name: name.into(), id: format!("tmdb:{id}") });
+        }
+    }
     if let Some(n) = names(&|c| c["Department"] == "Writing") {
         d.crew.push(("Writers".into(), n));
     }
@@ -125,6 +141,11 @@ async fn show(tvdb: i64) -> Option<Details> {
     }));
     push(&mut d.facts, "First aired", date(&s["firstAired"]));
     push(&mut d.facts, "Last aired", date(&s["lastAired"]));
+    let made = crate::makers::show_creators(tvdb).await;
+    if !made.is_empty() {
+        d.crew.push(("Created by".into(), made.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>().join(", ")));
+        d.makers.extend(made.into_iter().map(|(name, id)| Maker { job: "Created by".into(), name, id: format!("tvmaze:{id}") }));
+    }
     d.cast = s["actors"]
         .as_array()
         .into_iter()
@@ -137,7 +158,7 @@ async fn show(tvdb: i64) -> Option<Details> {
 
 async fn anime(id: i64) -> Option<Details> {
     let q = format!(
-        "{{ Media(id: {id}) {{ format episodes duration status season seasonYear averageScore popularity source startDate {{ year month day }} endDate {{ year month day }} studios(isMain: true) {{ nodes {{ name }} }} staff(perPage: 6, sort: RELEVANCE) {{ edges {{ role node {{ name {{ full }} }} }} }} characters(perPage: 24, sort: [ROLE, RELEVANCE]) {{ edges {{ role node {{ name {{ full }} image {{ medium }} }} voiceActors(language: JAPANESE) {{ name {{ full }} }} }} }} }} }}"
+        "{{ Media(id: {id}) {{ format episodes duration status season seasonYear averageScore popularity source startDate {{ year month day }} endDate {{ year month day }} studios(isMain: true) {{ nodes {{ name }} }} staff(perPage: 6, sort: RELEVANCE) {{ edges {{ role node {{ id name {{ full }} }} }} }} characters(perPage: 24, sort: [ROLE, RELEVANCE]) {{ edges {{ role node {{ name {{ full }} image {{ medium }} }} voiceActors(language: JAPANESE) {{ name {{ full }} }} }} }} }} }}"
     );
     let v = crate::media::anilist(&json!({ "query": q })).await.ok()?;
     let m = &v["data"]["Media"];
@@ -158,6 +179,9 @@ async fn anime(id: i64) -> Option<Details> {
     for e in m["staff"]["edges"].as_array().into_iter().flatten().take(4) {
         if let (Some(role), Some(name)) = (e["role"].as_str(), e["node"]["name"]["full"].as_str()) {
             d.crew.push((role.into(), name.into()));
+            if let Some(id) = e["node"]["id"].as_i64() {
+                d.makers.push(Maker { job: role.into(), name: name.into(), id: format!("anilist:{id}") });
+            }
         }
     }
     d.cast = m["characters"]["edges"]

@@ -297,7 +297,7 @@ fn open_while_locked(cmd: &str) -> bool {
 fn need(cmd: &str) -> Option<Need> {
     Some(match cmd {
         "web_viewer" | "media_status" | "media_rows" | "watch_week" | "media_episodes" | "media_search" | "media_search_live" | "media_play" | "media_report" | "media_forget_resume" | "media_get" | "media_get_picked" | "media_seasons" | "media_trailer"
-        | "media_explore" | "media_filter" | "media_filter_genres" | "media_filter_studios" | "media_anime_tags" | "media_details" | "media_similar" | "media_my_list" | "media_my_list_marks" | "media_completed"
+        | "media_explore" | "media_filter" | "media_filter_genres" | "media_filter_studios" | "media_anime_tags" | "media_details" | "media_similar" | "media_maker" | "media_my_list" | "media_my_list_marks" | "media_completed"
         | "media_watched_keys" | "completed_remove" | "media_show_episodes" | "marker_set" | "marker_restart" | "media_set_watched" | "media_segments" | "subs_search" | "subs_download" | "subs_sync" | "subs_choice" | "subs_set"
         | "media_waiting" | "media_downloads" | "watchnow_start" | "watchnow_leave" | "watchnow_cancel" | "watchnow_progress" | "watchnow_list" | "watchnow_ready" | "night_prepare" | "syncplay_info" | "syncplay_call" | "syncplay_tile" | "syncplay_say"
         // Watch together host tools: run as the viewer; the host-only ones
@@ -322,7 +322,7 @@ fn need(cmd: &str) -> Option<Need> {
         | "notify_state" | "notify_set" | "notify_list" | "notify_unseen"
         // Host-only ones check the viewer is the party's host (readparty.rs).
         | "readparty_start" | "readparty_join" | "readparty_state" | "readparty_move" | "readparty_leave" | "readparty_set" | "readparty_kick" | "readparty_allow" | "readparty_host"
-        | "read_book_rows" | "read_book_more" | "read_book_search" | "read_comic_rows" | "read_comic_search" | "read_book_copies" | "read_book_get" | "read_books" | "read_book_open"
+        | "read_book_rows" | "read_book_more" | "read_book_search" | "read_book_author" | "read_comic_rows" | "read_comic_search" | "read_book_copies" | "read_book_get" | "read_books" | "read_book_open"
         | "read_languages" | "read_copy_chapters" | "read_get_chapters" | "read_keep_up" | "read_list" | "read_list_set" | "read_explore" | "read_genres" | "read_filter_info" | "read_similar" | "read_about" | "read_downloads"
         | "read_delete_plan" => Need::Viewer,
         // Deleting reading's files (read_storage.rs), like a film's Delete.
@@ -399,6 +399,7 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
         "readparty_host" => res(crate::readparty::make_host(app, &arg::<String>(a, "code")?, &arg::<String>(a, "who")?)),
         "readparty_leave" => res(crate::readparty::leave(app, &arg::<String>(a, "code")?)),
         "read_book_more" => res(crate::books::more(&arg::<String>(a, "id")?, arg::<u32>(a, "page")?).await),
+        "read_book_author" => res(crate::books::by_author(&arg::<String>(a, "name")?).await),
         "read_comic_rows" => ok(crate::books::comic_rows_now().await),
         "read_comic_search" => res(crate::books::search_comics(&arg::<String>(a, "term")?).await),
         "read_book_search" => res(crate::books::search(&arg::<String>(a, "term")?).await),
@@ -461,6 +462,7 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
         "media_filter_studios" => ok(media::filter_studios(app, &arg::<String>(a, "kind")?)),
         "media_anime_tags" => res(media::anime_tags().await),
         "media_details" => ok(details::details(app, &arg::<Tile>(a, "tile")?).await),
+        "media_maker" => res(crate::makers::works(app, &arg::<String>(a, "id")?).await),
         "media_similar" => ok(similar::similar(app, &arg::<Tile>(a, "tile")?).await),
         "media_my_list" => res(media::toggle_my_list(app, arg(a, "tile")?, arg(a, "on")?).await),
         "media_my_list_marks" => ok(media::my_list_marks(app).await),

@@ -739,6 +739,16 @@ pub async fn search(term: &str) -> Result<Vec<Value>, String> {
     Ok(v["docs"].as_array().map(|a| a.iter().filter(|d| d["cover_i"].is_i64()).map(doc_card).collect()).unwrap_or_default())
 }
 
+/// Every book by one author, the most printed first.
+pub async fn by_author(name: &str) -> Result<Vec<Value>, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("No author named.".into());
+    }
+    let v = ol_get(&format!("https://openlibrary.org/search.json?author={}&fields=key,title,author_name,first_publish_year,cover_i&sort=editions&limit=100", enc(name))).await?;
+    Ok(v["docs"].as_array().map(|a| a.iter().filter(|d| d["cover_i"].is_i64()).map(doc_card).collect()).unwrap_or_default())
+}
+
 fn doc_card(d: &Value) -> Value {
     let authors = d["author_name"].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default();
     ol_card(d["title"].as_str().unwrap_or_default(), authors, d["cover_i"].as_i64(), d["first_publish_year"].as_i64(), d["key"].as_str())

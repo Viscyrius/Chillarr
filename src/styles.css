@@ -703,6 +703,11 @@ input[type="range"] { background: linear-gradient(90deg, var(--accent) 0 var(--f
 .facts { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 14px 24px; margin: 0 0 28px; }
 .facts dt { color: var(--dim); font-size: 12px; margin-bottom: 3px; }
 .facts dd { margin: 0; font: 500 14px var(--display); color: #e4e5ea; }
+/* A creator's name: opens everything they made (watching and reading look the same). */
+.maker-link { background: none; border: 0; padding: 0; margin: 0; font: inherit; color: inherit; cursor: pointer; text-decoration: underline; text-decoration-color: rgba(var(--accent-rgb), 0.55); text-underline-offset: 3px; border-radius: 4px; }
+.maker-link:hover, .maker-link:focus-visible { color: var(--accent); text-decoration-color: var(--accent); }
+.maker-sub { color: var(--muted); margin: 0; font-size: 15px; }
+.maker-head h1 { margin-bottom: 6px; }
 .about h3 { font: 600 1.25rem var(--display); margin: 0 0 14px; }
 .cast { display: flex; gap: 16px; overflow-x: auto; overflow-y: hidden; padding: 4px 2px 14px; scrollbar-width: thin; overscroll-behavior-x: contain; }
 .person { flex: none; width: 108px; text-align: center; animation: rise 0.5s var(--out) both; animation-delay: calc(var(--j, 0) * 30ms); }
