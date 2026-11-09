@@ -318,7 +318,7 @@ fn need(cmd: &str) -> Option<Need> {
         // Each profile's own Notify me list and notes (notify.rs).
         | "notify_state" | "notify_set" | "notify_list" | "notify_unseen"
         | "readparty_start" | "readparty_join" | "readparty_state" | "readparty_move" | "readparty_leave"
-        | "read_book_rows" | "read_book_more" | "read_book_search" | "read_book_copies" | "read_book_get" | "read_books" | "read_book_open"
+        | "read_book_rows" | "read_book_more" | "read_book_search" | "read_comic_rows" | "read_comic_search" | "read_book_copies" | "read_book_get" | "read_books" | "read_book_open"
         | "read_languages" | "read_copy_chapters" | "read_get_chapters" | "read_keep_up" | "read_list" | "read_list_set" | "read_explore" | "read_genres" | "read_filter_info" | "read_similar" | "read_about" | "read_downloads"
         | "read_delete_plan" => Need::Viewer,
         // Deleting reading's files (read_storage.rs), like a film's Delete.
@@ -391,6 +391,8 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
         "readparty_move" => res(crate::readparty::moved(app, &arg::<String>(a, "code")?, arg(a, "chapter")?, arg(a, "page")?)),
         "readparty_leave" => res(crate::readparty::leave(app, &arg::<String>(a, "code")?)),
         "read_book_more" => res(crate::books::more(&arg::<String>(a, "id")?, arg::<u32>(a, "page")?).await),
+        "read_comic_rows" => ok(crate::books::comic_rows_now().await),
+        "read_comic_search" => res(crate::books::search_comics(&arg::<String>(a, "term")?).await),
         "read_book_search" => res(crate::books::search(&arg::<String>(a, "term")?).await),
         "read_book_copies" => res(crate::books::copies(app, &arg(a, "meta")?).await),
         "read_book_get" => res(crate::books::get(app, arg(a, "meta")?, &arg::<String>(a, "id")?).await),

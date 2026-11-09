@@ -4,7 +4,9 @@
 // only let pictures load from the bridge), its pictures load as they are.
 // Turning a page scrolls by a screen; past the end, the next chapter.
 // PDFs open in the browser's own viewer; other formats are saved instead.
+// Comics (CBZ) open in the comic reader (reader.js), page by page.
 import { el, getPref, icon, ICON, invoke, setPref, toast, WEB } from "./api.js";
+import { openComic } from "./reader.js";
 
 const THEMES = { dark: ["#111214", "#e4e4e6"], sepia: ["#f4ecd8", "#3b3024"], light: ["#ffffff", "#1a1a1a"] };
 let base = null;
@@ -23,7 +25,9 @@ export async function openBook(key, onClose = null, fromStart = false) {
   catch (e) { base = null; toast(String(e), true); return; }
   const file = `${root}/read/${o.ticket}/file`;
   if (o.kind === "pdf") { window.open(file, "_blank"); return; }
-  if (fromStart) { o.chapter = 0; o.at = 0; }
+  if (fromStart) { o.chapter = 0; o.at = 0; o.page = 0; }
+  // A comic (CBZ): its pages in the comic reader.
+  if (o.kind === "comic") { openComic(key, o, root, onClose); return; }
   if (o.kind !== "epub") {
     // AZW3 / MOBI: nothing here shows them; the file itself is offered.
     const a = el("a", { href: file, download: "" });
