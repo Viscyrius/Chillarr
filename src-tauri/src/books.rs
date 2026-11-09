@@ -184,9 +184,20 @@ pub fn all(app: &AppHandle) -> Vec<Book> {
     books_file(app).ok().and_then(|p| std::fs::read_to_string(p).ok()).and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
 }
 
+/// Held around every read, change and save of books.json (never across an
+/// await), so the background check can't save an old copy over a book added,
+/// removed or deleted meanwhile.
+static BOOKS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn books_lock() -> std::sync::MutexGuard<'static, ()> {
+    BOOKS_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 fn save(app: &AppHandle, list: &[Book]) -> Result<(), String> {
     let p = books_file(app)?;
-    let tmp = p.with_extension("json.tmp");
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp = p.with_extension(format!("json.{}-{n}.tmp", std::process::id()));
     std::fs::write(&tmp, serde_json::to_string(list).map_err(|e| e.to_string())?).and_then(|_| std::fs::rename(&tmp, &p)).map_err(|e| format!("Couldn't save it: {e}"))
 }
 
@@ -303,6 +314,7 @@ pub async fn get(app: &AppHandle, meta: BookMeta, id: &str) -> Result<String, St
         (Some(a), Some(c)) => a == c,
         _ => crate::read_core::norm_title(&b.title) == crate::read_core::norm_title(&meta.title) && b.author == meta.author,
     } && b.comic == meta.comic;
+    let held = books_lock();
     let mut list = all(app);
     // Its file was deleted: this download brings it back, for whoever had it.
     let mut kept_owners: Option<Vec<String>> = None;
@@ -320,6 +332,7 @@ pub async fn get(app: &AppHandle, meta: BookMeta, id: &str) -> Result<String, St
         save(app, &list)?;
         return Ok(format!("{title} is in your books now. It was already here."));
     }
+    drop(held);
     let pick = offered(id).ok_or("That list of copies is old. Look for copies again.")?;
     if pick.size > if meta.comic { MAX_COMIC } else { MAX_BOOK } {
         return Err("That copy is too big to be one book.".into());
@@ -340,6 +353,7 @@ pub async fn get(app: &AppHandle, meta: BookMeta, id: &str) -> Result<String, St
     }
     let mut key = [0u8; 8];
     getrandom::getrandom(&mut key).map_err(|e| e.to_string())?;
+    let _held = books_lock();
     let mut list = all(app);
     if kept_owners.is_some() {
         list.retain(|b| !(same(b) && b.not_downloaded));
@@ -444,18 +458,37 @@ pub async fn tick(app: &AppHandle) {
         changed = true;
     }
     if changed {
-        let _ = save(app, &list);
+        // Onto the list as it is now: a book got, removed or deleted while
+        // this waited on qBittorrent stays as it was left. Only books still
+        // waiting for their file take what this round found out.
+        let _held = books_lock();
+        let mut now = all(app);
+        let mut moved = false;
+        for x in now.iter_mut().filter(|x| x.file.is_none() && !x.not_downloaded) {
+            if let Some(b) = list.iter().find(|b| b.key == x.key) {
+                if (b.file.clone(), b.hash.clone(), b.problem.clone()) != (x.file.clone(), x.hash.clone(), x.problem.clone()) {
+                    x.file = b.file.clone();
+                    x.hash = b.hash.clone();
+                    x.problem = b.problem.clone();
+                    moved = true;
+                }
+            }
+        }
+        if moved {
+            let _ = save(app, &now);
+        }
     }
 }
 
 pub async fn remove(app: &AppHandle, key: &str) -> Result<String, String> {
     let b = find(app, key)?;
-    let mut list = all(app);
     // Others have it too: it only leaves this profile's books.
     let me = crate::media::active_user(app).unwrap_or_default();
     let mut owners = crate::read::owners_of(&b.owners, crate::profiles::owner_id(app).as_deref());
     owners.retain(|o| o != &me);
     if !owners.is_empty() {
+        let _held = books_lock();
+        let mut list = all(app);
         if let Some(x) = list.iter_mut().find(|x| x.key == key) {
             x.owners = owners;
         }
@@ -468,6 +501,8 @@ pub async fn remove(app: &AppHandle, key: &str) -> Result<String, String> {
     if let Some(p) = path_of(app, &b) {
         std::fs::remove_file(&p).map_err(|e| format!("Couldn't delete it: {e}"))?;
     }
+    let _held = books_lock();
+    let mut list = all(app);
     list.retain(|x| x.key != key);
     save(app, &list)?;
     Ok(format!("Removed {}.", b.title))
@@ -489,6 +524,7 @@ pub async fn delete_file(app: &AppHandle, key: &str, others_ok: bool) -> Result<
     if let Some(p) = path_of(app, &b) {
         std::fs::remove_file(&p).map_err(|e| format!("Couldn't delete it: {e}"))?;
     }
+    let _held = books_lock();
     let mut list = all(app);
     if let Some(x) = list.iter_mut().find(|x| x.key == key) {
         x.file = None;

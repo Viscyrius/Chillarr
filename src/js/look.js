@@ -1,8 +1,8 @@
 // How Chillarr looks: a style (Cinema, Midnight or Classic) and a shade (dark
 // or light), kept per profile and separately for watching and reading, so
-// Movies can be Cinema while reading is Classic. The picker sits in the middle
-// of the top bar (on a narrow screen, at the top of Home). styles.css does the
-// rest from body[data-rstyle] and body[data-rshade].
+// Movies can be Cinema while reading is Classic. The Look button in the top
+// bar opens the picker. styles.css does the rest from body[data-rstyle] and
+// body[data-rshade].
 import { el, getPref, icon, setPref } from "./api.js";
 
 export const STYLES = [["cinema", "Cinema"], ["midnight", "Midnight"], ["classic", "Classic"]];
@@ -51,8 +51,8 @@ function swap(change) {
 export function setStyle(k) {
   if (k === styleNow()) return;
   setPref(`${modeNow()}-style`, k);
-  // The pill moves at once; the page follows.
-  drawPickers(k);
+  // The menu shows the pick at once; the page follows.
+  drawPickers();
   swap(applyLook);
 }
 
@@ -67,42 +67,70 @@ export function flipShade() {
 const SUN = "M12 4V2M12 22v-2M4 12H2M22 12h-2M5.6 5.6 4.2 4.2M19.8 19.8l-1.4-1.4M5.6 18.4l-1.4 1.4M19.8 4.2l-1.4 1.4M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10z";
 const MOON = "M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z";
 
-function styleButtons(now) {
-  return STYLES.map(([k, label]) => el("button", { class: k === now ? "on" : "", dataset: { style: k }, "aria-pressed": String(k === now), onclick: () => setStyle(k) }, label));
+// One Look button in the top bar (both modes, every width) opens a small
+// menu: the three styles, each with a little picture of itself, and Dark or
+// Light. It used to be a segmented control squeezed into the top bar (which
+// pushed "My downloads" onto two lines) or a STYLE row on top of every page.
+const LOOK = "M12 3a9 9 0 1 0 0 18c1 0 1.5-.6 1.5-1.4 0-.4-.2-.8-.4-1.1-.3-.3-.4-.7-.4-1.1 0-.9.7-1.6 1.6-1.6H16a5 5 0 0 0 5-5c0-4.4-4-7.8-9-7.8zM7.5 12.5a1 1 0 1 0 0-2 1 1 0 0 0 0 2zM10.5 8.5a1 1 0 1 0 0-2 1 1 0 0 0 0 2zM15 8.5a1 1 0 1 0 0-2 1 1 0 0 0 0 2z";
+const NOTE = { cinema: "Big pictures and rows", midnight: "Dark, dense, a ranking", classic: "Light, charts and days" };
+let lookBtn = null;
+let pop = null;
+
+function closePop() {
+  if (!pop) return;
+  const p = pop;
+  pop = null;
+  lookBtn?.setAttribute("aria-expanded", "false");
+  p.classList.remove("in");
+  setTimeout(() => p.remove(), 180);
 }
 
-let topPicker = null;
-/** The top bar's picker, and any narrow-screen one on the page, showing what's picked. */
-export function drawPickers(now = styleNow()) {
-  if (!topPicker) {
-    const bar = document.getElementById("topbar");
-    const actions = bar && bar.querySelector(".top-actions");
-    if (!actions) return;
-    topPicker = el("div", { class: "read-style", role: "group", "aria-label": "Style" }, el("span", { class: "read-style-label", text: "Style" }), el("div", { class: "read-style-seg" }));
-    bar.insertBefore(topPicker, actions);
-  }
-  const seg = topPicker.querySelector(".read-style-seg");
-  const pill = seg.querySelector(".read-style-pill") || el("i", { class: "read-style-pill", "aria-hidden": "true" });
-  seg.replaceChildren(...styleButtons(now), pill);
+function drawPop() {
+  if (!pop) return;
+  const now = styleNow();
   const light = shadeNow(now) === "light";
-  const shade = el("button", { class: "read-shade", "aria-label": light ? "Dark" : "Light", title: light ? "Switch to dark" : "Switch to light", onclick: flipShade }, icon(light ? MOON : SUN));
-  const old = topPicker.querySelector(".read-shade");
-  if (old) old.replaceWith(shade); else topPicker.append(shade);
-  // The pill slides under the picked one (kept, so it glides rather than jumps).
-  const place = () => {
-    const on = seg.querySelector("button.on");
-    if (on && on.offsetWidth) { pill.style.width = `${on.offsetWidth}px`; pill.style.transform = `translateX(${on.offsetLeft - 3}px)`; }
-  };
-  requestAnimationFrame(place);
-  for (const s of document.querySelectorAll(".read-style-inline .chips")) {
-    s.replaceChildren(...styleButtons(now).map((b) => { b.className = "chip" + (b.className ? " on" : ""); return b; }),
-      el("button", { class: "chip read-shade-chip", "aria-label": light ? "Switch to dark" : "Switch to light", onclick: flipShade }, icon(light ? MOON : SUN), light ? "Dark" : "Light"));
-  }
+  pop.replaceChildren(
+    el("p", { class: "lk-h", text: document.body.dataset.mode === "read" ? "How reading looks" : "How watching looks" }),
+    el("div", { class: "lk-styles" }, STYLES.map(([k, label]) => el("button", { class: `lk-style${k === now ? " on" : ""}`, "aria-pressed": String(k === now), onclick: () => setStyle(k) },
+      el("span", { class: `lk-prev lk-${k}`, "aria-hidden": "true" }, el("i"), el("i"), el("i")),
+      el("span", { class: "lk-name" }, el("b", { text: label }), el("small", { text: NOTE[k] }))))),
+    el("div", { class: "lk-shade", role: "group", "aria-label": "Shade" },
+      [["dark", "Dark", MOON], ["light", "Light", SUN]].map(([k, label, path]) => el("button", { class: (light ? "light" : "dark") === k ? "on" : "", "aria-pressed": String((light ? "light" : "dark") === k), onclick: () => { if ((light ? "light" : "dark") !== k) flipShade(); } }, icon(path), label))));
 }
 
-/** The style picker at the top of a page, for screens too narrow for the top bar's. */
+function openPop() {
+  if (pop) { closePop(); return; }
+  pop = el("div", { class: "look-pop", role: "dialog", "aria-label": "Look" });
+  document.body.append(pop);
+  const r = lookBtn.getBoundingClientRect();
+  // Under the button, kept on screen however narrow it is.
+  const w = Math.min(300, innerWidth - 24);
+  pop.style.width = `${w}px`;
+  pop.style.top = `${Math.round(r.bottom + 10)}px`;
+  pop.style.left = `${Math.round(Math.min(Math.max(12, r.right + 8 - w), innerWidth - 12 - w))}px`;
+  drawPop();
+  lookBtn.setAttribute("aria-expanded", "true");
+  requestAnimationFrame(() => pop && pop.classList.add("in"));
+  pop.querySelector(".lk-style.on")?.focus();
+}
+
+document.addEventListener("pointerdown", (e) => { if (pop && !pop.contains(e.target) && !lookBtn.contains(e.target)) closePop(); }, true);
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && pop) { closePop(); lookBtn?.focus(); } });
+window.addEventListener("hashchange", closePop);
+window.addEventListener("resize", closePop);
+
+/** The top bar's Look button (made once) and its menu, showing what's picked. */
+export function drawPickers() {
+  if (!lookBtn) {
+    const actions = document.querySelector("#topbar .top-actions");
+    if (!actions) return;
+    lookBtn = el("button", { class: "icon-btn look-btn", "aria-label": "Look", title: "Look: style, dark or light", "aria-haspopup": "dialog", "aria-expanded": "false", onclick: openPop }, icon(LOOK));
+    actions.insertBefore(lookBtn, actions.querySelector("#mode-btn"));
+  }
+  drawPop();
+}
+
+/** The old STYLE row on top of pages: the Look button does it now. Kept so callers needn't change. */
 export function inlinePicker() {
-  const p = el("div", { class: "read-style-inline" }, el("span", { text: "Style" }), el("div", { class: "chips" }));
-  requestAnimationFrame(() => drawPickers());
-  return p;
+  return null;
 }

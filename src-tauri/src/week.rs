@@ -24,6 +24,18 @@ pub struct WeekShow {
     pub aired: bool,
     /// Sonarr files it as anime (the Anime tab shows these, Series the rest).
     pub anime: bool,
+    /// Which episode that is, "S2 E7", and its name when Sonarr has one.
+    pub episode: String,
+    pub episode_title: String,
+}
+
+/// "S2 E7" for a calendar episode ("E7" for specials and absolute numbering gaps).
+fn ep_label(ep: &Value) -> String {
+    match (ep["seasonNumber"].as_i64(), ep["episodeNumber"].as_i64()) {
+        (Some(s), Some(e)) if s > 0 => format!("S{s} E{e}"),
+        (_, Some(e)) => format!("E{e}"),
+        _ => String::new(),
+    }
 }
 
 fn air_ms(ep: &Value) -> Option<i64> {
@@ -32,7 +44,8 @@ fn air_ms(ep: &Value) -> Option<i64> {
 }
 
 /// One show per series of yours on the calendar: its latest aired episode,
-/// or the next one when none aired in the window. Newest first.
+/// or the next one when none aired in the window. Newest first. Each comes
+/// with the calendar episode it was picked for (its series is `ep["series"]`).
 pub fn pick(cal: &[Value], yours: &HashSet<i64>, now_ms: i64) -> Vec<(i64, Value, i64, bool)> {
     let mut best: HashMap<i64, (Value, i64, bool)> = HashMap::new();
     for ep in cal {
@@ -50,7 +63,7 @@ pub fn pick(cal: &[Value], yours: &HashSet<i64>, now_ms: i64) -> Vec<(i64, Value
             },
         };
         if better {
-            best.insert(tvdb, (ep["series"].clone(), at, aired));
+            best.insert(tvdb, (ep.clone(), at, aired));
         }
     }
     let mut out: Vec<_> = best.into_iter().map(|(id, (s, at, aired))| (id, s, at, aired)).collect();
@@ -95,9 +108,11 @@ pub async fn list(app: &AppHandle) -> Result<Vec<WeekShow>, String> {
     let cal = cal.map_err(|e| format!("Sonarr didn't answer: {e}"))?;
     Ok(pick(&cal, &ids, now.timestamp_millis())
         .into_iter()
-        .map(|(id, s, air, aired)| {
-            let tile = lib.get(&id).cloned().unwrap_or_else(|| tiles::from_sonarr(&s));
-            WeekShow { tile, air, aired, anime: s["seriesType"] == "anime" }
+        .map(|(id, ep, air, aired)| {
+            let s = &ep["series"];
+            let tile = lib.get(&id).cloned().unwrap_or_else(|| tiles::from_sonarr(s));
+            let episode_title = ep["title"].as_str().filter(|t| !t.eq_ignore_ascii_case("TBA") && !t.eq_ignore_ascii_case("TBD")).unwrap_or_default().to_string();
+            WeekShow { tile, air, aired, anime: s["seriesType"] == "anime", episode: ep_label(&ep), episode_title }
         })
         .collect())
 }
@@ -129,6 +144,13 @@ mod tests {
             (2, air_ms(&ep(0, "2026-11-10T01:00:00Z")).unwrap(), false),
             (1, air_ms(&ep(0, "2026-11-07T01:00:00Z")).unwrap(), true),
         ]);
+    }
+
+    #[test]
+    fn episode_labels() {
+        assert_eq!(ep_label(&json!({ "seasonNumber": 2, "episodeNumber": 7 })), "S2 E7");
+        assert_eq!(ep_label(&json!({ "seasonNumber": 0, "episodeNumber": 3 })), "E3");
+        assert_eq!(ep_label(&json!({})), "");
     }
 
     #[test]

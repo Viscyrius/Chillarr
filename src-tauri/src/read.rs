@@ -146,7 +146,11 @@ fn now() -> i64 {
 }
 
 fn save_json<T: Serialize>(path: &Path, v: &T) -> Result<(), String> {
-    let tmp = path.with_extension("json.tmp");
+    // A temp name of its own per write: two saves at once used to share one
+    // and the second rename failed.
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp = path.with_extension(format!("json.{}-{n}.tmp", std::process::id()));
     let text = serde_json::to_string(v).map_err(|e| e.to_string())?;
     std::fs::write(&tmp, text).and_then(|_| std::fs::rename(&tmp, path)).map_err(|e| format!("Couldn't save it: {e}"))
 }
@@ -285,8 +289,18 @@ pub async fn chapter_list_of(f: &Followed) -> Result<Vec<crate::suwayomi::Chapte
     chapter_list(f).await
 }
 
+/// Held around every read, change and save of reading.json, so a background
+/// check saving its copy can't undo a change made meanwhile. Never held across
+/// an await: whoever waits on the network reads the list again afterwards.
+static FOLLOWED_LOCK: Mutex<()> = Mutex::new(());
+
+fn followed_lock() -> std::sync::MutexGuard<'static, ()> {
+    FOLLOWED_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 /// Changes one followed series in place (a no-op when it's gone).
 pub fn update_followed(app: &AppHandle, key: &str, change: impl FnOnce(&mut Followed)) {
+    let _held = followed_lock();
     let mut all = followed(app);
     if let Some(f) = all.iter_mut().find(|f| f.key == key) {
         change(f);
@@ -464,6 +478,8 @@ struct Ticket {
 pub struct Reading {
     tickets: Mutex<HashMap<String, Ticket>>,
     rows: tokio::sync::Mutex<Option<(Instant, Value)>>,
+    /// for_you's rows, per profile and the series they were made from.
+    for_you: Mutex<HashMap<String, (Instant, Value)>>,
 }
 
 fn new_ticket() -> String {
@@ -555,9 +571,10 @@ pub async fn open(app: &AppHandle, key: &str, chapter: i64) -> Result<Opened, St
     if pages.is_empty() {
         return Err("That chapter has no pages. It may still be downloading.".into());
     }
-    let downloaded = |i: usize| chs.get(i).filter(|c| c.downloaded).map(|c| c.id);
-    let prev = at.checked_sub(1).and_then(downloaded);
-    let next = downloaded(at + 1);
+    // The nearest chapter each way that is here: one missing in between (a
+    // failed download, a deleted one) doesn't end the series there.
+    let prev = chs.get(..at).and_then(|before| before.iter().rev().find(|c| c.downloaded)).map(|c| c.id);
+    let next = chs.get(at + 1..).and_then(|after| after.iter().find(|c| c.downloaded)).map(|c| c.id);
     let s = spots(app, &uid);
     let spot = s.get(key);
     let page = spot.filter(|s| s.chapter == chapter).map(|s| s.page.min(pages.len() - 1)).unwrap_or(0);
@@ -811,16 +828,33 @@ pub struct Shelf {
     pub fresh_at: i64,
     /// Kept out of Your week and Latest updates (Spot.hide_week).
     pub hide_week: bool,
+    /// When its newest chapter came out (seconds), so the page can put the
+    /// series that updated lately first.
+    pub latest_at: i64,
 }
 
 /// Every followed series, as the watching profile sees it.
 pub async fn library(app: &AppHandle) -> Result<Vec<Shelf>, String> {
     let uid = uid(app)?;
     let s = spots(app, &uid);
-    let mut out = Vec::new();
+    // Each series' chapters at the same time (a few at once, so the manga
+    // downloader isn't flooded): one after another made every reading page
+    // wait for the whole list.
+    let gate = Arc::new(tokio::sync::Semaphore::new(6));
+    let mut set = tokio::task::JoinSet::new();
     for f in followed_mine(app) {
-        let chs = chapter_list(&f).await.unwrap_or_default();
-        out.push(shelf_of(&f, &chs, s.get(&f.key)));
+        let gate = gate.clone();
+        set.spawn(async move {
+            let _turn = gate.acquire_owned().await;
+            let chs = chapter_list(&f).await.unwrap_or_default();
+            (f, chs)
+        });
+    }
+    let mut out = Vec::new();
+    while let Some(done) = set.join_next().await {
+        if let Ok((f, chs)) = done {
+            out.push(shelf_of(&f, &chs, s.get(&f.key)));
+        }
     }
     out.sort_by(|a, b| b.at.cmp(&a.at).then(a.title.cmp(&b.title)));
     Ok(out)
@@ -879,6 +913,7 @@ pub fn shelf_of(f: &Followed, chs: &[crate::suwayomi::Chapter], spot: Option<&Sp
         fresh_label,
         fresh_at: fresh.iter().map(|c| uploaded_secs(c)).max().unwrap_or(0),
         hide_week: spot.is_some_and(|s| s.hide_week),
+        latest_at: chs.iter().map(uploaded_secs).max().unwrap_or(0),
     }
 }
 
@@ -1172,7 +1207,7 @@ pub async fn follow(app: &AppHandle, meta: Meta, pick: crate::suwayomi::Candidat
         crate::suwayomi::enqueue(&wanted).await?;
     }
     let queued = wanted.len();
-    let mut all = followed(app);
+    let all = followed(app);
     let mode = read_core::default_mode(meta.country.as_deref(), meta.format.as_deref()).to_string();
     let key = format!("m{}", pick.manga_id);
     // The same series from another source: the old one stops.
@@ -1190,6 +1225,9 @@ pub async fn follow(app: &AppHandle, meta: Meta, pick: crate::suwayomi::Candidat
     owners.push(me.clone());
     owners.sort();
     owners.dedup();
+    // Read again now the waiting is over: a background check may have saved meanwhile.
+    let _held = followed_lock();
+    let mut all = followed(app);
     all.retain(|f| f.key != key && !old.iter().any(|o| o.key == f.key));
     all.push(Followed {
         key,
@@ -1233,6 +1271,11 @@ pub async fn follow(app: &AppHandle, meta: Meta, pick: crate::suwayomi::Candidat
 }
 
 /// Stops following; with `delete`, its downloaded chapters go too.
+///
+/// It leaves the list first, so it's gone from the page at once and a second
+/// press can't find it half done. Suwayomi is told after: deleting a few
+/// hundred chapters takes a while, and a hiccup there is tried again in the
+/// background instead of failing the whole thing.
 pub async fn unfollow(app: &AppHandle, key: &str, delete: bool) -> Result<String, String> {
     let f = find(app, key)?;
     // Others still follow it: it only leaves this profile's list.
@@ -1243,18 +1286,58 @@ pub async fn unfollow(app: &AppHandle, key: &str, delete: bool) -> Result<String
         update_followed(app, key, |x| x.owners = owners);
         return Ok(format!("Took {} off your list. Others still read it, so its chapters stay.", f.title));
     }
-    for (id, _, _) in f.copies() {
-        if delete {
-            let chs = crate::suwayomi::chapters(id).await.unwrap_or_default();
-            let ids: Vec<i64> = chs.iter().filter(|c| c.downloaded).map(|c| c.id).collect();
-            crate::suwayomi::delete_chapters(&ids).await?;
-        }
-        crate::suwayomi::unfollow(id).await?;
+    {
+        let _held = followed_lock();
+        let mut all = followed(app);
+        all.retain(|x| x.key != key);
+        save_followed(app, &all)?;
     }
-    let mut all = followed(app);
-    all.retain(|x| x.key != key);
-    save_followed(app, &all)?;
-    Ok(format!("Stopped following {}.", f.title))
+    let copies: Vec<i64> = f.copies().into_iter().map(|c| c.0).collect();
+    let left = let_go(&copies, delete).await;
+    if left.is_empty() {
+        return Ok(format!("Stopped following {}.", f.title));
+    }
+    // Tried again a few times, quietly; the series is already off the list.
+    let (app2, title) = (app.clone(), f.title.clone());
+    tauri::async_runtime::spawn(async move {
+        let mut left = left;
+        for _ in 0..4 {
+            tokio::time::sleep(Duration::from_secs(20)).await;
+            // Followed again meanwhile: that copy is wanted now, leave it be.
+            let again: Vec<i64> = followed(&app2).iter().flat_map(|f| f.copies().into_iter().map(|c| c.0)).collect();
+            left.retain(|id| !again.contains(id));
+            if left.is_empty() {
+                return;
+            }
+            left = let_go(&left, delete).await;
+            if left.is_empty() {
+                return;
+            }
+        }
+        crate::log::log(&app2, crate::model::Level::Amber, format!("Stopped following {title}, but the manga downloader didn't let go of it. Its chapters may still be on disk."));
+    });
+    Ok(format!("Stopped following {}. Its chapters are being cleaned up.", f.title))
+}
+
+/// Takes each copy out of Suwayomi (its chapters too with `delete`); the ones it didn't take.
+async fn let_go(copies: &[i64], delete: bool) -> Vec<i64> {
+    let mut left = Vec::new();
+    for &id in copies {
+        let gone = async {
+            if delete {
+                let chs = crate::suwayomi::chapters(id).await?;
+                let ids: Vec<i64> = chs.iter().filter(|c| c.downloaded).map(|c| c.id).collect();
+                crate::suwayomi::delete_chapters(&ids).await?;
+            }
+            crate::suwayomi::unfollow(id).await
+        }
+        .await;
+        if let Err(e) = gone {
+            crate::log::detail(format!("Reading: letting go of manga {id}: {e}"));
+            left.push(id);
+        }
+    }
+    left
 }
 
 // ---------- clean-up of read chapters ----------
@@ -1320,6 +1403,34 @@ pub async fn set_up_once(app: &AppHandle) {
 /// download takes every group's copy). A chapter someone has read isn't
 /// fetched again: the clean-up may have deleted it on purpose.
 pub async fn fetch_new(app: &AppHandle) {
+    // Two loops call this (keepup.rs and waiting.rs): one at a time, or the
+    // same chapters were queued and told about twice.
+    // A call that finds one running asks it to go round once more, so what a
+    // site just listed is still fetched now rather than at the next round.
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static BUSY: AtomicBool = AtomicBool::new(false);
+    static AGAIN: AtomicBool = AtomicBool::new(false);
+    struct Free;
+    impl Drop for Free {
+        fn drop(&mut self) {
+            BUSY.store(false, Ordering::Release);
+        }
+    }
+    if BUSY.swap(true, Ordering::AcqRel) {
+        AGAIN.store(true, Ordering::Release);
+        return;
+    }
+    let _free = Free;
+    loop {
+        AGAIN.store(false, Ordering::Release);
+        fetch_new_once(app).await;
+        if !AGAIN.load(Ordering::Acquire) {
+            break;
+        }
+    }
+}
+
+async fn fetch_new_once(app: &AppHandle) {
     let list = followed(app);
     if list.is_empty() {
         return;
@@ -1716,6 +1827,153 @@ pub async fn about(anilist: i64) -> Result<Vec<(String, String)>, String> {
     Ok(about_facts(&v["data"]["Media"]))
 }
 
+/// The roles that count as who made a series: its writers and artists.
+const MAKER_ROLES: [&str; 6] = ["Story", "Art", "Original Creator", "Original Story", "Author", "Illustration"];
+
+/// Who made a series (story, art, original creator), with AniList's staff ids,
+/// so each name opens everything else they made, like a film's director.
+pub async fn makers(anilist: i64) -> Result<Vec<Value>, String> {
+    if anilist <= 0 {
+        return Ok(vec![]);
+    }
+    let q = "query($id:Int){Media(id:$id,type:MANGA){staff(perPage:12,sort:RELEVANCE){edges{role node{id name{full}}}}}}";
+    let v = crate::media::anilist(&json!({ "query": q, "variables": { "id": anilist } })).await?;
+    Ok(makers_of(&v["data"]["Media"]))
+}
+
+/// One entry per person, their roles joined: "Story and Art".
+pub fn makers_of(m: &Value) -> Vec<Value> {
+    let mut out: Vec<(i64, String, Vec<String>)> = Vec::new();
+    for e in m["staff"]["edges"].as_array().into_iter().flatten() {
+        let role = e["role"].as_str().unwrap_or_default();
+        let role = role.split(" (").next().unwrap_or_default().trim().to_string();
+        let (Some(id), Some(name)) = (e["node"]["id"].as_i64(), e["node"]["name"]["full"].as_str()) else { continue };
+        if !MAKER_ROLES.iter().any(|r| role.starts_with(r)) {
+            continue;
+        }
+        match out.iter_mut().find(|(i, _, _)| *i == id) {
+            Some((_, _, roles)) => {
+                if !roles.contains(&role) {
+                    roles.push(role);
+                }
+            }
+            None => out.push((id, name.to_string(), vec![role])),
+        }
+    }
+    out.into_iter()
+        .take(6)
+        .map(|(id, name, roles)| json!({ "id": id, "name": name, "role": roles.join(" and ").replace(" & ", " and ") }))
+        .collect()
+}
+
+/// Everything one writer or artist made, most read first. 18+ titles only
+/// when the reading filters let them in (`adult`).
+pub async fn maker_works(app: &AppHandle, staff: i64, adult: bool) -> Result<Vec<Value>, String> {
+    if staff <= 0 {
+        return Ok(vec![]);
+    }
+    let q = format!("query($id:Int){{Staff(id:$id){{staffMedia(type:MANGA,sort:POPULARITY_DESC,perPage:50){{nodes{{{MEDIA_FIELDS}}}}}}}}}");
+    let v = crate::media::anilist(&json!({ "query": q, "variables": { "id": staff } })).await?;
+    let adult = adult && adult_ok(app);
+    let mut seen = std::collections::HashSet::new();
+    Ok(v["data"]["Staff"]["staffMedia"]["nodes"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter(|m| m.is_object() && (adult || m["isAdult"] != true))
+                .filter(|m| seen.insert(m["id"].as_i64().unwrap_or(0)))
+                .map(card)
+                .collect()
+        })
+        .unwrap_or_default())
+}
+
+const FOR_YOU_LIFE: Duration = Duration::from_secs(60 * 60);
+
+/// The genres to suggest more of: the ones this profile's series have most,
+/// two at most, only AniList genre names, never Ecchi on its own.
+pub fn top_genres(lists: &[Vec<String>]) -> Vec<String> {
+    let mut counts: Vec<(String, usize)> = Vec::new();
+    for g in lists.iter().flatten().filter(|g| GENRES.contains(&g.as_str()) && g.as_str() != "Ecchi") {
+        match counts.iter_mut().find(|(x, _)| x == g) {
+            Some((_, n)) => *n += 1,
+            None => counts.push((g.clone(), 1)),
+        }
+    }
+    counts.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    counts.into_iter().take(2).map(|(g, _)| g).collect()
+}
+
+/// Reading's own "Because you watched": rows made from what this profile
+/// reads. AniList's readers' picks after the three series read most lately,
+/// then more of the two genres it reads most. Nothing it already follows, no
+/// 18+. One AniList call, kept an hour for the same series.
+pub async fn for_you(app: &AppHandle) -> Result<Value, String> {
+    let uid = uid(app)?;
+    let mine = followed_mine(app);
+    let at = spots(app, &uid);
+    let mut seeds: Vec<&Followed> = mine.iter().filter(|f| f.anilist.is_some()).collect();
+    seeds.sort_by_key(|f| std::cmp::Reverse(at.get(&f.key).map(|x| x.at).unwrap_or(f.added)));
+    seeds.truncate(3);
+    if seeds.is_empty() {
+        return Ok(json!([]));
+    }
+    let genres = top_genres(&mine.iter().map(|f| f.genres.clone()).collect::<Vec<_>>());
+    let have: Vec<i64> = mine.iter().filter_map(|f| f.anilist).collect();
+    let key = format!("{uid}|{:?}|{genres:?}|{}", seeds.iter().map(|f| f.anilist).collect::<Vec<_>>(), have.len());
+    {
+        let state = app.state::<Reading>();
+        let cache = state.for_you.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((born, v)) = cache.get(&key) {
+            if born.elapsed() < FOR_YOU_LIFE {
+                return Ok(v.clone());
+            }
+        }
+    }
+    let not_in = have.iter().take(60).map(|i| i.to_string()).collect::<Vec<_>>().join(",");
+    let mut q = String::from("{");
+    for (i, f) in seeds.iter().enumerate() {
+        q.push_str(&format!("b{i}:Media(id:{},type:MANGA){{recommendations(sort:RATING_DESC,perPage:24){{nodes{{rating mediaRecommendation{{{MEDIA_FIELDS}}}}}}}}} ", f.anilist.unwrap_or(0)));
+    }
+    for (j, g) in genres.iter().enumerate() {
+        q.push_str(&format!("g{j}:Page(perPage:30){{media(type:MANGA,isAdult:false,sort:POPULARITY_DESC,genre:\"{g}\",id_not_in:[{not_in}]){{{MEDIA_FIELDS}}}}} "));
+    }
+    q.push('}');
+    let v = crate::media::anilist(&json!({ "query": q })).await?;
+    let data = &v["data"];
+    if data.is_null() {
+        return Err("AniList didn't answer. Try again in a minute.".into());
+    }
+    let keep = |m: &&Value| m.is_object() && m["isAdult"] != true && !have.contains(&m["id"].as_i64().unwrap_or(0));
+    let mut rows = Vec::new();
+    for (i, f) in seeds.iter().enumerate() {
+        let items: Vec<Value> = data[format!("b{i}")]["recommendations"]["nodes"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|n| n["rating"].as_i64().unwrap_or(0) > 0)
+            .map(|n| &n["mediaRecommendation"])
+            .filter(keep)
+            .map(card)
+            .collect();
+        if items.len() >= 4 {
+            rows.push(json!({ "id": format!("because-{}", f.anilist.unwrap_or(0)), "title": format!("Because you read {}", f.title), "items": items }));
+        }
+    }
+    for (j, g) in genres.iter().enumerate() {
+        let items: Vec<Value> = data[format!("g{j}")]["media"].as_array().into_iter().flatten().filter(keep).map(card).collect();
+        if items.len() >= 4 {
+            rows.push(json!({ "id": format!("foryou-{g}"), "title": format!("More {g} for you"), "items": items }));
+        }
+    }
+    let out = json!(rows);
+    let state = app.state::<Reading>();
+    let mut cache = state.for_you.lock().unwrap_or_else(|e| e.into_inner());
+    cache.retain(|_, (born, _)| born.elapsed() < FOR_YOU_LIFE);
+    cache.insert(key, (Instant::now(), out.clone()));
+    Ok(out)
+}
+
 /// AniList's Media as (label, value) pairs, in the order they show.
 fn about_facts(m: &Value) -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = Vec::new();
@@ -1731,7 +1989,7 @@ fn about_facts(m: &Value) -> Vec<(String, String)> {
     for e in m["staff"]["edges"].as_array().into_iter().flatten() {
         let role = e["role"].as_str().unwrap_or_default();
         let role = role.split(" (").next().unwrap_or_default().trim();
-        let keep = ["Story", "Art", "Original Creator", "Original Story", "Author", "Illustration"].iter().any(|r| role.starts_with(r));
+        let keep = MAKER_ROLES.iter().any(|r| role.starts_with(r));
         let Some(name) = e["node"]["name"]["full"].as_str() else { continue };
         if !keep {
             continue;
@@ -1848,6 +2106,28 @@ mod tests {
         let fill = vec![ch(11, 1.0, false), ch(12, 2.0, true), ch(13, 3.0, false), ch(14, 4.0, false), ch(15, 5.0, false)];
         let m: Vec<(i64, usize)> = merge_copies(vec![main, fill]).into_iter().map(|(c, i)| (c.id, i)).collect();
         assert_eq!(m, vec![(1, 0), (12, 1), (3, 0), (14, 1), (15, 1)], "sharp where it has it, a copy already here is kept, the rest filled");
+    }
+
+    #[test]
+    fn makers_merge_roles_and_skip_others() {
+        let m = json!({ "staff": { "edges": [
+            { "role": "Story", "node": { "id": 1, "name": { "full": "Chugong" } } },
+            { "role": "Art (ch 1-100)", "node": { "id": 2, "name": { "full": "DUBU" } } },
+            { "role": "Original Story", "node": { "id": 1, "name": { "full": "Chugong" } } },
+            { "role": "Translator", "node": { "id": 3, "name": { "full": "X" } } },
+        ] } });
+        let got = makers_of(&m);
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0]["name"], "Chugong");
+        assert_eq!(got[0]["role"], "Story and Original Story");
+        assert_eq!(got[1]["role"], "Art");
+    }
+
+    #[test]
+    fn top_genres_counts_and_skips_ecchi() {
+        let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let got = top_genres(&[v(&["Action", "Fantasy", "Ecchi"]), v(&["Action", "Romance"]), v(&["Ecchi", "Ecchi", "Made up"])]);
+        assert_eq!(got, vec!["Action".to_string(), "Fantasy".to_string()]);
     }
 
     #[test]

@@ -2,7 +2,7 @@
 //! manga too (user, 2026-11-08). Suwayomi has no speed limit of its own, but
 //! it can use a SOCKS5 proxy: this is one, on 127.0.0.1 only, with a random
 //! username and password per start, passing everything through a shared
-//! token bucket. limit.rs sets the rate each round from the same 10% budget
+//! token bucket. limit.rs sets the rate each round from the same 20% budget
 //! qBittorrent shares; off, it's unlimited.
 
 use std::sync::atomic::{AtomicU64, Ordering};

@@ -3,7 +3,7 @@ import { refreshHidden } from "./hidden.js";
 import { $, el, getPref, invoke, personKey, screenMode, setPerson, setPref, store, viewer, WEB, windowFull } from "./api.js";
 import { renderTab, renderSearch, renderExplore, renderMaker, stopBrowse, warmTabs, markRestyle } from "./browse.js";
 import { renderFilter } from "./filter.js";
-import { renderRead, renderReadSearch, stopRead } from "./read.js";
+import { renderRead, renderReadSearch, softRefresh, stopRead } from "./read.js";
 import { renderSettings, stopSettings } from "./settings.js";
 import { openSetup } from "./setup.js";
 import { knowPerson, startProfiles, startProfilesWeb, unlockWeb } from "./profiles.js";
@@ -16,7 +16,7 @@ import { applyLook, drawPickers, onStyle } from "./look.js";
 
 const view = $("#view");
 const TABS = ["home", "movies", "series", "anime", "downloads", "mylist", "settings", "explore", "filter", "maker",
-  "r-home", "r-manhwa", "r-manhua", "r-manga", "r-novels", "r-books", "r-downloads", "r-mylist", "r-all", "r-author"];
+  "r-home", "r-manhwa", "r-manhua", "r-manga", "r-novels", "r-books", "r-downloads", "r-mylist", "r-all", "r-author", "r-maker"];
 
 /* ---------- watching and reading ----------
    Two Chillarrs in one: the book button switches to reading (its own tabs,
@@ -71,7 +71,7 @@ function route(redraw = false) {
   const left = place.current();
   const { id, fresh } = place.entry();
   document.querySelectorAll("[data-tab]").forEach((a) => a.classList.toggle("on", a.dataset.tab === tab));
-  if (tab === current && tab !== "settings" && tab !== "explore" && tab !== "filter" && tab !== "r-all" && tab !== "maker" && tab !== "r-author") return;
+  if (tab === current && tab !== "settings" && tab !== "explore" && tab !== "filter" && tab !== "r-all" && tab !== "maker" && tab !== "r-author" && tab !== "r-maker") return;
   // Leaving a page: remember where you were on it. Search results aren't a
   // page of their own; the place from before the search stays.
   if (left && left !== id && current && current !== "search") place.remember(left);
@@ -246,6 +246,7 @@ function drawViewer() {
 // Another profile is watching now: it goes back to the mode it was in.
 let lastPerson = null;
 window.addEventListener("chillarr:refresh", () => {
+  const samePerson = lastPerson === personKey();
   if (lastPerson !== null && personKey() !== lastPerson) {
     lastPerson = personKey();
     const want = getPref("mode") === "read" ? "read" : "watch";
@@ -257,6 +258,8 @@ window.addEventListener("chillarr:refresh", () => {
   // (a download landing used to wipe the box and drop the results coming in).
   const term = $("#search").value.trim();
   if (current === "search" && term.length >= 2) { document.body.dataset.mode === "read" ? renderReadSearch(view, term) : renderSearch(view, term); return; }
+  // A reading grid (Manga, Explore all...) stays as it is: only what you follow is asked again.
+  if (samePerson && current.startsWith("r-") && softRefresh(current)) return;
   current = "";
   // Coming back from the player (or a download landing) keeps your place on the page.
   route(true);

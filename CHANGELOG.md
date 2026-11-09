@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.17.0 (2026-11-10)
+- Movies, Series and Anime have their filters right on the page, like the reading tabs. Filters and Order sit above the rows with the genre chips beside them; pick anything and the matching titles take the rows' place. Back to all rows (or Clear filters) brings the rows back. Home's Filters still opens them on their own page.
+- Your week now shows on Series, Anime and Home in every style, not just Classic: your shows by the day their episodes come out, each card with the episode (S2 E7) and when it's out ("Out today", "Fri at 21:00"). It opens on today, or on the next day something of yours comes out.
+- Pick several at once: a Select button on My downloads, and on your series and books in reading (Continue reading, Finished, Following, Your books). Tick the ones you want (Shift and a click ticks a run), then Delete them, Delete downloads, Stop following, Delete files or Remove, all in one go.
+- Deleting episodes and chapters: Shift and a click ticks every episode or chapter between two.
+- Reading: a series' writer and artist are links now, like a film's director. Each opens everything they wrote or drew, and the series page shows "More by" with their other series.
+- Reading: every chapter says when it came out ("Released 11/09/26"), in the chapter list and when picking chapters.
+- Reading Home has rows picked for you, like Movies' "Because you watched": "Because you read Solo Leveling" and "More Action for you", made from what you read. Classic shows them as Picked for you. Books shows "More by" the authors of your books.
+- Reading rows work like Movies' rows: the arrows only show when there's more to scroll, and the row titles open the whole row (See all for your own rows).
+- New look for the top bar: one Look button opens Cinema, Midnight and Classic (each with a small picture of itself) and Dark or Light. It used to squeeze the top bar so "My downloads" broke onto two lines, and put a Style row on top of every reading page.
+- New chapters on reading Home is a slim strip across the page instead of a big box with a poster in it.
+- Limit downloads now gives downloads 20% of your internet instead of 10% (manga and books share the same 20%). Off is still no limit, and "Don't limit what I start here" works as before.
+- Fixed: Stop following sometimes looked like it did nothing, so you pressed it again. It now closes the page at once and says it's stopping, and it can't be pressed twice. The series leaves your list straight away; if the manga downloader is slow to let go, it's tried again in the background.
+- Fixed: closing the Delete its chapters question with Esc counted as Keep them and stopped following anyway. Closing it now stops nothing.
+- Fixed: a book you added (or deleted) while another one was being filed could vanish from Books or come back. The same for followed series while new chapters were being checked.
+- Fixed: while chapters downloaded, a series' page redrew itself every 5 seconds and threw away what you were doing on it (picking chapters to delete, Change copy, typing a chapter number).
+- Fixed: switching a series' translation and pressing Follow quickly followed the copy found for the old translation.
+- Fixed: Next chapter said "You're up to date" when the next chapter was missing but later ones were downloaded. It now goes to the next one that's here.
+- Fixed: pressing Next twice in the reader loaded the same chapter twice, and Next then Previous could land on the wrong one.
+- Fixed: a chapter that failed to open closed the series page and left you on nothing.
+- Fixed: Manga, Manhwa, Explore all and other long reading grids jumped back to the top after closing the reader or when a download finished.
+- Fixed: Latest updates and Your week in reading only looked at the 16 series you read most lately, so one that updated today could be missing.
+- Faster: the reading list loads all your series at once instead of one by one, the manga downloader keeps its connections, rows far down the page aren't drawn until you get near them, finding copies of a series isn't started twice, and reading tabs remember what AniList said for a few minutes.
+
 ## 0.16.1 (2026-11-09)
 - Reader: tap the page (or open a new chapter) and the chapter you're in shows at the top for a moment, so you don't get lost.
 - Read Party: "Following the host." has an x to hide it, and Read together has a switch to show it again. It stays hidden next time too.
