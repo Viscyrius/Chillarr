@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.16.1 (2026-11-09)
+- Reader: tap the page (or open a new chapter) and the chapter you're in shows at the top for a moment, so you don't get lost.
+- Read Party: "Following the host." has an x to hide it, and Read together has a switch to show it again. It stays hidden next time too.
+
 ## 0.16.0 (2026-11-09)
 - Fixed: adding some chapters of a finished series with "Also get new chapters" on downloaded the whole rest of the series (picking 1 to 100 of Noblesse queued all 545). New chapters now means chapters the site posts after you follow a series.
 - Reading: one button, Get new chapters, in place of Follow and Keep up to date. When it's on, new chapters are checked every few minutes and download with a note. Adding a series now gets only what you picked unless you tick "Also get new chapters".

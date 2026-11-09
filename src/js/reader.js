@@ -149,10 +149,11 @@ function build(onClose) {
   const fill = el("i");
   const progress = el("div", { class: "rd-progress", "aria-hidden": "true" }, fill);
   const stage = el("div", { class: "rd-stage" });
-  box.append(stage, progress, top, bottom);
+  const where = el("div", { class: "rd-where", role: "status", "aria-live": "polite" });
+  box.append(stage, progress, where, top, bottom);
   document.body.append(box);
   document.body.style.overflow = "hidden";
-  r = { box, stage, title, count, hd, slider, prevCh, nextCh, modeBtns, modeOne, mouseBtn, zLabel, fill, onClose, hideT: 0, saveT: 0, io: null, page: 0, z: 1, glide: null, turning: null };
+  r = { box, stage, where, whereT: 0, title, count, hd, slider, prevCh, nextCh, modeBtns, modeOne, mouseBtn, zLabel, fill, onClose, hideT: 0, saveT: 0, io: null, page: 0, z: 1, glide: null, turning: null };
   paintMouse();
   box.addEventListener("keydown", onKey);
   box.addEventListener("mousemove", onMove);
@@ -178,6 +179,7 @@ function close() {
   r.io?.disconnect();
   r.endIo?.forEach((o) => o.disconnect());
   clearTimeout(r.hideT);
+  clearTimeout(r.whereT);
   window.removeEventListener("resize", onResize);
   const { box, onClose: done } = r;
   r = null;
@@ -194,6 +196,7 @@ function load(o, root) {
   r.o = o;
   r.url = (i) => `${root}/read/${o.ticket}/${i}`;
   r.title.replaceChildren(el("strong", { text: o.title }), el("span", { text: chName(o.chapter) }));
+  flashWhere();
   r.hd.hidden = !o.sharp;
   r.slider.max = String(Math.max(0, o.pages.length - 1));
   r.prevCh.disabled = o.prev == null;
@@ -208,6 +211,16 @@ function load(o, root) {
   showBars();
 }
 
+/** "Chapter 12" for a moment, so you know where you are. */
+function flashWhere() {
+  if (!r || !r.o || r.comic) return;
+  const t = chName(r.o.chapter);
+  if (!t) return;
+  r.where.textContent = t;
+  r.where.classList.add("on");
+  clearTimeout(r.whereT);
+  r.whereT = setTimeout(() => { if (r) r.where.classList.remove("on"); }, 1800);
+}
 const chName = (c) => (c.number != null ? `Chapter ${c.number}` : c.name || "");
 
 /** The stage fades out, `draw` runs, and it fades back in. */
@@ -635,6 +648,7 @@ async function jumpChapter(dir, toEnd = false) {
 let dragged = false;
 function onStageClick(e) {
   if (dragged) { dragged = false; return; }
+  flashWhere();
   if (r.mode === "webtoon") { toggleBars(); return; }
   const x = e.clientX / window.innerWidth;
   // Manga reads right to left: the left side goes on.

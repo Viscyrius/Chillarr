@@ -10,7 +10,7 @@
 //   Free: everyone reads at their own pace; "Jump to the host" catches up.
 // The host can also lock the party, ask for a password, and remove someone.
 // The PC checks all of it; this page only shows it and asks.
-import { ask, el, icon, invoke, listen, toast } from "./api.js";
+import { ask, el, getPref, icon, invoke, listen, setPref, toast } from "./api.js";
 import { openReader } from "./reader.js";
 
 const PEOPLE = "M16 19v-1a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v1M12.5 7a3 3 0 1 1-6 0 3 3 0 0 1 6 0M21 19v-1a4 4 0 0 0-3-3.9M15.5 4.1a3 3 0 0 1 0 5.8";
@@ -189,19 +189,35 @@ async function leave() {
 
 /* ---------- "Following the host" ---------- */
 let note = null;
+let noteText = null;
 let noteT = 0;
+/** Someone following can hide the note (its x, or the party panel); kept for next time. */
+const noteOff = () => getPref("readparty-hide-note") === "1";
+function setNoteOff(off) {
+  setPref("readparty-hide-note", off ? "1" : "0");
+  paintNote();
+  if (off) toast("Hidden. Show it again from Read together.");
+}
+function makeNote() {
+  noteText = el("span");
+  const x = el("button", { class: "rp-note-x", "aria-label": "Hide this", title: "Hide this", onclick: () => setNoteOff(true) }, "×");
+  note = el("div", { class: "rp-note", role: "status" }, noteText, x);
+  document.body.append(note);
+}
 function showNote(text) {
-  if (!note) { note = el("div", { class: "rp-note", role: "status" }); document.body.append(note); }
-  note.textContent = text;
+  if (noteOff()) return;
+  if (!note) makeNote();
+  noteText.textContent = text;
   note.hidden = false;
   clearTimeout(noteT);
   noteT = setTimeout(paintNote, 2500);
 }
-/** The note stays up while following in the reader; otherwise it goes. */
+/** The note stays up while following in the reader (unless hidden); otherwise it goes. */
 function paintNote() {
-  if (!note) { if (!(following() && hooks)) return; note = el("div", { class: "rp-note", role: "status" }); document.body.append(note); }
-  note.textContent = "Following the host.";
-  note.hidden = !(following() && hooks);
+  const show = following() && hooks && !noteOff();
+  if (!note) { if (!show) return; makeNote(); }
+  noteText.textContent = "Following the host.";
+  note.hidden = !show;
 }
 
 /* ---------- the panel ---------- */
@@ -227,6 +243,11 @@ function hostTools() {
   if (!party.host) {
     const parts = [el("p", { class: "rp-people", text: `${party.host_name || "Someone"} is the host. ${MODE_NOTE[party.mode]}` })];
     if (party.mode === "free") parts.push(el("div", { class: "rp-acts rp-center" }, el("button", { class: "btn soft", onclick: () => { close(); if (hooks) hooks.go(party.chapter, party.page, party.frac); } }, "Jump to the host")));
+    if (party.mode === "follow") {
+      const sw = el("input", { type: "checkbox", class: "rp-note-sw", checked: !noteOff(), "aria-label": "Show \"Following the host\"" });
+      sw.addEventListener("change", () => setNoteOff(!sw.checked));
+      parts.push(el("label", { class: "rp-row" }, el("span", { text: "Show \"Following the host\"" }), sw));
+    }
     return parts;
   }
   const parts = [
