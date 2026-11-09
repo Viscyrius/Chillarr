@@ -9,7 +9,7 @@ import { hideButton, isHidden, markHidden } from "./hidden.js";
 import { ask, canDelete, el, getPref, icon, ICON, invoke, setPref, toast } from "./api.js";
 import { openReader } from "./reader.js";
 import { openBook } from "./bookreader.js";
-import { ADULT_CHOICES, chipKit, clearButton, filtersButton, moreButton, orderSelect } from "./filterpanel.js";
+import { adultFields, chipKit, pornOn, clearButton, filtersButton, moreButton, orderSelect } from "./filterpanel.js";
 import { applyLook, drawPickers, inlinePicker, onStyle, styleNow } from "./look.js";
 
 const KIND = { KR: "Manhwa", CN: "Manhua", TW: "Manhua", JP: "Manga" };
@@ -687,7 +687,7 @@ async function homePage(view, my) {
 /* Filters, like Movies': genres and tags in or out (click once for only these,
    again to leave them out, again to clear), status, rating, years, length and,
    for the PC owner or a Jellyfin admin, 18+. Kept per profile, per tab. */
-const BLANK_FILTER = { genres: [], not_genres: [], tags: [], not_tags: [], status: null, sort: "popular", min_score: null, year_from: null, year_to: null, length: 0, adult: "hide" };
+const BLANK_FILTER = { genres: [], not_genres: [], tags: [], not_tags: [], status: null, sort: "popular", min_score: null, year_from: null, year_to: null, length: 0, adult: "hide", porn: "hide" };
 const LENGTHS = [[null, null, "Any length"], [null, 50, "Up to 50"], [50, 150, "50 to 150"], [150, null, "150 or more"]];
 const SCORES = [[null, "Any"], [60, "6+"], [70, "7+"], [80, "8+"], [90, "9+"]];
 const STATUSES = [[null, "Any"], ["RELEASING", "Ongoing"], ["FINISHED", "Finished"], ["HIATUS", "On hiatus"], ["NOT_YET_RELEASED", "Coming soon"]];
@@ -696,7 +696,7 @@ let filterInfo = null;
 
 function filterCount(f) {
   return f.genres.length + f.not_genres.length + f.tags.length + f.not_tags.length + (f.status ? 1 : 0) + (f.min_score ? 1 : 0)
-    + (f.year_from || f.year_to ? 1 : 0) + (f.length ? 1 : 0) + (f.adult !== "hide" ? 1 : 0);
+    + (f.year_from || f.year_to ? 1 : 0) + (f.length ? 1 : 0) + (f.adult !== "hide" ? 1 : 0) + (pornOn(f) ? 1 : 0);
 }
 
 async function explorePage(view, tab, my) {
@@ -708,7 +708,7 @@ async function explorePage(view, tab, my) {
   filterInfo = info;
   if (my !== seq) return;
   // Only the PC owner or a Jellyfin admin gets 18+; the PC refuses it for anyone else too.
-  if (!info.adult) f.adult = "hide";
+  if (!info.adult) { f.adult = "hide"; f.porn = "hide"; }
   const grid = el("div", { class: "grid read-grid" });
   const more = el("div", { class: "read-more" });
   const panel = el("div", { class: "fl-bar read-fl" });
@@ -721,11 +721,12 @@ async function explorePage(view, tab, my) {
     drawPanel();
     restart();
   }
-  const { triChip, oneOf, field, years } = chipKit(f, change);
+  const kit = chipKit(f, change);
+  const { triChip, oneOf, field, years } = kit;
   function drawPanel() {
     const n = filterCount(f);
     showCount(n);
-    const gs = f.adult !== "hide" && info.adult ? [...genres, "Hentai"] : genres;
+    const gs = pornOn(f) && info.adult ? [...genres, "Hentai"] : genres;
     const parts = [
       field("Genres", el("div", { class: "chips" }, gs.map((g) => triChip(g, "genres", "not_genres")))),
       // AniList has 18 manga genres; its most used tags carry the rest.
@@ -742,8 +743,7 @@ async function explorePage(view, tab, my) {
           field("Length", oneOf(LENGTHS.map((l, i) => [i, l[2]]), (o) => f.length === o[0], (x, o) => (x.length = o[0]))),
           field("Years", years())));
       if (info.adult) {
-        parts.push(field("18+", oneOf(ADULT_CHOICES, (o) => f.adult === o[0], (x, o) => (x.adult = o[0])),
-          el("small", { class: "read-fl-hint", text: "Off until you pick Include or Only 18+." })));
+        parts.push(...adultFields(f, kit, true));
       }
     }
     if (n) parts.push(clearButton(() => change((x) => Object.assign(x, { ...BLANK_FILTER, sort: x.sort }))));
@@ -794,7 +794,7 @@ async function explorePage(view, tab, my) {
     try {
       const [cmin, cmax] = LENGTHS[f.length] || LENGTHS[0];
       const got = await invoke("read_explore", { e: { kind, genres: f.genres, not_genres: f.not_genres, tags: f.tags, not_tags: f.not_tags, status: f.status, sort: f.sort,
-        min_score: f.min_score, year_from: f.year_from, year_to: f.year_to, chapters_min: cmin, chapters_max: cmax, adult: f.adult, page: ++pageNo } });
+        min_score: f.min_score, year_from: f.year_from, year_to: f.year_to, chapters_min: cmin, chapters_max: cmax, adult: f.adult, porn: f.porn, page: ++pageNo } });
       if (my !== seq || mine !== run) return;
       // Each new page's covers come in one after another.
       const start = grid.childElementCount;
@@ -914,10 +914,11 @@ async function downloadsPage(view, my) {
 }
 
 /** The top bar's search, in reading mode. */
-/** This profile turned 18+ on in any reading tab's filters (Include or Only). */
-function adultOn() {
+/** This profile turned 18+ on in any reading tab's filters (Included or Only),
+    and, with `porn`, Porn too in that same tab. */
+function adultOn(porn) {
   return ["manga", "manhwa", "manhua", "novels"].some((k) => {
-    try { const f = JSON.parse(getPref(`read-filter-${k}`) || "{}"); return f.adult === "include" || f.adult === "only"; } catch (e) { return false; }
+    try { const f = JSON.parse(getPref(`read-filter-${k}`) || "{}"); return porn ? pornOn(f) : f.adult === "include" || f.adult === "only"; } catch (e) { return false; }
   });
 }
 
@@ -926,7 +927,7 @@ export async function renderReadSearch(view, term) {
   const body = el("div", {}, ...skel());
   view.replaceChildren(page(head(`"${term}"`), body));
   const [found, books] = (await Promise.all([
-    invoke("read_search", { term, adult: adultOn() }).catch(() => []),
+    invoke("read_search", { term, adult: adultOn(false), porn: adultOn(true) }).catch(() => []),
     invoke("read_book_search", { term }).catch(() => []),
   ])).map((x) => x || []);
   if (my !== seq) return;

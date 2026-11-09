@@ -67,4 +67,21 @@ export const moreButton = (open, flip) =>
 export const clearButton = (onclick) => el("button", { class: "linkish read-fl-clear", onclick }, "Clear filters");
 
 /** The 18+ choice, the same everywhere: off until picked. */
-export const ADULT_CHOICES = [["hide", "Hidden"], ["include", "Include"], ["only", "Only 18+"]];
+export const ADULT_CHOICES = [["hide", "Not included"], ["include", "Included"], ["only", "Only 18+"]];
+/** Porn inside 18+: off until picked, and only there while 18+ is on. */
+export const PORN_CHOICES = [["hide", "Not included"], ["include", "Included"]];
+
+/** Porn is on: 18+ is on and Porn is Included. */
+export const pornOn = (f) => !!f.adult && f.adult !== "hide" && f.porn === "include";
+
+/** The 18+ field, and Porn under it once 18+ is on. `porn` false leaves Porn
+    out where the catalog can't tell porn apart. `kit` is the page's chipKit. */
+export function adultFields(f, kit, porn, hint) {
+  const out = [kit.field("18+", kit.oneOf(ADULT_CHOICES, (o) => f.adult === o[0], (x, o) => (x.adult = o[0])),
+    el("small", { class: "read-fl-hint", text: hint || "Off until you pick Included or Only 18+." }))];
+  if (porn && f.adult !== "hide") {
+    out.push(kit.field("Porn", kit.oneOf(PORN_CHOICES, (o) => (f.porn || "hide") === o[0], (x, o) => (x.porn = o[0])),
+      el("small", { class: "read-fl-hint", text: "Off until you pick Included." })));
+  }
+  return out;
+}

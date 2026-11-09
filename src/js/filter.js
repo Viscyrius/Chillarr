@@ -6,7 +6,7 @@
 // profile and per type; results load as you scroll.
 import { el, getPref, icon, ICON, invoke, setPref } from "./api.js";
 import { currentSeq, infiniteGrid, stopBrowse, swapIn } from "./browse.js";
-import { ADULT_CHOICES, chipKit, clearButton, filtersButton, moreButton, orderSelect } from "./filterpanel.js";
+import { adultFields, chipKit, pornOn, clearButton, filtersButton, moreButton, orderSelect } from "./filterpanel.js";
 import { goBack } from "./place.js";
 
 const KINDS = [["movie", "Movies"], ["series", "Series"], ["anime", "Anime"]];
@@ -39,10 +39,10 @@ const SHOW_TYPES = [["Scripted", "Drama and comedy"], ["Animation", "Animation"]
 const COUNTRIES = [["US", "United States"], ["GB", "United Kingdom"], ["KR", "South Korea"], ["JP", "Japan"], ["CA", "Canada"], ["AU", "Australia"],
   ["FR", "France"], ["DE", "Germany"], ["ES", "Spain"], ["IN", "India"], ["CN", "China"]];
 
-const ANIME_ONLY = { tags: [], not_tags: [], formats: [], season: null, episodes_min: null, episodes_max: null, adult: "hide" };
+const ANIME_ONLY = { tags: [], not_tags: [], formats: [], season: null, episodes_min: null, episodes_max: null };
 const CATALOG_ONLY = { countries: [], runtime_min: null, runtime_max: null, certs: [], studios: [], show_types: [], not_show_types: [] };
 const BLANK = { genres: [], not_genres: [], year_from: null, year_to: null, min_rating: null, sort: "popular", owned: false,
-  status: null, languages: [], not_languages: [], ...ANIME_ONLY, ...CATALOG_ONLY };
+  status: null, languages: [], not_languages: [], adult: "hide", porn: "hide", ...ANIME_ONLY, ...CATALOG_ONLY };
 
 let tagList = null;
 const studioLists = {};
@@ -52,7 +52,7 @@ const studiosOf = (kind) => (kind === "anime" ? [] : studioLists[kind] || invoke
 function trimmed(f) {
   const out = {};
   for (const [k, v] of Object.entries(f)) {
-    if (k === "kind" || v === null || v === false || (Array.isArray(v) && !v.length) || (k === "sort" && v === "popular") || (k === "adult" && v === "hide")) continue;
+    if (k === "kind" || v === null || v === false || (Array.isArray(v) && !v.length) || (k === "sort" && v === "popular") || ((k === "adult" || k === "porn") && v === "hide")) continue;
     out[k] = v;
   }
   return out;
@@ -64,7 +64,7 @@ function filterCount(f) {
   return f.genres.length + f.not_genres.length + f.tags.length + f.not_tags.length + f.languages.length + f.not_languages.length
     + !!f.status + !!f.min_rating + !!(f.year_from || f.year_to) + !!(f.runtime_min || f.runtime_max) + !!(f.episodes_min || f.episodes_max)
     + f.formats.length + !!f.season + f.certs.length + f.studios.length + f.show_types.length + f.not_show_types.length + f.countries.length
-    + !!f.owned + (f.adult && f.adult !== "hide" ? 1 : 0);
+    + !!f.owned + (f.adult && f.adult !== "hide" ? 1 : 0) + (pornOn(f) ? 1 : 0);
 }
 
 // The page's pending reload; one page at a time.
@@ -82,8 +82,10 @@ export async function renderFilter(view, kind, start, mode = null, want = 0) {
   const f = { ...BLANK, ...(named ? start : saved), kind };
   // Links from before genres could be combined carry one "genre".
   if (f.genre) { f.genres = [...new Set([...(f.genres || []), f.genre])]; delete f.genre; }
-  // 18+ is for anime: TMDB's adult flag isn't in the movie catalog, and TVmaze has none.
-  if (kind !== "anime") f.adult = "hide";
+  // 18+: anime (AniList) and movies (R and NC-17). TVmaze has no adult flag.
+  // Porn only for anime: the movie catalog has no porn flag.
+  if (kind === "series") f.adult = "hide";
+  if (kind !== "anime") f.porn = "hide";
 
   const [genres, studios] = await Promise.all([invoke("media_filter_genres", { kind }).catch(() => []), studiosOf(kind)]);
   // Another page was opened while these loaded.
@@ -112,7 +114,8 @@ export async function renderFilter(view, kind, start, mode = null, want = 0) {
     // Not once you've left: its stopBrowse() would stop the new page's loading.
     reloadTimer = setTimeout(() => { if (page.isConnected) loadResults(); }, now ? 0 : 250);
   }
-  const { triChip, oneOf, anyOf, field, row, years } = chipKit(f, change);
+  const kit = chipKit(f, change);
+  const { triChip, oneOf, anyOf, field, row, years } = kit;
 
   function loadResults(upTo = 0) {
     stopBrowse();
@@ -159,7 +162,7 @@ export async function renderFilter(view, kind, start, mode = null, want = 0) {
     const n = filterCount(f);
     showCount(n);
     const anime = kind === "anime", series = kind === "series";
-    const gs = anime && f.adult !== "hide" ? [...genres, "Hentai"] : genres;
+    const gs = anime && pornOn(f) ? [...genres, "Hentai"] : genres;
     const owned = el("input", { type: "checkbox", class: "switch", checked: f.owned, "aria-label": "Only what I have" });
     owned.addEventListener("change", () => change((x) => (x.owned = owned.checked), { now: true }));
     const parts = [
@@ -194,9 +197,8 @@ export async function renderFilter(view, kind, start, mode = null, want = 0) {
       }
       parts.push(row(field("Years", years()),
         field("Only what I have", el("label", { class: "fl-inline fl-owned" }, owned, el("small", { text: "Just the titles in your library" })))));
-      if (anime) {
-        parts.push(field("18+", ...notOwned([oneOf(ADULT_CHOICES, (o) => f.adult === o[0], (x, o) => (x.adult = o[0])),
-          el("small", { class: "read-fl-hint", text: "Off until you pick Include or Only 18+." })], "18+")));
+      if (!series) {
+        parts.push(...notOwned(adultFields(f, kit, anime, anime ? null : "R and NC-17 films. Off until you pick Included or Only 18+."), "18+"));
       }
     }
     if (n) parts.push(clearButton(() => change((x) => Object.assign(x, { ...BLANK, sort: x.sort }), { now: true })));

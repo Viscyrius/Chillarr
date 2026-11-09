@@ -1487,6 +1487,9 @@ pub struct Explore {
     /// "hide" (the default), "include" or "only".
     #[serde(default)]
     pub adult: Option<String>,
+    /// Porn inside 18+: "hide" (the default) or "include".
+    #[serde(default)]
+    pub porn: Option<String>,
     #[serde(default)]
     pub page: u32,
 }
@@ -1501,10 +1504,20 @@ pub fn adult_ok(_app: &AppHandle) -> bool {
 
 pub fn explore_args(e: &Explore, adult_allowed: bool) -> Result<String, String> {
     let mut a = vec!["type:MANGA".to_string()];
-    match (adult_allowed, e.adult.as_deref()) {
-        (true, Some("include")) => {}
-        (true, Some("only")) => a.push("isAdult:true".into()),
-        _ => a.push("isAdult:false".into()),
+    // 18+ is Ecchi and the like; porn is AniList's isAdult (see adult_rule).
+    let rule = if adult_allowed { crate::catalog::adult_rule(e.adult.as_deref(), e.porn.as_deref()) } else { crate::catalog::adult_rule(None, None) };
+    match rule.is_adult {
+        Some(true) => a.push("isAdult:true".into()),
+        Some(false) => a.push("isAdult:false".into()),
+        None => {}
+    }
+    let mut genres = e.genres.clone();
+    let mut not_genres = e.not_genres.clone();
+    match rule.ecchi {
+        Some(true) if !genres.iter().any(|g| g == "Ecchi") => genres.push("Ecchi".into()),
+        // Picking the Ecchi chip asks for it by itself.
+        Some(false) if !not_genres.iter().chain(&genres).any(|g| g == "Ecchi") => not_genres.push("Ecchi".into()),
+        _ => {}
     }
     match e.kind.as_str() {
         "manga" => a.extend(["countryOfOrigin:\"JP\"".into(), "format_in:[MANGA,ONE_SHOT]".into()]),
@@ -1517,7 +1530,7 @@ pub fn explore_args(e: &Explore, adult_allowed: bool) -> Result<String, String> 
     // Names go into the query as strings: letters, digits, spaces, - and ' only.
     let word = |s: &str| !s.is_empty() && s.len() <= 40 && s.chars().all(|c| c.is_ascii_alphanumeric() || c == ' ' || c == '-' || c == '\'');
     let list = |v: &[String]| -> Vec<String> { v.iter().filter(|g| word(g)).take(10).map(|g| format!("\"{g}\"")).collect() };
-    let pairs = [("genre_in", list(&e.genres)), ("genre_not_in", list(&e.not_genres)), ("tag_in", list(&e.tags)), ("tag_not_in", list(&e.not_tags))];
+    let pairs = [("genre_in", list(&genres)), ("genre_not_in", list(&not_genres)), ("tag_in", list(&e.tags)), ("tag_not_in", list(&e.not_tags))];
     for (k, v) in pairs {
         if !v.is_empty() {
             a.push(format!("{k}:[{}]", v.join(",")));
@@ -1602,16 +1615,26 @@ pub async fn similar(app: &AppHandle, anilist: i64) -> Result<Vec<Value>, String
 }
 
 /// `adult`: this profile turned 18+ on (Include or Only in a reading tab), so
-/// 18+ titles are found too. Otherwise they never are.
-pub async fn search(app: &AppHandle, term: &str, adult: bool) -> Result<Vec<Value>, String> {
+/// Ecchi titles are found too. `porn`: porn is on there as well, so isAdult
+/// titles are found too. Otherwise they never are.
+pub async fn search(app: &AppHandle, term: &str, adult: bool, porn: bool) -> Result<Vec<Value>, String> {
     let term = term.trim();
     if term.is_empty() {
         return Ok(vec![]);
     }
-    let only_safe = if adult && adult_ok(app) { "" } else { "isAdult:false," };
+    let only_safe = search_args(adult && adult_ok(app), porn);
     let q = format!("query($s:String){{Page(perPage:30){{media(type:MANGA,{only_safe}search:$s,sort:SEARCH_MATCH){{{MEDIA_FIELDS}}}}}}}");
     let v = crate::media::anilist(&json!({ "query": q, "variables": { "s": term } })).await?;
     Ok(v["data"]["Page"]["media"].as_array().map(|a| a.iter().map(card).collect()).unwrap_or_default())
+}
+
+/// The 18+ part of a search: Ecchi only with 18+ on, isAdult only with porn on too.
+fn search_args(adult: bool, porn: bool) -> &'static str {
+    match (adult, porn) {
+        (true, true) => "",
+        (true, false) => "isAdult:false,",
+        _ => "isAdult:false,genre_not_in:[\"Ecchi\"],",
+    }
 }
 
 #[cfg(test)]
@@ -1643,20 +1666,28 @@ mod tests {
         // Out, tags, rating, years, length.
         let e = Explore { kind: "all".into(), not_genres: vec!["Romance".into()], tags: vec!["Boys' Love".into()], not_tags: vec!["Isekai".into()], min_score: Some(80), year_from: Some(2018), year_to: Some(2020), chapters_min: Some(50), chapters_max: Some(150), ..Default::default() };
         let a = explore_args(&e, false).unwrap();
-        for want in ["genre_not_in:[\"Romance\"]", "tag_in:[\"Boys\' Love\"]", "tag_not_in:[\"Isekai\"]", "averageScore_greater:79", "startDate_greater:20180000", "startDate_lesser:20210000", "chapters_greater:49", "chapters_lesser:151", "format_in:[MANGA,ONE_SHOT]"] {
+        for want in ["genre_not_in:[\"Romance\",\"Ecchi\"]", "tag_in:[\"Boys\' Love\"]", "tag_not_in:[\"Isekai\"]", "averageScore_greater:79", "startDate_greater:20180000", "startDate_lesser:20210000", "chapters_greater:49", "chapters_lesser:151", "format_in:[MANGA,ONE_SHOT]"] {
             assert!(a.contains(want), "{want} in {a}");
         }
     }
 
     #[test]
     fn adult_only_for_those_allowed() {
-        let ask = |adult: &str| Explore { kind: "manhwa".into(), adult: Some(adult.into()), ..Default::default() };
-        assert!(explore_args(&ask("include"), false).unwrap().contains("isAdult:false"), "not allowed: hidden whatever is asked");
-        assert!(explore_args(&ask("only"), false).unwrap().contains("isAdult:false"));
-        assert!(!explore_args(&ask("include"), true).unwrap().contains("isAdult"), "allowed, included: both");
-        assert!(explore_args(&ask("only"), true).unwrap().contains("isAdult:true"));
-        assert!(explore_args(&ask("hide"), true).unwrap().contains("isAdult:false"));
+        let ask = |adult: &str, porn: &str| Explore { kind: "manhwa".into(), adult: Some(adult.into()), porn: Some(porn.into()), ..Default::default() };
+        let hidden = explore_args(&ask("include", "include"), false).unwrap();
+        assert!(hidden.contains("isAdult:false") && hidden.contains("genre_not_in:[\"Ecchi\"]"), "not allowed: hidden whatever is asked");
+        let a = explore_args(&ask("include", "hide"), true).unwrap();
+        assert!(a.contains("isAdult:false") && !a.contains("Ecchi"), "18+ without porn: {a}");
+        assert!(!explore_args(&ask("include", "include"), true).unwrap().contains("isAdult"), "with porn: both");
+        let a = explore_args(&ask("only", "hide"), true).unwrap();
+        assert!(a.contains("isAdult:false") && a.contains("genre_in:[\"Ecchi\"]"), "{a}");
+        assert!(explore_args(&ask("only", "include"), true).unwrap().contains("isAdult:true"));
+        let a = explore_args(&ask("hide", "include"), true).unwrap();
+        assert!(a.contains("isAdult:false") && a.contains("genre_not_in:[\"Ecchi\"]"), "porn needs 18+: {a}");
         assert!(explore_args(&Explore { kind: "manhwa".into(), ..Default::default() }, true).unwrap().contains("isAdult:false"), "off unless asked");
+        assert_eq!(search_args(true, true), "");
+        assert_eq!(search_args(true, false), "isAdult:false,");
+        assert!(search_args(false, true).contains("Ecchi"));
     }
 
     #[test]

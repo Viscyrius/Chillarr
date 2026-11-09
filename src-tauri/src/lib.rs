@@ -220,8 +220,8 @@ async fn media_search(app: AppHandle, term: String) -> media::Found {
 
 /// Search that answers source by source with "search-update" events (search.rs).
 #[tauri::command]
-async fn media_search_live(app: AppHandle, term: String, seq: u64) {
-    search::live(app, term, seq).await
+async fn media_search_live(app: AppHandle, term: String, seq: u64, adult: Option<bool>) {
+    search::live(app, term, seq, adult.unwrap_or(false)).await
 }
 
 #[tauri::command]
@@ -673,8 +673,8 @@ async fn read_rows(app: AppHandle) -> Result<serde_json::Value, String> {
 }
 
 #[tauri::command]
-async fn read_search(app: AppHandle, term: String, adult: Option<bool>) -> Result<Vec<serde_json::Value>, String> {
-    read::search(&app, &term, adult.unwrap_or(false)).await
+async fn read_search(app: AppHandle, term: String, adult: Option<bool>, porn: Option<bool>) -> Result<Vec<serde_json::Value>, String> {
+    read::search(&app, &term, adult.unwrap_or(false), porn.unwrap_or(false)).await
 }
 
 #[tauri::command]

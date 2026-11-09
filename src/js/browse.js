@@ -1384,7 +1384,9 @@ export function renderSearch(view, term) {
   clearTimeout(page.holdTimer);
   // What's on screen stays, dimmed, until the new results are in.
   page.root.classList.add("stale");
-  invoke("media_search_live", { term, seq })
+  // R and NC-17 films only once 18+ is on in this profile's movie filters.
+  const adult = (() => { try { const a = JSON.parse(getPref("filter-movie") || "{}").adult; return a === "include" || a === "only"; } catch (e) { return false; } })();
+  invoke("media_search_live", { term, seq, adult })
     .catch(() => null)
     .then(() => setTimeout(() => {
       // Every source has answered. If nothing was drawn (nothing found, or the
