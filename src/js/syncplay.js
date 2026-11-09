@@ -485,7 +485,7 @@ function hostTools() {
         el("button", { class: "btn small ghost", onclick: async () => {
           if (!(await ask(`Remove ${p.name} from the party?`, "They can't come back for 10 minutes unless you let them.", [], "Remove", "Cancel"))) return;
           invoke("syncplay_kick", { group: g.id, who: p.id }).then((r) => { room = r; draw(); }).catch((e) => toast(String(e), true));
-        } }, "Kick")))));
+        } }, "Kick"))))));
   }
   if (room.removed.length) {
     parts.push(el("h3", { text: "Removed" }), el("div", { class: "wt-list" }, ...room.removed.map((p) => el("div", { class: "wt-group" },
