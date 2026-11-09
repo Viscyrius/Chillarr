@@ -6,16 +6,17 @@
 // complete copy, found by asking every source) or a copy of your choice,
 // then which chapters.
 import { hideButton, isHidden, markHidden } from "./hidden.js";
-import { ask, canDelete, el, getPref, icon, ICON, invoke, setPref, toast } from "./api.js";
+import { ask, canDelete, el, expandRow, getPref, icon, ICON, invoke, setPref, toast } from "./api.js";
 import { openReader } from "./reader.js";
 import { openBook } from "./bookreader.js";
 import { adultFields, chipKit, pornOn, clearButton, filtersButton, moreButton, orderSelect } from "./filterpanel.js";
+import { notifyButton } from "./notify.js";
 import { applyLook, drawPickers, inlinePicker, onStyle, styleNow } from "./look.js";
 
 const KIND = { KR: "Manhwa", CN: "Manhua", TW: "Manhua", JP: "Manga" };
-const kindOf = (c) => (c.kind === "book" ? "Book" : c.format === "NOVEL" ? "Light novel" : KIND[c.country] || "Comic");
-/** Books and light novels open the book panel; the rest are comics. */
-const isBook = (c) => c.kind === "book" || c.format === "NOVEL";
+const kindOf = (c) => (c.kind === "book" ? "Book" : c.kind === "comic" ? "Comic" : c.format === "NOVEL" ? "Light novel" : KIND[c.country] || "Comic");
+/** Books, light novels and Western comics (got as one file, like a book) open the book panel. */
+const isBook = (c) => c.kind === "book" || c.kind === "comic" || c.format === "NOVEL";
 const STATUS = { RELEASING: "Ongoing", FINISHED: "Finished", HIATUS: "On hiatus", CANCELLED: "Cancelled", NOT_YET_RELEASED: "Coming soon" };
 const TAB_TITLE = { "r-manga": "Manga", "r-manhwa": "Manhwa", "r-manhua": "Manhua", "r-novels": "Light novels" };
 
@@ -198,7 +199,7 @@ function card(c, shelf = null) {
   b.addEventListener("click", () => pvOpen(c, shelf));
   b.addEventListener("mouseenter", () => pvSchedule(b, c, shelf));
   b.addEventListener("mouseleave", () => pvSoon());
-  if (styleNow() === "classic" && c.kind !== "book") classicCaption(b, c, shelf);
+  if (styleNow() === "classic" && c.kind !== "book" && c.kind !== "comic") classicCaption(b, c, shelf);
   return markHidden(b, c, shelf);
 }
 
@@ -227,18 +228,18 @@ function topTen(c, rank) {
 /** A card for a book on your list. */
 function bookCard(x) {
   const box = cover(x.cover, x.title);
-  box.append(el("span", { class: "badge", text: "Book" }));
+  box.append(el("span", { class: "badge", text: x.comic ? "Comic" : "Book" }));
   const done = x.finished || x.read >= 1;
   if (x.read > 0 && !done) box.append(el("div", { class: "bar" }, el("span", { style: `width:${Math.round(x.read * 100)}%` })));
   const sub = x.problem ? "Needs a look" : !x.ready ? (x.progress != null ? `Downloading ${Math.round(x.progress * 100)}%` : "Starting") : done ? "Finished" : x.read > 0 ? `${Math.round(x.read * 100)}% read` : x.author || "";
   const b = el("button", { class: "tile", "aria-label": x.title }, box, el("div", { class: "cap" }, el("strong", { text: x.title }), sub ? ` · ${sub}` : ""));
-  b.addEventListener("click", () => openBookPanel({ kind: "book", title: x.title, author: x.author, cover: x.cover, description: x.description, olid: x.olid, anilist: x.anilist }, x));
+  b.addEventListener("click", () => openBookPanel({ kind: x.comic ? "comic" : "book", title: x.title, author: x.author, cover: x.cover, description: x.description, olid: x.olid, anilist: x.anilist }, x));
   return markHidden(b, x);
 }
 
 /** Where a row's "Explore all" goes: every title in it, a page at a time (allPage). */
 const allHref = (id, title) => `#r-all/${encodeURIComponent(id)}/${encodeURIComponent(title)}`;
-const hasAll = (id) => id in ROW_EXPLORE || id.startsWith("books-");
+const hasAll = (id) => id in ROW_EXPLORE || id.startsWith("books-") || id.startsWith("comics-");
 
 function row(id, title, cards, allId = id) {
   const track = el("div", { class: "track" }, cards);
@@ -485,8 +486,8 @@ function rankRow(c, i) {
   return markHidden(b, c);
 }
 
-/** Tabs that swap a list: [[label, loader]], each loader returning cards. */
-function tabbed(cls, tabs, draw) {
+/** Tabs that swap a list: [[label, loader]], each loader returning cards. Watching's Your week uses it too. */
+export function tabbed(cls, tabs, draw) {
   const head = el("div", { class: "tabbed-tabs", role: "tablist" });
   const body = el("div", { class: "tabbed-body" });
   const cache = new Map();
@@ -829,7 +830,7 @@ async function allPage(view, my) {
   const [, rawId, rawTitle] = location.hash.slice(1).split("/");
   const id = decodeURIComponent(rawId || "");
   const title = decodeURIComponent(rawTitle || "") || "Explore";
-  const books = id.startsWith("books-");
+  const books = id.startsWith("books-") || id.startsWith("comics-");
   const grid = el("div", { class: "grid read-grid" });
   const more = el("div", { class: "read-more" });
   const back = el("button", { class: "btn soft read-back", onclick: () => (history.length > 1 ? history.back() : (location.hash = "#r-home")) }, icon(ICON.left), "Back");
@@ -867,10 +868,16 @@ async function booksPage(view, my) {
   myBooks = await invoke("read_books").catch(() => []);
   if (my !== seq) return;
   if (myBooks.length) mine.replaceChildren(row("books", "Your books", myBooks.map(bookCard)));
+  const comics = el("div");
+  // Comics and graphic novels come after the books, as soon as they're in.
+  const cm = invoke("read_comic_rows").catch(() => []);
   const bk = await invoke("read_book_rows").catch(() => []);
   if (my !== seq) return;
-  rows.replaceChildren(...(bk.filter((r) => r.items.length).map((r) => row(r.id, r.title, r.items.map((c) => card(c))))));
-  if (!rows.childElementCount) rows.replaceChildren(note("Open Library isn't answering. Try again in a minute."));
+  rows.replaceChildren(...(bk.filter((r) => r.items.length).map((r) => row(r.id, r.title, r.items.map((c) => card(c))))), comics);
+  const cr = await cm;
+  if (my !== seq) return;
+  comics.replaceChildren(...(cr.filter((r) => r.items.length).map((r) => row(r.id, r.title, r.items.map((c) => card(c))))));
+  if (!rows.querySelector(".track")) rows.replaceChildren(note("Open Library isn't answering. Try again in a minute."));
   return true;
 }
 
@@ -880,9 +887,9 @@ async function listPage(view, my) {
   const [{ lib, list }, books] = await Promise.all([know(), invoke("read_books").catch(() => [])]);
   if (my !== seq) return;
   const out = [];
-  if (list.length) out.push(row("saved", "Saved for later", list.map((c) => card(c))));
-  if (lib.length) out.push(row("following", "Following", lib.map((s) => card(asCard(s), s))));
-  if (books.length) out.push(row("books", "Books", books.map(bookCard)));
+  if (list.length) out.push(expandRow(row("saved", "Saved for later", list.map((c) => card(c))), "r-saved"));
+  if (lib.length) out.push(expandRow(row("following", "Following", lib.map((s) => card(asCard(s), s))), "r-following"));
+  if (books.length) out.push(expandRow(row("books", "Books", books.map(bookCard)), "r-books"));
   body.replaceChildren(...(out.length ? out : [note("Nothing here yet. Press Add to My List on anything you'd like to read later.")]));
   return true;
 }
@@ -926,15 +933,17 @@ export async function renderReadSearch(view, term) {
   const my = ++seq;
   const body = el("div", {}, ...skel());
   view.replaceChildren(page(head(`"${term}"`), body));
-  const [found, books] = (await Promise.all([
+  const [found, books, comics] = (await Promise.all([
     invoke("read_search", { term, adult: adultOn(false), porn: adultOn(true) }).catch(() => []),
     invoke("read_book_search", { term }).catch(() => []),
+    invoke("read_comic_search", { term }).catch(() => []),
   ])).map((x) => x || []);
   if (my !== seq) return;
   await know();
   const out = [];
   if (found.length) out.push(el("h2", { class: "read-grid-title", text: "Manga, manhwa, manhua and novels" }), el("div", { class: "grid read-grid" }, found.map((c) => card(c))));
   if (books.length) out.push(el("h2", { class: "read-grid-title", text: "Books" }), el("div", { class: "grid read-grid" }, books.map((c) => card(c))));
+  if (comics.length) out.push(el("h2", { class: "read-grid-title", text: "Comics and graphic novels" }), el("div", { class: "grid read-grid" }, comics.map((c) => card(c))));
   body.replaceChildren(...(out.length ? out : [note("Nothing found.")]));
 }
 
@@ -969,7 +978,8 @@ function shell(c) {
   const poster = c.cover ? el("img", { class: "read-poster", src: c.cover, alt: "" }) : null;
   hero.append(el("button", { class: "close", "aria-label": "Close", onclick: () => d.close() }, icon("M6 6l12 12M18 6L6 18")),
     el("div", { class: "read-head-row" }, poster, el("div", { class: "detail-head" }, el("h2", { text: c.title }), meta, options, actions)));
-  const body = el("div", { class: "detail-body" }, c.description ? el("p", { class: "overview read-overview", text: c.description }) : null);
+  const about = aboutBox(c);
+  const body = el("div", { class: "detail-body" }, c.description ? el("p", { class: "overview read-overview", text: c.description }) : null, about);
   d.replaceChildren(hero, body);
   if (!d.open) {
     // The entrance plays when it opens, not on every refresh while chapters come in.
@@ -978,7 +988,52 @@ function shell(c) {
     d.freshT = setTimeout(() => d.classList.remove("fresh"), 1200);
     d.showModal();
   }
-  return { actions, body, options, hideOn };
+  return { actions, body, options, hideOn, about };
+}
+
+/** Details asked for lately, so a panel redrawing itself doesn't ask again. */
+const aboutSeen = new Map();
+
+/**
+ * The details under the description, like a film's: genres, who made it, how
+ * many chapters and volumes, the latest chapter and when it came out, the
+ * status and the years. AniList for series, Open Library for books. The latest
+ * chapter comes from the chapter list, once there is one (`about.latest(chs)`).
+ */
+function aboutBox(c) {
+  const box = el("dl", { class: "facts read-facts" });
+  box.hidden = true;
+  let facts = [];
+  let latest = null;
+  const draw = () => {
+    const rows = facts.slice();
+    if (latest) {
+      const at = rows.findIndex(([k]) => k === "Status");
+      const extra = [["Latest chapter", latest.text]];
+      if (latest.count && !rows.some(([k]) => k === "Chapters")) extra.unshift(["Chapters", `${latest.count} so far`]);
+      rows.splice(at < 0 ? Math.min(1, rows.length) : at + 1, 0, ...extra);
+    }
+    box.replaceChildren(...rows.map(([k, v]) => el("div", {}, el("dt", { text: k }), el("dd", { text: v }))));
+    box.hidden = !rows.length;
+  };
+  box.latest = (chs) => {
+    const nums = (chs || []).filter((r) => r.number != null);
+    if (!nums.length) return;
+    const top = nums.reduce((a, b) => (b.number > a.number ? b : a));
+    const when = ago(top.uploaded);
+    latest = { text: when ? `${chLabel(top)}, ${when.charAt(0).toLowerCase()}${when.slice(1)}` : chLabel(top), count: chs.length };
+    draw();
+  };
+  const key = c.anilist ? `a${c.anilist}` : c.olid ? `o${c.olid}` : null;
+  if (!key) return box;
+  const seen = aboutSeen.get(key);
+  if (seen) { facts = seen; draw(); return box; }
+  invoke("read_about", { anilist: c.anilist || null, olid: c.anilist ? null : c.olid || null }).then((got) => {
+    aboutSeen.set(key, got || []);
+    facts = got || [];
+    if (box.isConnected) draw();
+  }).catch(() => {});
+  return box;
 }
 
 /** My List on any title: a toggle that remembers per profile. */
@@ -1027,11 +1082,12 @@ export async function openSeries({ key = null, card: c = null }) {
   clearTimeout(poll);
   if (!key && c && c.anilist && followedByAnilist.has(c.anilist)) key = followedByAnilist.get(c.anilist);
   if (key) return showFollowed(key, mine, c);
-  const { actions, body, options, hideOn } = shell(c);
+  const { actions, body, options, hideOn, about } = shell(c);
   // The chapters show by themselves: the copies are looked up as the panel opens,
   // and again when the translation or copy choice changes.
   const state = { lang: getPref("read-lang") || "en", copy: getPref("read-copy") || "best", onChange: () => getCopies(c, state, list, mine) };
   pickers(options, state);
+  state.about = about;
   // Follow: new chapters come in from now on, nothing older is downloaded unless picked below.
   const followBtn = el("button", { class: "btn primary", disabled: true, title: "Finding the chapters first" }, icon(ICON.plus), "Follow");
   followBtn.addEventListener("click", () => state.follow && state.follow([], followBtn));
@@ -1135,12 +1191,13 @@ async function pickChapters(c, x, state, list, mine, found, fill) {
   let chs;
   try { chs = await invoke("read_copy_chapters", { mangaId: x.manga_id, fillId: fill ? fill.manga_id : null }); } catch (e) { if (mine === panelSeq) list.replaceChildren(note(String(e))); return; }
   if (mine !== panelSeq) return;
+  if (state.about) state.about.latest(chs);
   // Nothing ticked to start with: tick what you want, or get them all.
   const picked = new Set();
   let last = null;
   const count = el("strong");
   const goBtn = el("button", { class: "btn primary" }, icon(ICON.download), "");
-  const newToo = el("input", { type: "checkbox", class: "switch", checked: true, "aria-label": "Also get new chapters" });
+  const newToo = el("input", { type: "checkbox", class: "switch", "aria-label": "Also get new chapters" });
   const from = el("input", { class: "read-from", type: "number", min: "0", step: "1", placeholder: "1", "aria-label": "From chapter" });
   const rows = chs.map((ch, i) => {
     const box = el("input", { type: "checkbox", "aria-label": chLabel(ch) });
@@ -1215,7 +1272,8 @@ async function showFollowed(key, mine, c0) {
   const f = d.followed;
   const c = { ...(c0 || {}), ...f, chapters: d.chapters.length };
   const scroll = dlg && dlg.open ? dlg.scrollTop : 0;
-  const { actions, body, options, hideOn } = shell(c);
+  const { actions, body, options, hideOn, about } = shell(c);
+  about.latest(d.chapters);
   if (f.lang) options.append(el("span", { class: "read-lang-tag", text: f.lang.toUpperCase() }));
   const readIds = new Set(d.chapters.filter((r) => r.read).map((r) => r.id));
   const spot = d.spot;
@@ -1231,13 +1289,14 @@ async function showFollowed(key, mine, c0) {
     e.currentTarget.disabled = true;
     try { toast(await invoke("read_get_chapters", { key, ids: missing.map((r) => r.id) })); showFollowed(key, ++panelSeq, c0); } catch (err) { toast(String(err), true); }
   } }, icon(ICON.download), `Get the other ${missing.length}`));
-  const live = el("button", { class: "btn soft read-live" + (f.live ? " on" : ""), "aria-pressed": f.live ? "true" : "false",
-    title: "Checks the site for new chapters every few minutes instead of every few hours" }, icon(f.live ? ICON.check : "M12 7v5l3 2M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z"), f.live ? "Keeping up to date" : "Keep up to date");
+  const isOn = f.new_too !== false;
+  const live = el("button", { class: "btn soft read-live" + (isOn ? " on" : ""), "aria-pressed": isOn ? "true" : "false",
+    title: "Checks the site every few minutes and downloads new chapters" }, icon(isOn ? ICON.check : "M12 7v5l3 2M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z"), isOn ? "Getting new chapters" : "Get new chapters");
   live.addEventListener("click", async () => {
     live.disabled = true;
     try {
-      const on = await invoke("read_keep_up", { key, on: !f.live });
-      toast(on ? "Checking for new chapters every few minutes. You get a notification when one is ready." : "Back to checking every few hours.");
+      const on = await invoke("read_keep_up", { key, on: !isOn });
+      toast(on ? "New chapters download by themselves. You get a notification when one is ready." : "New chapters are off for this series.");
       showFollowed(key, ++panelSeq, c0);
     } catch (e) { toast(String(e), true); live.disabled = false; }
   });
@@ -1448,8 +1507,10 @@ async function unfollow(f) {
 
 /* ---------- the book panel ---------- */
 
-const sameBook = (c, x) => (c.olid && x.olid === c.olid) || (c.anilist && x.anilist === c.anilist) || (x.title || "").toLowerCase() === (c.title || "").toLowerCase();
-const bookMeta = (c) => ({ title: c.title, author: c.author ?? null, cover: c.cover ?? null, description: c.description ?? null, olid: c.olid ?? null, anilist: c.anilist ?? null });
+const isComic = (c) => c.kind === "comic";
+// A book and the comic of the same story are two things to get.
+const sameBook = (c, x) => isComic(c) === !!x.comic && ((c.olid && x.olid === c.olid) || (c.anilist && x.anilist === c.anilist) || (x.title || "").toLowerCase() === (c.title || "").toLowerCase());
+const bookMeta = (c) => ({ title: c.title, author: c.author ?? null, cover: c.cover ?? null, description: c.description ?? null, olid: c.olid ?? null, anilist: c.anilist ?? null, comic: isComic(c) });
 
 /** A book or light novel: read it if it's here, else find a copy. */
 export async function openBookPanel(c, mine = null) {
@@ -1484,17 +1545,23 @@ export async function openBookPanel(c, mine = null) {
       actions.append(el("span", { class: "status-pill", text: mine.problem || (mine.progress != null ? `Downloading ${Math.round(mine.progress * 100)}%` : "Starting the download") }));
       poll = setTimeout(() => { if (my === panelSeq && dlg && dlg.open) openBookPanel(c); }, 4000);
     }
-    actions.append(el("button", { class: "btn soft", onclick: () => removeBook(mine) }, "Remove"));
+    actions.append(el("button", { class: "btn soft", onclick: () => removeBook(mine) }, "Remove"), ...bookNotify(c));
     hideOn();
     if (mine.problem) { const list = el("section", { class: "read-sources" }); body.append(list); bookCopies(c, list, el("button", {}, "x"), my); }
     return;
   }
   const find = el("button", { class: "btn primary" }, icon(ICON.download), "Find copies");
-  actions.append(find, listButton(c));
+  actions.append(find, listButton(c), ...bookNotify(c));
   hideOn();
   const list = el("section", { class: "read-sources" });
   body.prepend(list);
   find.addEventListener("click", () => bookCopies(c, list, find, my));
+}
+
+/** Notify me for a light novel's new volumes, or a book author's new books (notify.js). */
+function bookNotify(c) {
+  if (!c.anilist && !c.author) return [];
+  return notifyButton({ book: { title: c.title, author: c.author || null, cover: c.cover || null, anilist: c.anilist || null } }, c.anilist ? "Notify me of new volumes" : "Notify me of new books");
 }
 
 async function bookCopies(c, list, btn, my) {
@@ -1505,7 +1572,7 @@ async function bookCopies(c, list, btn, my) {
   catch (e) { if (my !== panelSeq) return; list.replaceChildren(note(String(e))); btn.disabled = false; return; }
   if (my !== panelSeq) return;
   btn.remove();
-  if (!found.length) { list.replaceChildren(note("No copy of this book was found. Try again another day, or search with another title.")); return; }
+  if (!found.length) { list.replaceChildren(note(`No copy of this ${isComic(c) ? "comic" : "book"} was found. Try again another day, or search with another title.`)); return; }
   const mb = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
   list.replaceChildren(el("div", { class: "read-sources-head" }, el("h3", { text: "Pick a copy" })),
     ...found.slice(0, 8).map((x, i) => {
@@ -1516,13 +1583,13 @@ async function bookCopies(c, list, btn, my) {
         catch (e) { toast(String(e), true); go.disabled = false; }
       });
       return el("div", { class: "read-source" + (i === 0 ? " best" : "") },
-        el("div", { class: "read-source-text" }, el("strong", { text: (x.format || "ebook").toUpperCase() }), i === 0 ? el("span", { class: "read-best", text: "Best" }) : null,
+        el("div", { class: "read-source-text" }, el("strong", { text: (x.format || (isComic(c) ? "comic" : "ebook")).toUpperCase() }), i === 0 ? el("span", { class: "read-best", text: "Best" }) : null,
           el("small", { text: `${mb(x.size)} · ${x.seeders} sharing · ${x.indexer}` }), el("small", { class: "read-alt", text: x.title })), go);
     }));
 }
 
 async function removeBook(x) {
-  if (!(await ask(`Remove ${x.title}?`, "The book's file is deleted from your PC. You can download it again.", [], "Remove", "Cancel"))) return;
+  if (!(await ask(`Remove ${x.title}?`, `The ${x.comic ? "comic" : "book"}'s file is deleted from your PC. You can download it again.`, [], "Remove", "Cancel"))) return;
   try { toast(await invoke("read_book_remove", { key: x.key })); if (dlg) dlg.close(); window.dispatchEvent(new Event("chillarr:refresh")); }
   catch (e) { toast(String(e), true); }
 }

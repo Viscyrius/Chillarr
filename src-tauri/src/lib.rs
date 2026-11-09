@@ -1,4 +1,5 @@
 mod arr;
+mod week;
 mod downloads_home;
 mod zipread;
 mod read_core;
@@ -38,6 +39,7 @@ mod night;
 mod search_tap;
 mod sharpen;
 mod keepup;
+mod notify;
 mod procs;
 mod qbit;
 mod settings;
@@ -191,6 +193,12 @@ async fn media_connect(app: AppHandle, user: String, password: String) -> Result
 #[tauri::command]
 fn media_sign_out(app: AppHandle) {
     media::sign_out(&app)
+}
+
+/// Your week (Classic style): your series and anime by the day they air.
+#[tauri::command]
+async fn watch_week(app: AppHandle) -> Result<Vec<week::WeekShow>, String> {
+    week::list(&app).await
 }
 
 #[tauri::command]
@@ -602,8 +610,8 @@ async fn media_downloads(app: AppHandle) -> Vec<waiting::Download> {
 }
 
 #[tauri::command]
-async fn media_stop_download(app: AppHandle, which: String, download_id: String) -> Result<String, String> {
-    waiting::stop_download(&app, &which, &download_id).await
+async fn media_stop_download(app: AppHandle, which: String, download_id: String, whole: Option<bool>) -> Result<String, String> {
+    waiting::stop_download(&app, &which, &download_id, whole.unwrap_or(false)).await
 }
 
 #[tauri::command]
@@ -737,6 +745,20 @@ async fn read_explore(app: AppHandle, e: read::Explore) -> Result<serde_json::Va
     read::explore(&app, &e).await
 }
 
+/// The details under a series' or book's description (AniList or Open Library).
+#[tauri::command]
+async fn read_about(anilist: Option<i64>, olid: Option<String>) -> Result<Vec<(String, String)>, String> {
+    read_about_any(anilist, olid).await
+}
+
+pub(crate) async fn read_about_any(anilist: Option<i64>, olid: Option<String>) -> Result<Vec<(String, String)>, String> {
+    match (anilist, olid) {
+        (Some(id), _) if id > 0 => read::about(id).await,
+        (_, Some(o)) => books::about(&o).await,
+        _ => Ok(vec![]),
+    }
+}
+
 #[tauri::command]
 async fn read_similar(app: AppHandle, anilist: i64) -> Result<Vec<serde_json::Value>, String> {
     read::similar(&app, anilist).await
@@ -796,6 +818,26 @@ fn hidden_unlock(app: AppHandle, password: String) -> Result<(), String> {
 #[tauri::command]
 fn hidden_lock(app: AppHandle) -> Result<(), String> {
     hidden::lock(&app)
+}
+
+#[tauri::command]
+fn notify_state(app: AppHandle, target: notify::Target) -> Result<notify::State, String> {
+    notify::state(&app, &target)
+}
+
+#[tauri::command]
+fn notify_set(app: AppHandle, target: notify::Target, on: bool, auto: Option<bool>) -> Result<String, String> {
+    notify::set(&app, &target, on, auto.unwrap_or(false))
+}
+
+#[tauri::command]
+fn notify_list(app: AppHandle) -> Result<Vec<notify::Watch>, String> {
+    notify::list(&app)
+}
+
+#[tauri::command]
+fn notify_unseen(app: AppHandle) -> Result<Vec<notify::Note>, String> {
+    notify::unseen(&app)
 }
 
 #[tauri::command]
@@ -860,6 +902,16 @@ async fn read_book_more(id: String, page: u32) -> Result<serde_json::Value, Stri
 #[tauri::command]
 async fn read_book_search(term: String) -> Result<Vec<serde_json::Value>, String> {
     books::search(&term).await
+}
+
+#[tauri::command]
+async fn read_comic_rows() -> Vec<serde_json::Value> {
+    books::comic_rows_now().await
+}
+
+#[tauri::command]
+async fn read_comic_search(term: String) -> Result<Vec<serde_json::Value>, String> {
+    books::search_comics(&term).await
 }
 
 #[tauri::command]
@@ -1180,6 +1232,10 @@ pub fn run() {
             hidden_unlock,
             hidden_lock,
             hidden_set,
+            notify_state,
+            notify_set,
+            notify_list,
+            notify_unseen,
             hidden_list,
             read_mark,
             read_folder,
@@ -1195,6 +1251,7 @@ pub fn run() {
             read_genres,
             read_filter_info,
             read_similar,
+            read_about,
             read_downloads,
             read_book_rows,
             read_book_more,
@@ -1205,6 +1262,8 @@ pub fn run() {
             readparty_move,
             readparty_leave,
             read_book_search,
+            read_comic_rows,
+            read_comic_search,
             read_book_copies,
             read_book_get,
             read_book_remove,
@@ -1230,6 +1289,7 @@ pub fn run() {
             media_connect,
             media_sign_out,
             media_rows,
+            watch_week,
             media_episodes,
             media_search,
             media_search_live,
@@ -1407,6 +1467,7 @@ pub fn run() {
             limit::spawn(app.handle().clone());
             sharpen::spawn(app.handle().clone());
             keepup::spawn(app.handle().clone());
+            notify::spawn(app.handle().clone());
             indexers::spawn(app.handle().clone());
             subfetch::spawn(app.handle().clone());
             search_tap::spawn(app.handle().clone());
