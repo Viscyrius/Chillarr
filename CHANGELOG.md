@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.16.0 (2026-11-09)
+- Fixed: adding some chapters of a finished series with "Also get new chapters" on downloaded the whole rest of the series (picking 1 to 100 of Noblesse queued all 545). New chapters now means chapters the site posts after you follow a series.
+- Reading: one button, Get new chapters, in place of Follow and Keep up to date. When it's on, new chapters are checked every few minutes and download with a note. Adding a series now gets only what you picked unless you tick "Also get new chapters".
+- New: Notify me on any film, series, anime, light novel or book, even ones not out yet. You get a note when it comes out (a film at home, a new episode or season, a new volume, an author's new book), on the PC, phones and the TV. Turn on Get it too to download it as soon as it's out.
+- New: comics and graphic novels in Books. Rows for popular, new, superheroes, Marvel, DC, Image and Dark Horse, search, and reading in the reader with your place kept.
+- New: click a director's, creator's or author's name to see everything they made, ready to get, watch or read.
+- New: Your week in the Classic style for series and anime: your shows by the day their episodes come out, with UP on today's.
+- Movies, Series and Anime filters now look and work like the Books filters. 18+ is Not included, Included or Only 18+, and porn is its own choice under it (anime and reading). R and NC-17 films and ecchi titles stay out until 18+ is on, or until you pick them directly.
+- Watch together and Read Party: the host can lock a party or give it a password, remove someone (they can't rejoin for 10 minutes), hand over host, and turn on Only I control. Read Party has Follow me, where everyone follows the host's scroll, and Free, with a Jump to the host button.
+- Book and manga pages list their details under the description: genres, author and artist, status, chapters, volumes, the latest chapter and when it came out.
+- My List is one row in Movies and Reading, with Show all to open it.
+- Stop on a series or anime asks whether to stop the whole series or just this download. The whole series stops every episode and nothing more is fetched.
+
 ## 0.15.1 (2026-11-08)
 - Fixed: manga only searched a few sites. Every big manga site (Weeb Central, MangaDex, Mangakakalot, MangaFire and more) was being skipped as 18+ because it carries some adult titles, so only MANGA Plus and the manhua sites were asked. Black Clover showed 6 chapters and Darling in the Franxx none; now 16 sites have all 392 of Black Clover, 15 have Darling in the Franxx, and One Piece has all 1198. Only sites that are entirely 18+ wait for an 18+ search.
 - Fixed: a sharp copy with chapters missing in the middle now gets them filled in from the fullest copy.
