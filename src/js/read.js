@@ -484,8 +484,8 @@ function rankRow(c, i) {
   return markHidden(b, c);
 }
 
-/** Tabs that swap a list: [[label, loader]], each loader returning cards. */
-function tabbed(cls, tabs, draw) {
+/** Tabs that swap a list: [[label, loader]], each loader returning cards. Watching's Your week uses it too. */
+export function tabbed(cls, tabs, draw) {
   const head = el("div", { class: "tabbed-tabs", role: "tablist" });
   const body = el("div", { class: "tabbed-body" });
   const cache = new Map();

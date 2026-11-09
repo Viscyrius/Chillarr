@@ -1,4 +1,5 @@
 mod arr;
+mod week;
 mod downloads_home;
 mod zipread;
 mod read_core;
@@ -191,6 +192,12 @@ async fn media_connect(app: AppHandle, user: String, password: String) -> Result
 #[tauri::command]
 fn media_sign_out(app: AppHandle) {
     media::sign_out(&app)
+}
+
+/// Your week (Classic style): your series and anime by the day they air.
+#[tauri::command]
+async fn watch_week(app: AppHandle) -> Result<Vec<week::WeekShow>, String> {
+    week::list(&app).await
 }
 
 #[tauri::command]
@@ -1230,6 +1237,7 @@ pub fn run() {
             media_connect,
             media_sign_out,
             media_rows,
+            watch_week,
             media_episodes,
             media_search,
             media_search_live,

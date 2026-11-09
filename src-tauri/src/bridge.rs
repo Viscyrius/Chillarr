@@ -296,7 +296,7 @@ fn open_while_locked(cmd: &str) -> bool {
 
 fn need(cmd: &str) -> Option<Need> {
     Some(match cmd {
-        "web_viewer" | "media_status" | "media_rows" | "media_episodes" | "media_search" | "media_search_live" | "media_play" | "media_report" | "media_forget_resume" | "media_get" | "media_get_picked" | "media_seasons" | "media_trailer"
+        "web_viewer" | "media_status" | "media_rows" | "watch_week" | "media_episodes" | "media_search" | "media_search_live" | "media_play" | "media_report" | "media_forget_resume" | "media_get" | "media_get_picked" | "media_seasons" | "media_trailer"
         | "media_explore" | "media_filter" | "media_filter_genres" | "media_filter_studios" | "media_anime_tags" | "media_details" | "media_similar" | "media_my_list" | "media_my_list_marks" | "media_completed"
         | "media_watched_keys" | "completed_remove" | "media_show_episodes" | "marker_set" | "marker_restart" | "media_set_watched" | "media_segments" | "subs_search" | "subs_download" | "subs_sync" | "subs_choice" | "subs_set"
         | "media_waiting" | "media_downloads" | "watchnow_start" | "watchnow_leave" | "watchnow_cancel" | "watchnow_progress" | "watchnow_list" | "watchnow_ready" | "night_prepare" | "syncplay_info" | "syncplay_call" | "syncplay_tile" | "syncplay_say"
@@ -380,6 +380,7 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
             ok(st)
         }
         "media_rows" => res(media::rows(app, &arg::<String>(a, "tab")?).await),
+        "watch_week" => res(crate::week::list(app).await),
         "read_rows" => res(crate::read::rows(app).await),
         "read_book_rows" => ok(crate::books::rows().await),
         "readparty_start" => res(crate::readparty::start(app, &arg::<String>(a, "key")?, arg(a, "chapter")?, arg(a, "page")?)),
