@@ -2107,7 +2107,17 @@ html.tv .week-hide, .week-hide:focus-visible { opacity: 1; }
   .reader:not(.book) .rd-mode-one { display: inline-block; flex: 0 0 auto; }
   .rd-zoom { order: 4; }
   .reader.book .rd-modes { order: 3; flex: 1 1 100%; justify-content: center; }
-  .rd-ch { padding: 0 10px; font-size: 12px; }
+  .rd-ch { padding: 0 10px; font-size: 12px; flex: 0 0 auto; }
+  .rd-ch-long { display: none; }
+  .rd-slider { min-width: 0; }
+  .rd-bar { gap: 8px; padding: 8px 10px; }
+  html.no-flexgap .rd-bar > * + * { margin-left: 8px; }
+  /* Top bar on phones: back, title, page count and buttons on one line;
+     direction and zoom centred on the line under it. */
+  .rd-top::after { content: ""; order: 2; flex-basis: 100%; height: 0; }
+  .reader:not(.book) .rd-mode-one { order: 3; margin-left: auto; }
+  .rd-zoom { order: 4; margin-right: auto; }
+  .rd-count { min-width: 0; }
   .read-source { flex-wrap: wrap; }
   .read-q { order: 3; flex-basis: 100%; }
 }
