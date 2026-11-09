@@ -462,7 +462,7 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
         "media_filter_studios" => ok(media::filter_studios(app, &arg::<String>(a, "kind")?)),
         "media_anime_tags" => res(media::anime_tags().await),
         "media_details" => ok(details::details(app, &arg::<Tile>(a, "tile")?).await),
-        "media_maker" => res(crate::makers::works(app, &arg::<String>(a, "id")?).await),
+        "media_maker" => res(crate::makers::works(app, &arg::<String>(a, "id")?, arg::<Option<bool>>(a, "adult")?.unwrap_or(false)).await),
         "media_similar" => ok(similar::similar(app, &arg::<Tile>(a, "tile")?).await),
         "media_my_list" => res(media::toggle_my_list(app, arg(a, "tile")?, arg(a, "on")?).await),
         "media_my_list_marks" => ok(media::my_list_marks(app).await),

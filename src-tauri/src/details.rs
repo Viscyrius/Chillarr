@@ -141,7 +141,8 @@ async fn show(tvdb: i64) -> Option<Details> {
     }));
     push(&mut d.facts, "First aired", date(&s["firstAired"]));
     push(&mut d.facts, "Last aired", date(&s["lastAired"]));
-    let made = crate::makers::show_creators(tvdb).await;
+    // A slow TVmaze must not hold up the page: the names are left out after 4 s.
+    let made = tokio::time::timeout(std::time::Duration::from_secs(4), crate::makers::show_creators(tvdb)).await.unwrap_or_default();
     if !made.is_empty() {
         d.crew.push(("Created by".into(), made.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>().join(", ")));
         d.makers.extend(made.into_iter().map(|(name, id)| Maker { job: "Created by".into(), name, id: format!("tvmaze:{id}") }));

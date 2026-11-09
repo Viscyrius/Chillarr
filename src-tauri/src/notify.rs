@@ -434,9 +434,12 @@ async fn get_it(app: &AppHandle, w: &Watch, news: &News) -> Result<String, Strin
             let mut said = Vec::new();
             for (key, title, cover) in books.iter().take(3) {
                 let meta = crate::books::BookMeta { title: title.clone(), author: Some(w.title.clone()), cover: cover.clone(), description: None, olid: Some(key.clone()), anilist: None, comic: false };
-                let found = crate::books::copies(app, &meta).await?;
+                // One book failing doesn't stop the others.
+                let Ok(found) = crate::books::copies(app, &meta).await else { continue };
                 let Some(best) = found.first() else { continue };
-                said.push(crate::books::get(app, meta, &best.id).await?);
+                if let Ok(m) = crate::books::get(app, meta, &best.id).await {
+                    said.push(m);
+                }
             }
             if said.is_empty() { Err("No copy was found yet.".into()) } else { Ok(said.join(" ")) }
         }

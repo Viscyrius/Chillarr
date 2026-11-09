@@ -1339,11 +1339,13 @@ pub async fn fetch_new(app: &AppHandle) {
         // Deleted by hand counts like read: it was let go on purpose.
         let read_by_someone = |id: i64| f.removed.contains(&id) || profiles.iter().filter_map(|p| p.get(&f.key)).any(|s| s.read.contains_key(&id));
         let want = new_wanted(&chs, &queued, &read_by_someone, f.from, mark);
-        if let Some(t) = top.filter(|&t| t > mark) {
-            update_followed(app, &f.key, |x| x.known_upto = Some(t));
-        }
-        if !want.is_empty() && crate::suwayomi::enqueue(&want).await.is_ok() {
+        // The mark moves only once what's new is queued: a failed queue is tried again next round.
+        let queued_ok = want.is_empty() || crate::suwayomi::enqueue(&want).await.is_ok();
+        if !want.is_empty() && queued_ok {
             crate::log::log(app, crate::model::Level::Ok, format!("Getting {} new chapter(s) of {}.", want.len(), f.title));
+        }
+        if let Some(t) = top.filter(|&t| t > mark && queued_ok) {
+            update_followed(app, &f.key, |x| x.known_upto = Some(t));
         }
     }
 }

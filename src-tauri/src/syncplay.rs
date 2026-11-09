@@ -76,9 +76,21 @@ fn enc(s: &str) -> String {
 /// `%`, `?`, `#` or `\`, so URL normalising can't turn it into another path
 /// (`/SyncPlay/%2e%2e/Users/New` reached /Users/New).
 fn allowed(path: &str) -> bool {
-    path == "/GetUtcTime"
-        || path == "/Sessions/Capabilities/Full"
-        || path.strip_prefix("/SyncPlay/").is_some_and(|rest| !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_alphanumeric()))
+    canonical(path).is_some()
+}
+
+/// The calls the pages make, spelled one way. Jellyfin's routes ignore case,
+/// so `/SyncPlay/join` must not get past the Join and host checks: a path is
+/// matched here without case and only this spelling goes on.
+const CALLS: [&str; 22] = [
+    "/GetUtcTime", "/Sessions/Capabilities/Full", "/SyncPlay/List", "/SyncPlay/New", "/SyncPlay/Join", "/SyncPlay/Leave",
+    "/SyncPlay/Ready", "/SyncPlay/Buffering", "/SyncPlay/Ping", "/SyncPlay/Pause", "/SyncPlay/Unpause", "/SyncPlay/Seek",
+    "/SyncPlay/Stop", "/SyncPlay/SetNewQueue", "/SyncPlay/NextItem", "/SyncPlay/PreviousItem", "/SyncPlay/SetPlaylistItem",
+    "/SyncPlay/Queue", "/SyncPlay/RemoveFromPlaylist", "/SyncPlay/MovePlaylistItem", "/SyncPlay/SetRepeatMode", "/SyncPlay/SetShuffleMode",
+];
+
+fn canonical(path: &str) -> Option<&'static str> {
+    CALLS.iter().copied().find(|c| c.eq_ignore_ascii_case(path))
 }
 
 /// The calls that move the party for everyone: only the host's go through
@@ -92,9 +104,9 @@ fn moves_party(path: &str) -> bool {
 
 /// One SyncPlay REST call. Empty answers come back as null.
 pub async fn call(app: &AppHandle, method: &str, path: &str, body: Option<Value>) -> Result<Value, String> {
-    if !allowed(path) {
+    let Some(path) = canonical(path) else {
         return Err("Not a SyncPlay call.".into());
-    }
+    };
     // Joining is checked against the host's lock first (`join`).
     if path == "/SyncPlay/Join" {
         return Err("Join a party from Watch together.".into());
@@ -505,6 +517,13 @@ pub async fn seen(app: &AppHandle, group: &str, name: &str) -> Result<(), String
     if !rooms().lock().unwrap().get(group).is_some_and(|r| r.has(&me)) {
         return Ok(());
     }
+    // Only someone Jellyfin really has in this party: a member can't name
+    // anyone they like to put them out or add them (as `gone` checks too).
+    let list = raw(app, "GET", "/SyncPlay/List", None).await?;
+    let there = list.as_array().into_iter().flatten().filter(|g| g["GroupId"].as_str() == Some(group)).flat_map(|g| g["Participants"].as_array().cloned().unwrap_or_default()).any(|p| p.as_str().is_some_and(|p| p.eq_ignore_ascii_case(name)));
+    if !there {
+        return Ok(());
+    }
     let uid = id_of(&user_ids(app).await, name).ok_or("No such user.")?;
     let out = {
         let mut all = rooms().lock().unwrap();
@@ -553,6 +572,15 @@ pub async fn gone(app: &AppHandle, group: &str, name: &str) -> Result<(), String
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn any_case_is_one_spelling() {
+        assert_eq!(canonical("/SyncPlay/join"), Some("/SyncPlay/Join"));
+        assert_eq!(canonical("/syncplay/PAUSE"), Some("/SyncPlay/Pause"));
+        assert!(moves_party(canonical("/SyncPlay/seek").unwrap()));
+        assert_eq!(canonical("/SyncPlay/%2e%2e/Users/New"), None);
+        assert_eq!(canonical("/SyncPlay/Whatever"), None);
+    }
 
     #[test]
     fn joining_and_host_moves_go_through_chillarr() {

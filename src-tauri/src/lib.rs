@@ -531,8 +531,8 @@ async fn media_details(app: AppHandle, tile: tiles::Tile) -> details::Details {
 
 /// Everything one director, creator or anime staff member made.
 #[tauri::command]
-async fn media_maker(app: AppHandle, id: String) -> Result<Vec<tiles::Tile>, String> {
-    makers::works(&app, &id).await
+async fn media_maker(app: AppHandle, id: String, adult: Option<bool>) -> Result<Vec<tiles::Tile>, String> {
+    makers::works(&app, &id, adult.unwrap_or(false)).await
 }
 
 #[tauri::command]
