@@ -241,7 +241,7 @@ fn dedup(v: Vec<Value>) -> Vec<Value> {
     v.into_iter().filter(|x| seen.insert(x["infoHash"].as_str().map(str::to_lowercase).unwrap_or_else(|| format!("{}|{}", x["indexer"], x["title"])))).collect()
 }
 
-fn enc(s: &str) -> String {
+pub(crate) fn enc(s: &str) -> String {
     s.bytes().map(|b| if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") }).collect()
 }
 
@@ -519,7 +519,7 @@ fn ol_card(title: &str, authors: Vec<String>, cover: Option<i64>, year: Option<i
     })
 }
 
-async fn ol_get(url: &str) -> Result<Value, String> {
+pub(crate) async fn ol_get(url: &str) -> Result<Value, String> {
     reqwest::Client::builder()
         .user_agent("Chillarr (https://github.com/Viscyrius/Chillarr)")
         .timeout(std::time::Duration::from_secs(20))

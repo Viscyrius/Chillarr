@@ -5,6 +5,7 @@ import { canWatchNow, isWatchNow, movieLike, play, removeWatchNow, startEpisode,
 import { completedActions, confirmRedownload, isWatched, listable, loadWatched, onMyList, removeContinue, resumable, setMyList } from "./mylist.js";
 import { subtitlesControl } from "./subpick.js";
 import { commentsBox, loadComments } from "./comments.js";
+import { notifyButton } from "./notify.js";
 
 const dlg = $("#detail");
 const shut = () => {
@@ -905,6 +906,8 @@ export async function openDetail(t, opts = {}) {
   if (t.completed) completedBits(t, actions);
   if (opts.episodes) showEpisodes(seq);
   else if (listable(t) && !watching) actions.append(myListButton(t));
+  // Notify me: a film not here yet, or any show (its new episodes and seasons).
+  if (!opts.episodes && !watching && t.kind !== "episode" && !(t.jf_id && movieLike(t))) actions.append(...notifyButton({ tile: t }));
   actions.append(hideButton(t.subtitle && t.kind === "episode" ? t.title : t.title, () => shut(), t));
   if (t.jf_id && t.kind !== "episode" && !watching) actions.append(subtitlesControl(t).el, canDelete() ? deleteButton(t) : null);
   if (started && seq === openSeq) {

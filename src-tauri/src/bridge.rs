@@ -315,6 +315,8 @@ fn need(cmd: &str) -> Option<Need> {
         | "read_rows" | "read_search" | "read_library" | "read_detail" | "read_sources" | "read_follow" | "read_open" | "read_progress" | "read_mode" | "read_hide_week" | "read_mark"
         // Each profile's own hidden list and password (hidden.rs).
         | "hidden_status" | "hidden_set_password" | "hidden_unlock" | "hidden_lock" | "hidden_set" | "hidden_list"
+        // Each profile's own Notify me list and notes (notify.rs).
+        | "notify_state" | "notify_set" | "notify_list" | "notify_unseen"
         | "readparty_start" | "readparty_join" | "readparty_state" | "readparty_move" | "readparty_leave"
         | "read_book_rows" | "read_book_more" | "read_book_search" | "read_book_copies" | "read_book_get" | "read_books" | "read_book_open"
         | "read_languages" | "read_copy_chapters" | "read_get_chapters" | "read_keep_up" | "read_list" | "read_list_set" | "read_explore" | "read_genres" | "read_filter_info" | "read_similar" | "read_downloads"
@@ -426,6 +428,10 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
         "hidden_lock" => res(crate::hidden::lock(app)),
         "hidden_set" => res(crate::hidden::set(app, &arg::<Vec<String>>(a, "keys")?, arg(a, "hide")?, arg::<Option<String>>(a, "label")?.as_deref())),
         "hidden_list" => res(crate::hidden::list(app)),
+        "notify_state" => res(crate::notify::state(app, &arg(a, "target")?)),
+        "notify_set" => res(crate::notify::set(app, &arg(a, "target")?, arg(a, "on")?, arg::<Option<bool>>(a, "auto")?.unwrap_or(false))),
+        "notify_list" => res(crate::notify::list(app)),
+        "notify_unseen" => res(crate::notify::unseen(app)),
         "read_mark" => res(crate::read::mark(app, &arg::<String>(a, "key")?, &arg::<Vec<i64>>(a, "chapters")?, arg(a, "read")?).await),
         "media_episodes" => ok(media::episodes(app, &arg::<String>(a, "seriesId")?).await),
         "media_search" => ok(media::search(app, &arg::<String>(a, "term")?).await),
