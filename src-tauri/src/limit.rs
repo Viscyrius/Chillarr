@@ -1,4 +1,4 @@
-//! Limit downloads: everything qBittorrent is doing together stays within 10% of
+//! Limit downloads: everything qBittorrent is doing together stays within 20% of
 //! the internet connection, so friends' downloads don't get in the way of a game
 //! on this PC. Upload too, since a full upload is what lag usually comes from.
 //!
@@ -7,7 +7,7 @@
 //!
 //! qBittorrent has one overall limit and can't let a single torrent past it, so
 //! "what I start here ignores the limit" can't be done with that alone. Each
-//! limited torrent gets its own share of the 10% instead, worked out again every
+//! limited torrent gets its own share of the 20% instead, worked out again every
 //! few seconds. The overall limit is on as well while nothing is exempt: it holds
 //! exactly, and it covers a torrent added between two rounds.
 
@@ -18,7 +18,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 use tauri::{AppHandle, Manager};
 
-const PERCENT: u64 = 10;
+const PERCENT: u64 = 20;
 /// Never so low that a download looks dead on a slow line, in bytes a second.
 const LEAST: u64 = 32 * 1024;
 const EVERY: Duration = Duration::from_secs(3);
@@ -432,7 +432,7 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn ten_percent_is_shared_and_never_passed() {
+    fn the_budget_is_shared_and_never_passed() {
         let cap = 1_000_000;
         for speeds in [vec![0; 10], vec![900_000; 10], vec![10, 20, 900_000], vec![500_000], vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]] {
             let out = share_out(cap, &speeds);
@@ -485,7 +485,7 @@ mod tests {
     #[test]
     fn speeds_go_both_ways() {
         assert_eq!(mbps(from_mbps(100.0)), 100.0);
-        assert_eq!(cap_of(from_mbps(100.0)), 1_250_000);
+        assert_eq!(cap_of(from_mbps(100.0)), 2_500_000, "20% of 100 Mbps");
         assert_eq!(cap_of(0), LEAST);
         assert_eq!(from_mbps(f64::NAN), 0);
         assert_eq!(from_mbps(-1.0), 0);

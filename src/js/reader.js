@@ -53,6 +53,8 @@ export async function openReader(key, chapter, onClose = null) {
   } catch (e) {
     base = null;
     toast(String(e), true);
+    // Nothing opened: whatever closed for it (the series panel) comes back.
+    if (!r) onClose?.();
     return;
   }
   if (!r) build(onClose);
@@ -630,17 +632,25 @@ function step(dir) {
   goTo(r.spreads[next][0], true, dir);
 }
 
+// One chapter change at a time: pressing Next twice (or the end card's
+// auto-advance plus a click) used to load the same chapter twice, and Next
+// then Previous could land in the wrong order.
+let jumping = false;
 async function jumpChapter(dir, toEnd = false) {
   if (partyFollowing()) { partyNudge(); return; }
+  if (jumping) return;
   const id = dir > 0 ? r.o.next : r.o.prev;
   if (id == null) return;
+  jumping = true;
   saveNow();
+  const was = r;
   try {
     const o = await invoke("read_open", { key: r.key, chapter: id });
-    if (!r) return;
+    if (!r || r !== was) return;
     if (toEnd) o.page = o.pages.length - 1;
     load(o, await bridgeBase());
   } catch (e) { toast(String(e), true); }
+  finally { jumping = false; }
 }
 
 /* ---------- input ---------- */

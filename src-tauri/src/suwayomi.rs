@@ -285,8 +285,10 @@ fn args(jar: &Path, data: &Path, comics: &Path, flare: &str, password: &str) -> 
     a
 }
 
+/// One client for every call, so its connections are kept and reused.
 fn http() -> reqwest::Client {
-    reqwest::Client::builder().timeout(Duration::from_secs(120)).build().unwrap_or_default()
+    static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    CLIENT.get_or_init(|| reqwest::Client::builder().timeout(Duration::from_secs(120)).build().unwrap_or_default()).clone()
 }
 
 /// One GraphQL call. An error list from the server is an error here.

@@ -4,6 +4,11 @@
 // rating up top; years, length, language, country, studio or network, age
 // rating, the anime parts and 18+ (anime only) under More filters. Kept per
 // profile and per type; results load as you scroll.
+//
+// They sit right on the Movies, Series and Anime tabs, like reading's tabs
+// (inlineFilters): the rows stay until a filter or another order is picked,
+// then the matching titles take their place on the same page. Home's Filters
+// chip and old links still open them as a page of their own (renderFilter).
 import { el, getPref, icon, ICON, invoke, setPref } from "./api.js";
 import { currentSeq, infiniteGrid, stopBrowse, swapIn } from "./browse.js";
 import { adultFields, chipKit, pornOn, clearButton, filtersButton, moreButton, orderSelect } from "./filterpanel.js";
@@ -67,16 +72,11 @@ function filterCount(f) {
     + !!f.owned + (f.adult && f.adult !== "hide" ? 1 : 0) + (pornOn(f) ? 1 : 0);
 }
 
-// The page's pending reload; one page at a time.
+// The pending reload of the filters on screen; one set at a time.
 let reloadTimer = null;
 
-export async function renderFilter(view, kind, start, mode = null, want = 0) {
-  stopBrowse();
-  clearTimeout(reloadTimer);
-  const drawSeq = currentSeq();
-  kind = KINDS.some(([k]) => k === kind) ? kind : "movie";
-  // A link that names filters (a genre link, Back) sets them; a bare one opens
-  // with this profile's last filters for this type.
+/** Starts a filter for `kind`: the one named in a link, or this profile's last. */
+function startFilter(kind, start) {
   const named = start && Object.keys(start).length;
   const saved = (() => { try { return JSON.parse(getPref(prefOf(kind)) || "{}"); } catch (e) { return {}; } })();
   const f = { ...BLANK, ...(named ? start : saved), kind };
@@ -86,44 +86,53 @@ export async function renderFilter(view, kind, start, mode = null, want = 0) {
   // Porn only for anime: the movie catalog has no porn flag.
   if (kind === "series") f.adult = "hide";
   if (kind !== "anime") f.porn = "hide";
+  return { f, named };
+}
 
-  const [genres, studios] = await Promise.all([invoke("media_filter_genres", { kind }).catch(() => []), studiosOf(kind)]);
-  // Another page was opened while these loaded.
-  if (drawSeq !== currentSeq()) return;
-  const page = el("div", { class: "fl fl-new enter" });
+/** True when the filter narrows or orders anything: then it has results to show. */
+const active = (f) => filterCount(f) > 0 || f.sort !== "popular";
+
+/**
+ * The Filters button, Order, the panel and the results for one type. `onChange`
+ * runs after every change; `load(upTo)` fills `results` from the start.
+ * `inline`: on a tab (no address change, never stops the tab's own timers).
+ */
+function buildFilter(kind, f, genres, studios, { inline = false, onChange = () => {} } = {}) {
   const panel = el("div", { class: "fl-bar read-fl" });
   const results = el("div", { class: "fl-results" });
-  const back = el("button", { class: "back-link", onclick: () => goBack() }, icon(ICON.left), "Back");
   const { button: toggle, count: showCount } = filtersButton(panel, "media-filters-open");
-  if (named) { panel.classList.remove("shut"); toggle.setAttribute("aria-expanded", "true"); }
   const order = orderSelect(SORTS, f.sort, (v) => change((x) => (x.sort = v), { now: true }));
-  const title = (KINDS.find(([k]) => k === kind) || KINDS[0])[1];
-  page.append(el("div", { class: "lib-head" }, el("div", {}, back, el("h1", { text: title })), el("div", { class: "read-filters" }, toggle, order)), panel, results);
-  // Coming back (browse.js swapIn), the old page stays up until this one has as many results as when you left.
-  if (!mode) view.replaceChildren(page);
-
   let moreOpen = false;
+  let loaded = null;
+
   /** Shows the change on the controls now and reloads the results a moment later (several clicks, one load). */
   function change(mut, { now = false } = {}) {
     mut(f);
     // The entry's own state stays: it is how Back finds where you were (place.js).
-    history.replaceState(history.state, "", linkOf(f));
+    if (!inline) history.replaceState(history.state, "", linkOf(f));
     setPref(prefOf(kind), JSON.stringify(trimmed(f)));
     drawPanel();
     clearTimeout(reloadTimer);
     // Not once you've left: its stopBrowse() would stop the new page's loading.
-    reloadTimer = setTimeout(() => { if (page.isConnected) loadResults(); }, now ? 0 : 250);
+    reloadTimer = setTimeout(() => {
+      if (!panel.isConnected) return;
+      // On a tab with nothing picked any more, the rows come back and nothing
+      // loads: a hidden grid would otherwise fetch the whole catalog.
+      if (inline && !active(f)) { results.replaceChildren(); loaded = null; } else load();
+      onChange(f);
+    }, now ? 0 : 250);
   }
   const kit = chipKit(f, change);
   const { triChip, oneOf, anyOf, field, row, years } = kit;
 
-  function loadResults(upTo = 0) {
-    stopBrowse();
+  function load(upTo = 0) {
+    if (!inline) stopBrowse();
     const seq = currentSeq();
     const snapshot = { ...f };
     const g = infiniteGrid(seq, (p) => invoke("media_filter", { filter: snapshot, page: p }),
       (n) => (n ? `That's all ${n}.` : f.owned ? "Nothing in your library matches." : "Nothing matches. Try taking a filter off."));
     results.replaceChildren(...g.nodes);
+    loaded = g;
     return g.fill(upTo);
   }
 
@@ -206,10 +215,73 @@ export async function renderFilter(view, kind, start, mode = null, want = 0) {
   }
 
   drawPanel();
-  if (!mode) { loadResults(); return; }
-  const loaded = loadResults(want);
+  /** Back to no filters and the usual order. */
+  const reset = () => change((x) => Object.assign(x, { ...BLANK, kind: x.kind }), { now: true });
+  return { toggle, order, panel, results, load, reset, count: () => (loaded ? loaded.count : 0) };
+}
+
+export async function renderFilter(view, kind, start, mode = null, want = 0) {
+  stopBrowse();
+  clearTimeout(reloadTimer);
+  const drawSeq = currentSeq();
+  kind = KINDS.some(([k]) => k === kind) ? kind : "movie";
+  const { f, named } = startFilter(kind, start);
+  const [genres, studios] = await Promise.all([invoke("media_filter_genres", { kind }).catch(() => []), studiosOf(kind)]);
+  // Another page was opened while these loaded.
+  if (drawSeq !== currentSeq()) return;
+  const b = buildFilter(kind, f, genres, studios);
+  if (named) { b.panel.classList.remove("shut"); b.toggle.setAttribute("aria-expanded", "true"); }
+  const back = el("button", { class: "back-link", onclick: () => goBack() }, icon(ICON.left), "Back");
+  const title = (KINDS.find(([k]) => k === kind) || KINDS[0])[1];
+  const page = el("div", { class: "fl fl-new enter" },
+    el("div", { class: "lib-head" }, el("div", {}, back, el("h1", { text: title })), el("div", { class: "read-filters" }, b.toggle, b.order)), b.panel, b.results);
+  // Coming back (browse.js swapIn), the old page stays up until this one has as many results as when you left.
+  if (!mode) { view.replaceChildren(page); b.load(); return; }
+  const loaded = b.load(want);
   const seq = currentSeq();
   await loaded;
   // The grid carries on loading by itself once it's on screen.
   if (seq === currentSeq()) swapIn(view, [page], mode);
+}
+
+/** Which filter type a tab has. */
+export const FILTER_KIND = { movies: "movie", series: "series", anime: "anime" };
+
+/**
+ * The filters on a Movies, Series or Anime tab, like reading's tabs: the
+ * Filters button and Order sit above the rows, the panel folds open under
+ * them, and once anything is picked the matching titles replace the rows
+ * (`box` gets "filtering"). Clear filters brings the rows back.
+ */
+export function inlineFilters(tab, box, chips = null) {
+  const kind = FILTER_KIND[tab];
+  if (!kind) return null;
+  const { f } = startFilter(kind, null);
+  const bar = el("div", { class: "fl-tab-bar" });
+  // The genre chips share the bar with Filters and Order (patchRows finds them there too).
+  const head = el("div", { class: "fl-tab-head" }, chips);
+  const note = el("div", { class: "fl-tab-note" });
+  const slot = el("div", { class: "fl-tab-results" });
+  const root = el("section", { class: "fl-tab", "aria-label": "Filters" }, head, bar, note, slot);
+  let built = null;
+  const show = (on) => {
+    box.classList.toggle("filtering", on);
+    note.replaceChildren(...(on ? [el("span", { text: "Showing what matches your filters." }),
+      el("button", { class: "linkish", onclick: () => built && built.reset() }, "Back to all rows")] : []));
+  };
+  Promise.all([invoke("media_filter_genres", { kind }).catch(() => []), studiosOf(kind)]).then(([genres, studios]) => {
+    built = buildFilter(kind, f, genres, studios, { inline: true, onChange: (x) => show(active(x)) });
+    head.replaceChildren(el("div", { class: "read-filters" }, built.toggle, built.order), ...(chips ? [chips] : []));
+    bar.replaceChildren(built.panel);
+    slot.replaceChildren(built.results);
+    show(active(f));
+    if (active(f)) built.load();
+  });
+  // A kept tab back on screen: its results are asked for again (the old ones stopped loading when it left).
+  root.resume = () => {
+    if (!built) return;
+    show(active(f));
+    if (active(f)) built.load(built.count()); else built.results.replaceChildren();
+  };
+  return root;
 }

@@ -855,7 +855,7 @@ function limitBox() {
     const on = el("input", { type: "checkbox", class: "switch" });
     on.checked = st.on;
     on.addEventListener("input", async () => {
-      // First time on: nothing to work 10% of yet.
+      // First time on: nothing to work the share out of yet.
       if (on.checked && !(st.down_mbps > 0 && st.up_mbps > 0)) { await measure(true); return; }
       push({ on: on.checked });
     });

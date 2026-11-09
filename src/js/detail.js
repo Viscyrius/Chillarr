@@ -634,6 +634,17 @@ async function loadDeletePicker(t, wholeDelete) {
     if (on) state.picked.set(s.number, new Set(s.episodes.map((e) => e.number))); else state.picked.delete(s.number);
     redraw();
   }
+  /** Shift and a click: every episode between the last one clicked and this one. */
+  function setRange(s, from, to, on) {
+    if (state.all) {
+      state.all = false;
+      seasons.forEach((x) => state.picked.set(x.number, new Set(x.episodes.map((e) => e.number))));
+    }
+    const set = state.picked.get(s.number) || new Set();
+    for (let i = Math.min(from, to); i <= Math.max(from, to); i++) { if (on) set.add(s.episodes[i].number); else set.delete(s.episodes[i].number); }
+    if (set.size) state.picked.set(s.number, set); else state.picked.delete(s.number);
+    redraw();
+  }
   function setEpisode(s, n, on) {
     if (state.all) {
       // Unticking one from the whole show: the rest stay picked.
@@ -660,16 +671,20 @@ async function loadDeletePicker(t, wholeDelete) {
     allBox.addEventListener("change", () => setSeason(s, allBox.checked));
     const top = el("label", { class: "ep-all" }, allBox, el("span", {}, el("b", { text: `All of ${name(s.number).toLowerCase()}` }), el("small", { text: `${s.episodes.length} on your PC` })));
     const keep = listView === s.number ? list.scrollTop : 0;
-    list.replaceChildren(...s.episodes.map((e) => {
+    list.replaceChildren(...s.episodes.map((e, i) => {
       const b = el("input", { type: "checkbox", checked: state.all || set.has(e.number) });
-      b.addEventListener("change", () => setEpisode(s, e.number, b.checked));
+      b.addEventListener("click", (ev) => {
+        if (ev.shiftKey && state.last && state.last.s === s.number) setRange(s, state.last.i, i, b.checked);
+        else setEpisode(s, e.number, b.checked);
+        state.last = { s: s.number, i };
+      });
       return el("li", {}, el("label", {}, b, el("span", { class: "n", text: `E${e.number}` }), el("span", { class: "t", text: e.title || `Episode ${e.number}` })));
     }));
     if (list.isConnected) panel.replaceChild(top, panel.firstElementChild); else panel.replaceChildren(top, list);
     list.scrollTop = keep;
     listView = s.number;
     const n = state.all ? total : count();
-    summary.textContent = state.all ? "Every episode, and the show leaves your library." : n ? `${n} episode${n === 1 ? "" : "s"} picked. They won't download again.` : "Tick the episodes to delete, or Whole show.";
+    summary.textContent = state.all ? "Every episode, and the show leaves your library." : n ? `${n} episode${n === 1 ? "" : "s"} picked. They won't download again.` : "Tick the episodes to delete, or Whole show. Shift and a click ticks a run of them.";
     go.textContent = state.all ? "Delete whole show" : n ? `Delete ${n} episode${n === 1 ? "" : "s"}` : "Delete";
     go.disabled = !state.all && !n;
   }

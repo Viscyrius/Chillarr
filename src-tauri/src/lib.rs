@@ -810,6 +810,24 @@ async fn read_similar(app: AppHandle, anilist: i64) -> Result<Vec<serde_json::Va
     read::similar(&app, anilist).await
 }
 
+/// Who wrote and drew a series, each with an id that opens everything they made.
+#[tauri::command]
+async fn read_makers(anilist: i64) -> Result<Vec<serde_json::Value>, String> {
+    read::makers(anilist).await
+}
+
+/// Everything one writer or artist made.
+#[tauri::command]
+async fn read_maker_works(app: AppHandle, staff: i64, adult: Option<bool>) -> Result<Vec<serde_json::Value>, String> {
+    read::maker_works(&app, staff, adult.unwrap_or(false)).await
+}
+
+/// Reading Home's rows made from what this profile reads.
+#[tauri::command]
+async fn read_for_you(app: AppHandle) -> Result<serde_json::Value, String> {
+    read::for_you(&app).await
+}
+
 /// Tags for More filters, and whether this profile may see 18+.
 #[tauri::command]
 fn read_filter_info(app: AppHandle) -> serde_json::Value {
@@ -1319,6 +1337,9 @@ pub fn run() {
             read_genres,
             read_filter_info,
             read_similar,
+            read_makers,
+            read_maker_works,
+            read_for_you,
             read_about,
             read_downloads,
             read_book_rows,

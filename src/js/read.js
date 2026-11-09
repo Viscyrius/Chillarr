@@ -6,7 +6,8 @@
 // complete copy, found by asking every source) or a copy of your choice,
 // then which chapters.
 import { hideButton, isHidden, markHidden } from "./hidden.js";
-import { ask, canDelete, el, expandRow, getPref, icon, ICON, invoke, setPref, toast } from "./api.js";
+import { ask, canDelete, choose, el, expandRow, getPref, icon, ICON, invoke, personKey, setPref, toast } from "./api.js";
+import { selectable, stopSelecting } from "./select.js";
 import { openReader } from "./reader.js";
 import { openBook } from "./bookreader.js";
 import { adultFields, chipKit, pornOn, clearButton, filtersButton, moreButton, orderSelect } from "./filterpanel.js";
@@ -200,6 +201,7 @@ function card(c, shelf = null) {
   b.addEventListener("mouseenter", () => pvSchedule(b, c, shelf));
   b.addEventListener("mouseleave", () => pvSoon());
   if (styleNow() === "classic" && c.kind !== "book" && c.kind !== "comic") classicCaption(b, c, shelf);
+  if (shelf) b._sel = shelf; // a series you follow can be picked with others (select.js)
   return markHidden(b, c, shelf);
 }
 
@@ -234,25 +236,129 @@ function bookCard(x) {
   const sub = x.problem ? "Needs a look" : !x.ready ? (x.progress != null ? `Downloading ${Math.round(x.progress * 100)}%` : "Starting") : done ? "Finished" : x.read > 0 ? `${Math.round(x.read * 100)}% read` : x.author || "";
   const b = el("button", { class: "tile", "aria-label": x.title }, box, el("div", { class: "cap" }, el("strong", { text: x.title }), sub ? ` · ${sub}` : ""));
   b.addEventListener("click", () => openBookPanel({ kind: x.comic ? "comic" : "book", title: x.title, author: x.author, cover: x.cover, description: x.description, olid: x.olid, anilist: x.anilist }, x));
+  b._sel = x;
   return markHidden(b, x);
+}
+
+/* ---------- several at once (select.js) ---------- */
+const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+/** Deletes the downloaded chapters of every series picked; they stay followed. */
+async function deleteSeriesDownloads(list) {
+  const plans = await Promise.all(list.map((s) => invoke("read_delete_plan", { key: s.key, ids: null }).then((p) => ({ s, p })).catch(() => null)));
+  const real = plans.filter((x) => x && x.p.chapters);
+  if (!real.length) { toast("None of those have chapters downloaded."); return false; }
+  const n = real.reduce((a, x) => a + x.p.chapters, 0);
+  const bytes = real.reduce((a, x) => a + (x.p.bytes || 0), 0);
+  const others = [...new Set(real.flatMap((x) => x.p.others || []))];
+  const body = others.length
+    ? `${others.join(", ")} also read${others.length === 1 ? "s" : ""} some of these. The files go for them too. You keep following them and can download the chapters again any time.`
+    : "You keep following them. The chapters can be downloaded again any time.";
+  if (!(await ask(`Delete ${plural(n, "chapter")} of ${plural(real.length, "series", "series")} (${bytesText(bytes)})?`, body, real.map((x) => x.s.title), "Delete", "Cancel"))) return false;
+  let ok = 0;
+  for (const x of real) {
+    try { await invoke("read_delete_chapters", { key: x.s.key, ids: null, othersOk: true }); ok++; } catch (e) { toast(`${x.s.title}: ${e}`, true); }
+  }
+  if (ok) toast(`Deleted the downloads of ${plural(ok, "series", "series")}.`);
+  window.dispatchEvent(new Event("chillarr:refresh"));
+  return ok > 0;
+}
+
+/** Stops following every series picked, after asking whether their chapters go too. */
+async function unfollowMany(list) {
+  if (!(await ask(`Stop following ${plural(list.length, "series", "series")}?`, "New chapters stop downloading for them.", list.map((s) => s.title), "Stop following", "Cancel"))) return false;
+  // Closing this question (Esc) stops nothing.
+  const pick = await choose("Delete their chapters too?", "Keep them to read later, or free the space now.", [], "Delete them", "Keep them");
+  if (pick == null) return false;
+  const del = pick === "yes";
+  toast(`Stopping ${plural(list.length, "series", "series")}...`);
+  let ok = 0;
+  for (const s of list) {
+    try { await invoke("read_unfollow", { key: s.key, delete: del }); ok++; followedByAnilist.delete(s.anilist); } catch (e) { toast(`${s.title}: ${e}`, true); }
+  }
+  if (ok) toast(`Stopped following ${plural(ok, "series", "series")}.`);
+  window.dispatchEvent(new Event("chillarr:refresh"));
+  return ok > 0;
+}
+
+/** Deletes the files of every book picked; they stay in the list as not downloaded. */
+async function deleteBookFiles(list) {
+  const ready = list.filter((x) => x.ready && !x.not_downloaded);
+  if (!ready.length) { toast("None of those have a file here yet."); return false; }
+  const bytes = ready.reduce((a, x) => a + (x.bytes || 0), 0);
+  if (!(await ask(`Delete the files of ${plural(ready.length, "book")}${bytes ? ` (${bytesText(bytes)})` : ""}?`,
+    "They stay in your list as not downloaded. You can download them again any time.", ready.map((x) => x.title), "Delete files", "Cancel"))) return false;
+  let ok = 0;
+  const shared = [];
+  for (const x of ready) {
+    try { await invoke("read_book_delete_file", { key: x.key, othersOk: false }); ok++; }
+    catch (e) { if (/still reads/.test(String(e))) shared.push(x); else toast(`${x.title}: ${e}`, true); }
+  }
+  if (shared.length && await ask(`Someone else still reads ${plural(shared.length, "of these", "of these")}`, "Their files go for them too. Delete them anyway?", shared.map((x) => x.title), "Delete files", "Keep those")) {
+    for (const x of shared) {
+      try { await invoke("read_book_delete_file", { key: x.key, othersOk: true }); ok++; } catch (e) { toast(`${x.title}: ${e}`, true); }
+    }
+  }
+  if (ok) toast(`Deleted the files of ${plural(ok, "book")}.`);
+  window.dispatchEvent(new Event("chillarr:refresh"));
+  return ok > 0;
+}
+
+/** Takes every book picked off your list, its file too. */
+async function removeBooks(list) {
+  if (!(await ask(`Remove ${plural(list.length, "book")}?`, "Their files are deleted from your PC. You can download them again.", list.map((x) => x.title), "Remove", "Cancel"))) return false;
+  let ok = 0;
+  for (const x of list) {
+    try { await invoke("read_book_remove", { key: x.key }); ok++; } catch (e) { toast(`${x.title}: ${e}`, true); }
+  }
+  if (ok) toast(`Removed ${plural(ok, "book")}.`);
+  window.dispatchEvent(new Event("chillarr:refresh"));
+  return ok > 0;
+}
+
+/** A Select button on a row of series you follow, or of your books. Only for those who may delete. */
+function withSelect(section, kind) {
+  if (!canDelete() || !section) return section;
+  const head = section.querySelector(".row-head");
+  const cardsOf = () => [...section.querySelectorAll(".tile")].map((n) => [n, n._sel]);
+  const actions = kind === "books"
+    ? [{ label: "Delete files", icon: TRASH, run: deleteBookFiles }, { label: "Remove", danger: true, run: removeBooks }]
+    : [{ label: "Delete downloads", icon: TRASH, run: deleteSeriesDownloads }, { label: "Stop following", danger: true, run: unfollowMany }];
+  head.append(selectable(section, cardsOf, actions));
+  return section;
 }
 
 /** Where a row's "Explore all" goes: every title in it, a page at a time (allPage). */
 const allHref = (id, title) => `#r-all/${encodeURIComponent(id)}/${encodeURIComponent(title)}`;
-const hasAll = (id) => id in ROW_EXPLORE || id.startsWith("books-") || id.startsWith("comics-");
+const hasAll = (id) => id in ROW_EXPLORE || /^(books-|comics-|foryou-|because-\d)/.test(id);
+/** Rows of your own that open a page of their own instead. */
+const ROW_HOME = { reading: "#r-mylist", finished: "#r-mylist", books: "#r-books" };
+
+/** A row whose covers all fit shows no arrows and doesn't scroll, like Movies'. */
+const fitsRO = typeof ResizeObserver === "function" ? new ResizeObserver((entries) => {
+  for (const e of entries) {
+    const t = e.target;
+    if (!t.isConnected) { fitsRO.unobserve(t); continue; }
+    t.parentElement.classList.toggle("fits", t.scrollWidth - t.clientWidth < 48);
+  }
+}) : null;
 
 function row(id, title, cards, allId = id) {
   const track = el("div", { class: "track" }, cards);
   const step = () => track.clientWidth * 0.85;
   // Like Movies: the title and "Explore all" open every title in the row.
-  const all = hasAll(allId) ? allHref(allId, title === "Top 10 today" ? "Trending now" : title) : null;
+  const all = hasAll(allId) ? allHref(allId, title === "Top 10 today" ? "Trending now" : title) : ROW_HOME[allId] || null;
+  const more = all && !hasAll(allId) ? "See all" : "Explore all";
+  const wrap = el("div", { class: "track-wrap" },
+    el("button", { class: "arrow prev", "aria-label": "Scroll left", onclick: () => track.scrollBy({ left: -step(), behavior: "smooth" }) }, icon(ICON.left)),
+    track,
+    el("button", { class: "arrow next", "aria-label": "Scroll right", onclick: () => track.scrollBy({ left: step(), behavior: "smooth" }) }, icon(ICON.right)));
+  fitsRO?.observe(track);
+  track.addEventListener("scroll", () => { if (pv) pvHide(true); }, { passive: true });
   return el("section", { class: "row", dataset: { row: id } },
     el("div", { class: "row-head" }, all ? el("a", { class: "row-title", href: all }, el("h2", { text: title })) : el("h2", { text: title }),
-      all ? el("a", { class: "explore", href: all }, "Explore all", icon(ICON.right)) : el("span", { class: "count", text: String(cards.length) })),
-    el("div", { class: "track-wrap" },
-      el("button", { class: "arrow prev", "aria-label": "Scroll left", onclick: () => track.scrollBy({ left: -step(), behavior: "smooth" }) }, icon(ICON.left)),
-      track,
-      el("button", { class: "arrow next", "aria-label": "Scroll right", onclick: () => track.scrollBy({ left: step(), behavior: "smooth" }) }, icon(ICON.right))));
+      all ? el("a", { class: "explore", href: all }, more, icon(ICON.right)) : el("span", { class: "count", text: String(cards.length) })),
+    wrap);
 }
 
 /** read.rs rows() as the same query for a whole page (read_explore). */
@@ -331,6 +437,7 @@ function freshSection(lib, cls = "") {
 /** Draws one reading tab: r-home, r-manga, r-manhwa, r-manhua, r-novels, r-books, r-mylist, r-downloads. */
 export async function renderRead(view, tab) {
   const my = ++seq;
+  stopSelecting();
   currentView = view;
   currentTab = tab;
   applyLook();
@@ -339,6 +446,7 @@ export async function renderRead(view, tab) {
   if (TAB_TITLE[tab]) return explorePage(view, tab, my);
   if (tab === "r-all") return allPage(view, my);
   if (tab === "r-author") return authorPage(view, my);
+  if (tab === "r-maker") return makerPage(view, my);
   if (tab === "r-books") return booksPage(view, my);
   if (tab === "r-mylist") return listPage(view, my);
   if (tab === "r-downloads") return downloadsPage(view, my);
@@ -346,6 +454,18 @@ export async function renderRead(view, tab) {
 }
 
 export const stopRead = () => { seq++; };
+
+/** Reading tabs that are one long grid from AniList or Open Library: what's
+ *  on them doesn't change when something happens elsewhere (a chapter read,
+ *  a download landing), and drawing them again lost your place far down. */
+const GRID_TABS = new Set(["r-manga", "r-manhwa", "r-manhua", "r-novels", "r-all", "r-author", "r-maker"]);
+
+/** The app-wide refresh on a reading tab. True when it was handled in place (no redraw). */
+export function softRefresh(tab) {
+  if (!GRID_TABS.has(tab) || currentTab !== tab) return false;
+  know().catch(() => {});
+  return true;
+}
 
 /* ---------- the big picture at the top ---------- */
 
@@ -466,7 +586,9 @@ function ago(ms) {
 /** Each followed series with its chapters (for updates and the week), newest first. */
 async function followedWithChapters(series) {
   // Hidden from the week by this profile: left out here (Your week, Latest updates).
-  series = series.filter((s) => !s.hide_week);
+  // The 16 that updated most lately: the list comes sorted by last read, so a
+  // series you haven't opened in a while but that updated today still makes it.
+  series = series.filter((s) => !s.hide_week).slice().sort((a, b) => (b.latest_at || 0) - (a.latest_at || 0));
   const got = await Promise.all(series.slice(0, 16).map((s) => invoke("read_detail", { key: s.key }).then((d) => ({ s, d })).catch(() => null)));
   return got.filter(Boolean).map(({ s, d }) => {
     const chs = d.chapters.filter((c) => c.downloaded || c.uploaded).slice().sort((a, b) => (b.number ?? 0) - (a.number ?? 0));
@@ -488,7 +610,7 @@ function rankRow(c, i) {
 }
 
 /** Tabs that swap a list: [[label, loader]], each loader returning cards. Watching's Your week uses it too. */
-export function tabbed(cls, tabs, draw) {
+export function tabbed(cls, tabs, draw, start = 0) {
   const head = el("div", { class: "tabbed-tabs", role: "tablist" });
   const body = el("div", { class: "tabbed-body" });
   const cache = new Map();
@@ -501,8 +623,8 @@ export function tabbed(cls, tabs, draw) {
     if (!first) body.classList.add("swap");
     let items = cache.get(i);
     if (!items) {
-      try { items = await tabs[i][1](); } catch (e) { items = []; }
-      cache.set(i, items);
+      // A failed load shows empty this time but is asked again next time.
+      try { items = await tabs[i][1](); cache.set(i, items); } catch (e) { items = []; }
     }
     await out;
     if (want !== i) return; // another tab was picked meanwhile
@@ -513,11 +635,23 @@ export function tabbed(cls, tabs, draw) {
     setTimeout(() => { body.style.minHeight = ""; }, 260);
   };
   head.append(...tabs.map(([label], i) => el("button", { role: "tab", onclick: () => pick(i) }, label)));
-  pick(0, true);
+  pick(Math.min(Math.max(0, start), tabs.length - 1), true);
   return el("div", { class: `tabbed ${cls}` }, head, body);
 }
 
-const exploreItems = (e) => invoke("read_explore", { e: { page: 1, ...e } }).then((g) => g.items || []);
+/** Short-lived answers, so going back and forth between tabs doesn't ask AniList again each time. */
+const recent = new Map();
+function remembered(key, life, ask) {
+  const hit = recent.get(key);
+  if (hit && performance.now() - hit.at < life) return hit.p;
+  const p = ask().catch((e) => { recent.delete(key); throw e; });
+  recent.set(key, { at: performance.now(), p });
+  if (recent.size > 60) recent.delete(recent.keys().next().value);
+  return p;
+}
+const exploreItems = (e) => remembered(`x:${JSON.stringify(e)}`, 10 * 60000, () => invoke("read_explore", { e: { page: 1, ...e } })).then((g) => g.items || []);
+/** Rows picked from what this profile reads (read.rs for_you); none on any failure. */
+const forYou = () => remembered(`fy:${personKey()}`, 5 * 60000, () => invoke("read_for_you")).catch(() => []);
 
 async function midnightHome(view, my) {
   const top = el("div", { class: "read-hero-slot" });
@@ -539,6 +673,7 @@ async function midnightHome(view, my) {
   ], (items) => items.map(rankRow)));
   popular.append(el("h2", { class: "mn-h", text: "Popular now" }), el("div", { class: "grid read-grid mn-grid" }, trending.slice(0, 18).map((c, i) => { const t = card(c); t.style.setProperty("--i", String(i)); t.classList.add("rise"); return t; })));
   rows.append(...got.filter((r) => r.items.length && r !== got.find((x) => x.id === "trending")).map((r) => row(r.id, r.title, r.items.map((c) => card(c)))));
+  forYou().then((fy) => { if (my === seq && fy.length) rows.prepend(...fy.map((r) => row(r.id, r.title, r.items.map((c) => card(c))))); });
   const freshMn = freshSection(series, "mn-fresh");
   if (freshMn) updates.before(freshMn);
   if (series.length) {
@@ -620,6 +755,15 @@ async function classicHome(view, my) {
     ["Popular", () => exploreItems({ kind: "all", sort: "popular" }).then((x) => x.slice(0, 10))],
     ["Top rated", () => exploreItems({ kind: "all", sort: "score" }).then((x) => x.slice(0, 10))],
   ], (items) => [el("div", { class: "cl-ranks" }, items.map(classicRank))]));
+  // Picked for you: one tab per row made from what you read.
+  forYou().then((fy) => {
+    if (my !== seq || !fy.length) return;
+    const short = (t) => t.replace(/^Because you read /, "Like ").replace(/^More (.+) for you$/, "$1");
+    byGenre.before(el("section", { class: "cl-block" }, el("h2", { class: "cl-h", text: "Picked for you" }),
+      el("p", { class: "cl-sub", text: "From what you read." }),
+      tabbed("cl-foryou", fy.map((r) => [short(r.title), async () => r.items.slice(0, 10)]),
+        (items) => [el("div", { class: "cl-grid" }, items.map((c, i) => classicCard(c, i)))])));
+  });
   byGenre.append(el("h2", { class: "cl-h", text: "Popular by genre" }), tabbed("cl-genres",
     CLASSIC_GENRES.map((g) => [g, () => exploreItems({ kind: "all", genres: [g], sort: "popular" }).then((x) => x.slice(0, 10))]),
     (items) => [el("div", { class: "cl-grid" }, items.map((c, i) => classicCard(c, i)))]));
@@ -662,10 +806,10 @@ async function homePage(view, my) {
   const out = [];
   const fresh = freshSection(series);
   if (fresh) out.push(fresh);
-  if (reading.length) out.push(row("reading", "Continue reading", reading.map((s) => card(asCard(s), s))));
+  if (reading.length) out.push(withSelect(row("reading", "Continue reading", reading.map((s) => card(asCard(s), s))), "series"));
   const unread = (b) => !b.finished && b.read < 1;
-  if (books.filter((b) => b.ready && unread(b)).length) out.push(row("books", "Your books", books.filter(unread).map(bookCard)));
-  if (done.length) out.push(row("finished", "Finished", done.map((s) => card(asCard(s), s))));
+  if (books.filter((b) => b.ready && unread(b)).length) out.push(withSelect(row("books", "Your books", books.filter(unread).map(bookCard)), "books"));
+  if (done.length) out.push(withSelect(row("finished", "Finished", done.map((s) => card(asCard(s), s))), "series"));
   lib.replaceChildren(...out);
   try {
     const got = await invoke("read_rows");
@@ -675,6 +819,12 @@ async function homePage(view, my) {
     rows.replaceChildren(...got.filter((r) => r.items.length).map((r) => (r.id === "trending"
       ? row("top10", "Top 10 today", r.items.slice(0, 10).map((c, i) => topTen(c, i + 1)), "trending")
       : row(r.id, r.title, r.items.map((c) => card(c))))));
+    // Picked from what you read, right under the Top 10, like Movies' "Because you watched".
+    forYou().then((fy) => {
+      if (my !== seq || !fy.length) return;
+      const at = rows.children[1] || null;
+      for (const r of fy) rows.insertBefore(row(r.id, r.title, r.items.map((c) => card(c))), at);
+    });
     invoke("read_book_rows").then((bk) => {
       if (my !== seq) return;
       rows.append(...bk.filter((r) => r.items.length).slice(0, 2).map((r) => row(r.id, r.title, r.items.map((c) => card(c)))));
@@ -845,7 +995,13 @@ async function allPage(view, my) {
     busy = true;
     more.replaceChildren(el("div", { class: "skel skel-row" }));
     try {
-      const got = books ? await invoke("read_book_more", { id, page: ++pageNo }) : await invoke("read_explore", { e: { ...ROW_EXPLORE[id], page: ++pageNo } });
+      ++pageNo;
+      // "Because you read X": AniList's whole list of picks, one page. "More Action for you": that genre, most read first.
+      const because = /^because-(\d+)$/.exec(id);
+      const genre = /^foryou-(.+)$/.exec(id);
+      const got = books ? await invoke("read_book_more", { id, page: pageNo })
+        : because ? { items: pageNo > 1 ? [] : await invoke("read_similar", { anilist: Number(because[1]) }), more: false }
+          : await invoke("read_explore", { e: { ...(genre ? { kind: "all", genres: [genre[1]], sort: "popular" } : ROW_EXPLORE[id]), page: pageNo } });
       if (my !== seq) return;
       grid.append(...(got.items || []).map((c, k) => { const t = card(c); t.style.setProperty("--i", String(Math.min(k, 20))); t.classList.add("rise"); return t; }));
       done = !got.more;
@@ -885,13 +1041,27 @@ async function booksPage(view, my) {
   view.replaceChildren(page(head("Books"), mine, rows));
   myBooks = await invoke("read_books").catch(() => []);
   if (my !== seq) return;
-  if (myBooks.length) mine.replaceChildren(row("books", "Your books", myBooks.map(bookCard)));
+  if (myBooks.length) mine.replaceChildren(withSelect(row("books", "Your books", myBooks.map(bookCard), "mine"), "books"));
   const comics = el("div");
   // Comics and graphic novels come after the books, as soon as they're in.
   const cm = invoke("read_comic_rows").catch(() => []);
   const bk = await invoke("read_book_rows").catch(() => []);
   if (my !== seq) return;
   rows.replaceChildren(...(bk.filter((r) => r.items.length).map((r) => row(r.id, r.title, r.items.map((c) => card(c))))), comics);
+  // From your own books: more by the authors you read most lately, right under your books.
+  const authors = [...new Set(myBooks.slice().sort((a, b) => (b.added || 0) - (a.added || 0)).map((b) => b.author).filter(Boolean))].slice(0, 2);
+  Promise.all(authors.map((name) => remembered(`ba:${name}`, 30 * 60000, () => invoke("read_book_author", { name })).then((list) => ({ name, list })).catch(() => null))).then((got) => {
+    if (my !== seq) return;
+    const have = new Set(myBooks.map((b) => (b.title || "").toLowerCase()));
+    const made = got.filter(Boolean).map(({ name, list }) => ({ name, list: (list || []).filter((c) => !have.has((c.title || "").toLowerCase())) })).filter((x) => x.list.length >= 2)
+      .map(({ name, list }) => {
+        const r = row(`by-${name}`, `More by ${name}`, list.map((c) => card(c)));
+        const head = r.querySelector(".row-head");
+        head.querySelector(".count")?.replaceWith(el("a", { class: "explore", href: `#r-author/${encodeURIComponent(name)}` }, "See all", icon(ICON.right)));
+        return r;
+      });
+    rows.prepend(...made);
+  });
   const cr = await cm;
   if (my !== seq) return;
   comics.replaceChildren(...(cr.filter((r) => r.items.length).map((r) => row(r.id, r.title, r.items.map((c) => card(c))))));
@@ -906,8 +1076,8 @@ async function listPage(view, my) {
   if (my !== seq) return;
   const out = [];
   if (list.length) out.push(expandRow(row("saved", "Saved for later", list.map((c) => card(c))), "r-saved"));
-  if (lib.length) out.push(expandRow(row("following", "Following", lib.map((s) => card(asCard(s), s))), "r-following"));
-  if (books.length) out.push(expandRow(row("books", "Books", books.map(bookCard)), "r-books"));
+  if (lib.length) out.push(withSelect(expandRow(row("following", "Following", lib.map((s) => card(asCard(s), s))), "r-following"), "series"));
+  if (books.length) out.push(withSelect(expandRow(row("books", "Books", books.map(bookCard), "mine"), "r-books"), "books"));
   body.replaceChildren(...(out.length ? out : [note("Nothing here yet. Press Add to My List on anything you'd like to read later.")]));
   return true;
 }
@@ -915,7 +1085,10 @@ async function listPage(view, my) {
 async function downloadsPage(view, my) {
   const body = el("div", {}, ...skel());
   view.replaceChildren(page(head("Downloads"), body));
+  // One timer for the page: a Stop used to start a second loop beside the first.
+  let timer = 0;
   const draw = async () => {
+    clearTimeout(timer);
     const d = await invoke("read_downloads").catch((e) => ({ error: String(e), series: [], books: [] }));
     if (my !== seq) return;
     const items = [
@@ -932,7 +1105,14 @@ async function downloadsPage(view, my) {
           el("div", { class: "read-q wide" }, el("span", { style: `width:${Math.max(3, Math.round((b.progress || 0) * 100))}%` }))))),
     ];
     body.replaceChildren(...(items.length ? items : [note(d.error || "Nothing is downloading.")]));
-    if (items.length) setTimeout(() => { if (my === seq) draw(); }, 4000);
+    if (items.length) {
+      clearTimeout(timer);
+      timer = setTimeout(function again() {
+        if (my !== seq) return;
+        if (document.hidden) { timer = setTimeout(again, 4000); return; }
+        draw();
+      }, 4000);
+    }
   };
   await draw();
   return true;
@@ -975,7 +1155,11 @@ let langs = null;
 function panel() {
   if (dlg) return dlg;
   dlg = el("dialog", { class: "detail read-detail", "aria-label": "Series" });
-  dlg.addEventListener("close", () => { clearTimeout(poll); panelSeq++; });
+  dlg.addEventListener("close", () => {
+    clearTimeout(poll);
+    panelSeq++;
+    if (staleBehind) { staleBehind = false; window.dispatchEvent(new Event("chillarr:refresh")); }
+  });
   dlg.addEventListener("click", (e) => { if (e.target === dlg) dlg.close(); });
   document.body.append(dlg);
   return dlg;
@@ -997,6 +1181,7 @@ function shell(c) {
   hero.append(el("button", { class: "close", "aria-label": "Close", onclick: () => d.close() }, icon("M6 6l12 12M18 6L6 18")),
     el("div", { class: "read-head-row" }, poster, el("div", { class: "detail-head" }, el("h2", { text: c.title }), meta, options, actions)));
   const about = aboutBox(c);
+  if (c.anilist && !isBook(c)) meta.parentNode.insertBefore(makersLine(c), meta.nextSibling);
   const body = el("div", { class: "detail-body" }, c.description ? el("p", { class: "overview read-overview", text: c.description }) : null, about);
   d.replaceChildren(hero, body);
   if (!d.open) {
@@ -1007,6 +1192,71 @@ function shell(c) {
     d.showModal();
   }
   return { actions, body, options, hideOn, about };
+}
+
+/* ---------- who made it (issue: "Same author") ----------
+   Like a film's director: the writer and the artist of a series are links,
+   each opening everything else they made (r-maker), and the panel shows a
+   row of their other series. AniList's staff, asked once per series. */
+const makersSeen = new Map();
+function makersOf(anilist) {
+  if (!makersSeen.has(anilist)) makersSeen.set(anilist, invoke("read_makers", { anilist }).catch(() => { makersSeen.delete(anilist); return []; }));
+  return makersSeen.get(anilist);
+}
+const makerHref = (m) => `#r-maker/${m.id}/${encodeURIComponent(m.name)}`;
+
+/** "Story and Art: Chugong · Art: DUBU", each name a link. Fills in when AniList answers. */
+function makersLine(c) {
+  const line = el("p", { class: "read-by", hidden: true });
+  makersOf(c.anilist).then((list) => {
+    if (!list.length) return;
+    const parts = [];
+    list.slice(0, 3).forEach((m, i) => {
+      if (i) parts.push(el("span", { class: "sep" }));
+      parts.push(el("span", { class: "read-by-role", text: `${m.role} ` }),
+        el("button", { class: "maker-link", title: `Everything by ${m.name}`, onclick: () => { if (dlg) dlg.close(); location.hash = makerHref(m); } }, m.name));
+    });
+    line.replaceChildren(...parts);
+    line.hidden = false;
+  });
+  return line;
+}
+
+/** "More by <writer>" under a series: their other series, this one left out. */
+function moreBySection(c, mine) {
+  if (!c || !c.anilist || isBook(c)) return null;
+  const box = el("section", { class: "read-similar read-moreby", hidden: true });
+  makersOf(c.anilist).then(async (list) => {
+    const m = list[0];
+    if (!m) return;
+    const works = (await remembered(`mw:${personKey()}:${m.id}:${adultOn(false)}`, 30 * 60000, () => invoke("read_maker_works", { staff: m.id, adult: adultOn(false) })).catch(() => []))
+      .filter((x) => x.anilist !== c.anilist);
+    if (mine !== panelSeq || works.length < 1) return;
+    box.replaceChildren(el("div", { class: "read-moreby-head" }, el("h3", { class: "read-similar-h", text: `More by ${m.name}` }),
+      el("a", { class: "explore", href: makerHref(m), onclick: () => { if (dlg) dlg.close(); } }, "See all", icon(ICON.right))),
+    el("div", { class: "read-similar-grid" }, works.slice(0, 12).map((x, i) => { const t = card(x); t.classList.add("rise"); t.style.setProperty("--i", String(i)); return t; })));
+    box.hidden = false;
+  });
+  return box;
+}
+
+/** Everything one writer or artist made, from their name on a series. */
+async function makerPage(view, my) {
+  clearInterval(heroTimer);
+  const [, rawId, rawName] = location.hash.slice(1).split("/");
+  const id = Number(rawId) || 0;
+  const name = decodeURIComponent(rawName || "");
+  const grid = el("div", { class: "grid read-grid" });
+  const more = el("div", { class: "read-more" }, el("div", { class: "skel skel-row" }));
+  const back = el("button", { class: "btn soft read-back", onclick: () => (history.length > 1 ? history.back() : (location.hash = "#r-home")) }, icon(ICON.left), "Back");
+  view.replaceChildren(page(el("header", { class: "read-head maker-head" }, back, el("div", {}, el("h1", { text: name }), el("p", { class: "maker-sub", text: "Everything they wrote or drew" }))), grid, more));
+  let works;
+  try { [works] = await Promise.all([invoke("read_maker_works", { staff: id, adult: adultOn(false) }), know()]); }
+  catch (e) { if (my === seq) more.replaceChildren(note(String(e))); return true; }
+  if (my !== seq) return;
+  grid.append(...works.map((c, k) => { const t = card(c); t.style.setProperty("--i", String(Math.min(k, 20))); t.classList.add("rise"); return t; }));
+  more.replaceChildren(note(works.length ? (works.length === 1 ? "That's the only series found." : `That's all ${works.length} found.`) : "Nothing found for them yet."));
+  return true;
 }
 
 /** Details asked for lately, so a panel redrawing itself doesn't ask again. */
@@ -1113,7 +1363,7 @@ export async function openSeries({ key = null, card: c = null }) {
   actions.append(followBtn, listButton(c));
   hideOn();
   const list = el("section", { class: "read-sources" });
-  body.append(...[list, similarSection(c, mine)].filter(Boolean));
+  body.append(...[list, moreBySection(c, mine), similarSection(c, mine)].filter(Boolean));
   getCopies(c, state, list, mine);
 }
 
@@ -1151,20 +1401,29 @@ async function getCopies(c, state, list, mine) {
   // A newer ask (the translation changed) wins over one still out.
   state.asks = (state.asks || 0) + 1;
   const ask = state.asks;
+  // Follow waits for this answer: until then it would follow the copy found
+  // for the translation picked before.
+  state.follow = null;
+  if (state.followBtn) { state.followBtn.disabled = true; state.followBtn.title = "Finding the chapters first"; }
   list.replaceChildren(el("p", { class: "note read-wait", text: "Finding the chapters on every site, sharpest first. This can take up to a minute." }));
   const seenKey = `${c.anilist || c.title}|${state.lang}`;
-  const seen = copiesSeen.get(seenKey);
+  let seen = copiesSeen.get(seenKey);
+  // The search itself is kept, not just its answer: opening the series again
+  // (or flipping Best and Let me choose) while it runs joins it instead of
+  // asking every site again.
+  if (!seen || Date.now() - seen.at >= COPIES_LIFE) {
+    seen = { at: Date.now(), p: invoke("read_sources", { meta: meta(c), lang: state.lang }) };
+    copiesSeen.set(seenKey, seen);
+    if (copiesSeen.size > 40) copiesSeen.delete(copiesSeen.keys().next().value);
+  }
   let got;
-  if (seen && Date.now() - seen.at < COPIES_LIFE) got = seen.got;
-  else {
-    try {
-      got = await invoke("read_sources", { meta: meta(c), lang: state.lang });
-      copiesSeen.set(seenKey, { at: Date.now(), got });
-    } catch (e) {
-      if (mine !== panelSeq || ask !== state.asks) return;
-      list.replaceChildren(note(String(e)), el("button", { class: "btn soft", onclick: () => getCopies(c, state, list, mine) }, "Try again"));
-      return;
-    }
+  try {
+    got = await seen.p;
+  } catch (e) {
+    if (copiesSeen.get(seenKey) === seen) copiesSeen.delete(seenKey);
+    if (mine !== panelSeq || ask !== state.asks) return;
+    list.replaceChildren(note(String(e)), el("button", { class: "btn soft", onclick: () => getCopies(c, state, list, mine) }, "Try again"));
+    return;
   }
   if (mine !== panelSeq || ask !== state.asks) return;
   const found = got.list;
@@ -1206,9 +1465,12 @@ function qualityBar(q) {
 /** Every chapter of a copy, ticked or not: all by default, a range, or one by one. */
 async function pickChapters(c, x, state, list, mine, found, fill) {
   list.replaceChildren(el("p", { class: "note read-wait", text: `Getting the chapter list from ${srcName(x.source)}...` }));
+  // A newer ask (another translation picked meanwhile) wins over this one.
+  const asked = state.asks;
+  const stale = () => mine !== panelSeq || asked !== state.asks;
   let chs;
-  try { chs = await invoke("read_copy_chapters", { mangaId: x.manga_id, fillId: fill ? fill.manga_id : null }); } catch (e) { if (mine === panelSeq) list.replaceChildren(note(String(e))); return; }
-  if (mine !== panelSeq) return;
+  try { chs = await invoke("read_copy_chapters", { mangaId: x.manga_id, fillId: fill ? fill.manga_id : null }); } catch (e) { if (!stale()) list.replaceChildren(note(String(e))); return; }
+  if (stale()) return;
   if (state.about) state.about.latest(chs);
   // Nothing ticked to start with: tick what you want, or get them all.
   const picked = new Set();
@@ -1230,6 +1492,7 @@ async function pickChapters(c, x, state, list, mine, found, fill) {
     });
     const r = el("label", { class: "read-pick" + (ch.downloaded ? " here" : "") }, box, el("span", { class: "read-pick-n", text: chLabel(ch) }),
       ch.name && !/^chapter\s*[\d.]+$/i.test(ch.name) ? el("span", { class: "read-pick-name", text: ch.name }) : null,
+      releasedEl(ch.uploaded),
       ch.downloaded ? el("small", { text: "Here" }) : ch.fill && fill ? el("small", { text: srcName(fill.source) }) : null);
     r.box = box;
     return r;
@@ -1282,6 +1545,14 @@ async function pickChapters(c, x, state, list, mine, found, fill) {
 
 const meta = (c) => ({ anilist: c.anilist ?? null, title: c.title, names: c.names || [], cover: c.cover ?? null, banner: c.banner ?? null, country: c.country ?? null, format: c.format ?? null, status: c.status ?? null, description: c.description ?? null, genres: c.genres || [], adult: !!c.adult });
 const chLabel = (r) => (r.number != null ? `Chapter ${r.number}` : r.name || "Chapter");
+/** When a chapter came out, as a short date ("11/09/26"); Suwayomi gives milliseconds, as text. */
+function released(ms) {
+  const t = Number(ms);
+  if (!t) return null;
+  const d = new Date(t);
+  return { short: d.toLocaleDateString(undefined, { year: "2-digit", month: "2-digit", day: "2-digit" }), long: d.toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" }) };
+}
+const releasedEl = (ms) => { const r = released(ms); return r ? el("small", { class: "read-ch-date", title: `Released ${r.long}`, text: `Released ${r.short}` }) : null; };
 
 async function showFollowed(key, mine, c0) {
   let d;
@@ -1318,7 +1589,7 @@ async function showFollowed(key, mine, c0) {
       showFollowed(key, ++panelSeq, c0);
     } catch (e) { toast(String(e), true); live.disabled = false; }
   });
-  actions.append(live, el("button", { class: "btn soft", onclick: () => unfollow(f) }, "Stop following"));
+  actions.append(live, el("button", { class: "btn soft", onclick: (e) => unfollow(f, e.currentTarget) }, "Stop following"));
   hideOn();
   const hidden = !!(d.spot && d.spot.hide_week);
   actions.append(el("button", { class: "btn soft read-hideweek" + (hidden ? " on" : ""), "aria-pressed": String(hidden),
@@ -1333,10 +1604,22 @@ async function showFollowed(key, mine, c0) {
     f.new_too === false ? " · new chapters off" : "",
     " · ", el("button", { class: "linkish", onclick: () => changeCopy(c, f, body) }, "Change copy"));
   const list = el("ol", { class: "read-chapters" }, ...d.chapters.slice().reverse().map((r) => chapterRow(key, r, c0)));
-  body.append(...[where, markBar(key, d.chapters, c0), list, similarSection(c, mine)].filter(Boolean));
+  body.append(...[where, markBar(key, d.chapters, c0), list, moreBySection(c, mine), similarSection(c, mine)].filter(Boolean));
   if (scroll) dlg.scrollTop = scroll;
-  // Chapters still coming: the list keeps itself current.
-  if (d.downloading) poll = setTimeout(() => { if (mine === panelSeq && dlg && dlg.open) showFollowed(key, ++panelSeq, c0); }, 5000);
+  // Chapters still coming: the list keeps itself current, but never while
+  // you're in the middle of something on the panel (picking chapters to
+  // delete, another copy, typing a chapter number, a question up): a redraw
+  // would throw that away. It looks again a little later.
+  if (d.downloading) {
+    const busy = () => dlg.querySelector(".read-delpick, .read-change") || dlg.contains(document.activeElement) && /^(INPUT|SELECT)$/.test(document.activeElement.tagName)
+      || document.getElementById("ask")?.open;
+    const tick = () => {
+      if (mine !== panelSeq || !dlg || !dlg.open) return;
+      if (busy() || document.hidden) { poll = setTimeout(tick, 5000); return; }
+      showFollowed(key, ++panelSeq, c0);
+    };
+    poll = setTimeout(tick, 5000);
+  }
 }
 
 /** Marks a stretch of chapters read (read somewhere else, or skipped), or the whole series. */
@@ -1386,7 +1669,8 @@ function chapterRow(key, r, c0) {
   return el("li", { class: "read-ch" + (r.read ? " is-read" : "") + (r.downloaded ? "" : " not-here") },
     el("button", { class: "read-ch-open", disabled: !r.downloaded, onclick: () => read(key, r.id, c0) },
       el("strong", { text: chLabel(r) }), name ? el("span", { class: "read-ch-name", text: name }) : null,
-      r.scanlator && !/^unknown$/i.test(r.scanlator) ? el("small", { text: r.scanlator }) : null),
+      r.scanlator && !/^unknown$/i.test(r.scanlator) ? el("small", { text: r.scanlator }) : null,
+      releasedEl(r.uploaded)),
     r.fresh ? el("b", { class: "read-new-pill", text: "NEW" }) : null,
     el("span", { class: "read-ch-state", text: state }), get || mark,
     r.downloaded && canDelete() ? el("button", { class: "read-mark read-del", title: "Delete this chapter's download", "aria-label": `Delete ${chLabel(r)}`,
@@ -1422,9 +1706,16 @@ function deletePicker(key, f, here, body, c0) {
   const picked = new Set(here.map((r) => r.id));
   const count = el("strong");
   const go = el("button", { class: "btn primary" }, icon(TRASH), "");
-  const rows = here.map((r) => {
+  let last = -1;
+  const rows = here.map((r, i) => {
     const box = el("input", { type: "checkbox", checked: true, "aria-label": chLabel(r) });
-    box.addEventListener("change", () => { if (box.checked) picked.add(r.id); else picked.delete(r.id); paint(); });
+    // Shift and a click: the whole stretch since the last one clicked.
+    box.addEventListener("click", (e) => {
+      const span = e.shiftKey && last >= 0 ? [Math.min(last, i), Math.max(last, i)] : [i, i];
+      for (let j = span[0]; j <= span[1]; j++) { rows[j].box.checked = box.checked; if (box.checked) picked.add(here[j].id); else picked.delete(here[j].id); }
+      last = i;
+      paint();
+    });
     const row = el("label", { class: "read-pick here" }, box, el("span", { class: "read-pick-n", text: chLabel(r) }), r.read ? el("small", { text: "Read" }) : null);
     row.box = box;
     return row;
@@ -1495,16 +1786,22 @@ function read(key, chapter, c) {
   openReader(key, chapter, () => { openSeries({ key, card: c }); window.dispatchEvent(new Event("chillarr:refresh")); });
 }
 
+/** The page behind the panel changed: it's drawn again once, when the panel
+ *  closes, rather than on every click in it (each redraw asked for the whole
+ *  reading list again). */
+let staleBehind = false;
+
 function refreshIfOpen(key, c0) {
-  if (dlg && dlg.open) showFollowed(key, ++panelSeq, c0);
+  if (dlg && dlg.open) { showFollowed(key, ++panelSeq, c0); staleBehind = true; return; }
   window.dispatchEvent(new Event("chillarr:refresh"));
 }
 
 /** Another copy of a series you follow (another site or translation); what you've read stays. */
 function changeCopy(c, f, body) {
   const mine = panelSeq;
-  const list = el("section", { class: "read-sources" });
-  const options = el("div", { class: "read-options" });
+  if (body.querySelector(".read-change")) return; // already open
+  const list = el("section", { class: "read-sources read-change" });
+  const options = el("div", { class: "read-options read-change" });
   const state = { lang: f.lang || getPref("read-lang") || "en", copy: "choose", onChange: () => getCopies(c, state, list, mine) };
   pickers(options, state);
   body.prepend(options, list);
@@ -1512,15 +1809,30 @@ function changeCopy(c, f, body) {
   getCopies(c, state, list, mine);
 }
 
-async function unfollow(f) {
+/** Series being let go right now: a second press while one runs does nothing. */
+const unfollowing = new Set();
+
+async function unfollow(f, btn) {
+  if (unfollowing.has(f.key)) return;
   if (!(await ask(`Stop following ${f.title}?`, "New chapters stop downloading.", [], "Stop following", "Cancel"))) return;
-  const del = await ask("Delete its chapters too?", "Keep them to read later, or free the space now.", [], "Delete them", "Keep them");
+  // Asked as a choice: closing it (Esc) stops nothing, rather than reading as "Keep them".
+  const pick = await choose("Delete its chapters too?", "Keep them to read later, or free the space now.", [], "Delete them", "Keep them");
+  if (pick == null) return;
+  unfollowing.add(f.key);
+  // It takes a few seconds with many chapters: the panel goes at once and says so,
+  // instead of sitting there looking like nothing happened.
+  if (btn) { btn.disabled = true; btn.textContent = "Stopping..."; }
+  if (dlg) dlg.close();
+  toast(`Stopping ${f.title}...`);
   try {
-    toast(await invoke("read_unfollow", { key: f.key, delete: del }));
+    toast(await invoke("read_unfollow", { key: f.key, delete: pick === "yes" }));
     followedByAnilist.delete(f.anilist);
-    if (dlg) dlg.close();
+  } catch (e) {
+    toast(String(e), true);
+  } finally {
+    unfollowing.delete(f.key);
     window.dispatchEvent(new Event("chillarr:refresh"));
-  } catch (e) { toast(String(e), true); }
+  }
 }
 
 /* ---------- the book panel ---------- */

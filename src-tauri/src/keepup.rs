@@ -99,8 +99,14 @@ async fn round(app: &AppHandle) {
         // What the sites just listed gets queued now, not at the 10-minute round.
         read::fetch_new(app).await;
     }
-    for f in &list {
-        tell_new(app, f).await;
+    // Telling reads every series' chapter list: every few rounds is soon
+    // enough for "chapter N is ready", and right away after a site was asked.
+    static ROUND: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let round = ROUND.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    if asked || round % 4 == 0 {
+        for f in &list {
+            tell_new(app, f).await;
+        }
     }
     for f in &list {
         let due = with_due(|d| d.behind.get(&f.key).is_none_or(|at| Instant::now() >= *at));

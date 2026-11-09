@@ -324,6 +324,7 @@ fn need(cmd: &str) -> Option<Need> {
         | "readparty_start" | "readparty_join" | "readparty_state" | "readparty_move" | "readparty_leave" | "readparty_set" | "readparty_kick" | "readparty_allow" | "readparty_host"
         | "read_book_rows" | "read_book_more" | "read_book_search" | "read_book_author" | "read_comic_rows" | "read_comic_search" | "read_book_copies" | "read_book_get" | "read_books" | "read_book_open"
         | "read_languages" | "read_copy_chapters" | "read_get_chapters" | "read_keep_up" | "read_list" | "read_list_set" | "read_explore" | "read_genres" | "read_filter_info" | "read_similar" | "read_about" | "read_downloads"
+        | "read_makers" | "read_maker_works" | "read_for_you"
         | "read_delete_plan" => Need::Viewer,
         // Deleting reading's files (read_storage.rs), like a film's Delete.
         "read_unfollow" | "read_book_remove" | "read_stop_chapters" | "read_storage" | "read_delete_chapters" | "read_book_delete_file" => Need::Delete,
@@ -422,6 +423,9 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
         "read_list_set" => res(crate::read::toggle_list(app, &arg::<Value>(a, "card")?, arg(a, "on")?)),
         "read_explore" => res(crate::read::explore(app, &arg(a, "e")?).await),
         "read_similar" => res(crate::read::similar(app, arg(a, "anilist")?).await),
+        "read_makers" => res(crate::read::makers(arg(a, "anilist")?).await),
+        "read_maker_works" => res(crate::read::maker_works(app, arg(a, "staff")?, arg::<Option<bool>>(a, "adult")?.unwrap_or(false)).await),
+        "read_for_you" => res(crate::read::for_you(app).await),
         "read_about" => res(crate::read_about_any(arg(a, "anilist")?, arg(a, "olid")?).await),
         "read_filter_info" => ok(serde_json::json!({ "tags": crate::read::TAGS.to_vec(), "adult": crate::read::adult_ok(app) })),
         "read_genres" => ok(crate::read::GENRES.to_vec()),

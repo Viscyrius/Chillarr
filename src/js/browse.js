@@ -1,13 +1,15 @@
 // Home, Movies, Series, Anime and My downloads: a hero, genre chips and rows
 // of posters; hover previews; Top 10; and "Explore all" pages that keep loading.
 import { isHidden, markHidden } from "./hidden.js";
-import { $, canDelete, choose, el, expandRow, genresAZ, getPref, icon, ICON, invoke, listen, metaBits, personKey, store, toast } from "./api.js";
+import { $, ask, canDelete, choose, el, expandRow, genresAZ, getPref, icon, ICON, invoke, listen, metaBits, personKey, store, toast } from "./api.js";
 import { openDetail, playShowNow } from "./detail.js";
 import { canWatchNow, confirmRemove, isWatchNow, movieLike, play, removeWatchNow, watchNow } from "./player.js";
 import { completedActions, confirmRedownload, listable, markWatched, onMyList, removeCompleted, removeContinue, resumable, setMyList } from "./mylist.js";
 import { goBack, remember, restore } from "./place.js";
 import { inlinePicker, styleNow } from "./look.js";
 import { tabbed } from "./read.js";
+import { FILTER_KIND, inlineFilters } from "./filter.js";
+import { selectable, stopSelecting } from "./select.js";
 
 const WIDE = new Set(["continue", "downloading"]);
 let refreshTimer;
@@ -21,6 +23,7 @@ export const currentSeq = () => renderSeq;
 
 export function stopBrowse() {
   renderSeq++;
+  stopSelecting();
   exploreObserver?.disconnect();
   exploreObserver = null;
   lazyObserver?.disconnect();
@@ -437,13 +440,15 @@ function rowEl(r, i = 0) {
   return el("section", { class: "row", dataset: { row: r.id }, id: `row-${r.id}`, style: `--i:${Math.min(i, 6)}` }, head, el("div", { class: "track-wrap" }, prev, track, next));
 }
 
-/** Filters, then genre chips that jump to their row. */
+/** Filters (Home's opens them as a page; Movies, Series and Anime have them on
+ *  the page itself, filter.js inlineFilters), then genre chips that jump to their row. */
 function chipBar(rows, tab) {
   const genres = rows.filter((r) => r.id.startsWith("genre-"));
-  const filters = el("button", { class: "chip filter-chip", onclick: () => {
+  const filters = FILTER_KIND[tab] ? null : el("button", { class: "chip filter-chip", onclick: () => {
     try { sessionStorage.setItem("chillarr-from", location.hash || "#home"); } catch (e) { /* storage blocked */ }
     location.hash = `#filter/${KIND_FOR_TAB[tab] || "movie"}/{}`;
   } }, icon("M3 5h18M6 12h12M10 19h4"), "Filters");
+  if (!filters && genres.length < 3) return el("nav", { class: "chips genre-chips empty", "aria-label": "Genres" });
   return el("nav", { class: "chips genre-chips", "aria-label": "Genres" }, filters, genres.length >= 3 ? genres.map((r) =>
     el("button", { class: "chip", onclick: () => { const t = document.getElementById(`row-${r.id}`); if (t) window.scrollTo({ top: t.getBoundingClientRect().top + scrollY - 90, behavior: "smooth" }); } }, r.title)) : null);
 }
@@ -846,12 +851,16 @@ function libraryPage(rows) {
   const names = { all: "All", movies: "Movies", series: "Series", anime: "Anime" };
   const grid = el("div", { class: "grid-lib" });
   const draw = (key) => {
-    grid.replaceChildren(...groups[key].map((t, j) => { const b = tile(t); b.style.setProperty("--j", Math.min(j, 18)); return b; }));
+    stopSelecting(); // the cards it was picking from are about to go
+    grid.replaceChildren(...groups[key].map((t, j) => { const b = tile(t); b.style.setProperty("--j", Math.min(j, 18)); b._sel = t; return b; }));
     chips.querySelectorAll(".chip").forEach((c) => c.classList.toggle("on", c.dataset.key === key));
   };
   const chips = el("div", { class: "chips" }, Object.keys(groups).map((k) => el("button", { class: "chip", dataset: { key: k }, onclick: () => draw(k) }, `${names[k]} ${groups[k].length}`)));
+  // Several at once: pick titles, then Delete them together.
+  const pick = canDelete() && all.length > 1 ? selectable(grid, () => [...grid.querySelectorAll(".tile")].map((n) => [n, n._sel]),
+    [{ label: "Delete", danger: true, run: deleteMany }]) : null;
   const page = el("div", { class: "enter" },
-    el("div", { class: "lib-head" }, el("div", {}, el("h1", { text: "My downloads" }), el("p", { text: `${all.length} titles ready to watch` })), chips),
+    el("div", { class: "lib-head" }, el("div", {}, el("h1", { text: "My downloads" }), el("p", { text: `${all.length} titles ready to watch` })), el("div", { class: "lib-tools" }, pick, chips)),
     el("div", { class: "downloads-slot" }),
     el("div", { class: "watchnow-slot" }),
     el("div", { class: "waiting-slot" }),
@@ -863,6 +872,22 @@ function libraryPage(rows) {
     all.length ? grid : el("div", { class: "empty-state", style: "padding-top:6vh" }, el("h2", { text: "Nothing downloaded yet" }), el("p", { text: "Press Download on anything that looks good." }), el("a", { class: "btn primary", href: "#home" }, "Find something")));
   draw("all");
   return page;
+}
+
+/** Deletes every title picked on My downloads (shows: every episode), after one question. */
+async function deleteMany(list) {
+  const names = list.map((t) => t.title);
+  const shows = list.filter((t) => !movieLike(t)).length;
+  const body = `${shows ? "Shows lose every episode. " : ""}They're deleted from your PC. It can't be undone, but you can always get them again.`;
+  if (!(await ask(`Delete ${list.length} title${list.length === 1 ? "" : "s"}?`, body, names, "Delete", "Cancel"))) return false;
+  toast(`Deleting ${list.length} title${list.length === 1 ? "" : "s"}...`);
+  let ok = 0;
+  for (const t of list) {
+    try { await invoke("media_delete", { tile: t }); ok++; } catch (e) { toast(`${t.title}: ${e}`, true); }
+  }
+  if (ok) toast(`Deleted ${ok} title${ok === 1 ? "" : "s"}.`);
+  setTimeout(() => window.dispatchEvent(new Event("chillarr:refresh")), 1500);
+  return ok > 0;
 }
 
 /* ---------- Rows that fill in as you scroll ---------- */
@@ -980,6 +1005,7 @@ function resume(view, tab, entry, seq) {
   for (const t of tracksOf(entry)) { if (t._left) t.scrollLeft = t._left; watchFits(t); }
   if (entry.kind === "rows") {
     entry.nodes[0].resume?.();
+    entry.nodes[1].querySelector(":scope > .fl-tab")?.resume?.();
     watchLazyRows(view, entry.rows, seq);
   }
   fillSlots(view, tab, seq);
@@ -1035,7 +1061,10 @@ async function refreshPage(view, tab, entry, seq) {
   // Gone meanwhile, or the answer failed: the page stays as it is.
   if (seq !== renderSeq || onScreen !== entry || !fresh) return;
   const text = JSON.stringify(fresh);
-  if (text === JSON.stringify(entry.rows)) return;
+  // The rows it shows, as text, made once rather than every 20 seconds.
+  entry.text ??= JSON.stringify(entry.rows);
+  if (text === entry.text) return;
+  entry.text = text;
   if (hasContent(tab, fresh)) saveRows(tab, fresh, text);
   if (entry.kind === "rows" && hasContent(tab, fresh)) { patchRows(view, tab, entry, fresh, seq); return; }
   // A list page (or one that has nothing now): drawn again, kept where you are.
@@ -1138,34 +1167,82 @@ function patchRows(view, tab, entry, fresh, seq) {
 
 const WEEK = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-/** Classic's Your week (issue #44): your series and anime by the day their
- *  episodes air, today first, UP on what aired today. Like reading's. Fills in
- *  when Sonarr answers; left out on Movies, and when nothing of yours airs. */
+/** The week's answer, shared by the tabs drawn within a minute of each other. */
+let weekAsk = null;
+function watchWeek() {
+  if (!weekAsk || weekAsk.who !== personKey() || performance.now() - weekAsk.at > 60000) {
+    weekAsk = { who: personKey(), at: performance.now(), p: invoke("watch_week").catch((e) => { weekAsk = null; throw e; }) };
+  }
+  return weekAsk.p;
+}
+
+/** "Out today", "Out 2 days ago", "Fri 21:00". */
+function airText(x, now) {
+  const d = new Date(x.air);
+  const days = Math.round((new Date(now.getFullYear(), now.getMonth(), now.getDate()) - new Date(d.getFullYear(), d.getMonth(), d.getDate())) / 86400000);
+  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  if (x.aired) return days <= 0 ? "Out today" : days === 1 ? "Out yesterday" : `Out ${days} days ago`;
+  return days === 0 ? `Today at ${time}` : days === -1 ? `Tomorrow at ${time}` : `${WEEK[d.getDay()]} at ${time}`;
+}
+
+/** Your week (issue #44), in every style: your series and anime by the day
+ *  their episodes come out, today first, with the episode and when it's out.
+ *  Series and Anime show their own; Home shows both. Movies has none: films
+ *  don't come out weekly. Fills in when Sonarr answers, and stays out when
+ *  nothing of yours airs this week. */
 function yourWeek(tab, seq) {
-  if (styleNow("watch") !== "classic" || (tab !== "home" && tab !== "series" && tab !== "anime")) return null;
-  const sec = el("section", { class: "cl-block mw-week" });
-  invoke("watch_week").then((all) => {
+  if (tab !== "home" && tab !== "series" && tab !== "anime") return null;
+  const classic = styleNow("watch") === "classic";
+  const sec = el("section", { class: classic ? "cl-block mw-week" : "wk" });
+  watchWeek().then((all) => {
     if (seq !== renderSeq) return;
-    const list = all.filter((x) => (tab === "anime" ? x.anime : tab === "series" ? !x.anime : true));
+    const list = all.filter((x) => (tab === "anime" ? x.anime : tab === "series" ? !x.anime : true)).filter((x) => !isHidden(x.tile));
     if (!list.length) { sec.remove(); return; }
     const now = new Date();
     const today = now.getDay();
-    const sameDay = (d) => d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
-    const tabs = WEEK.map((d, i) => [i === today ? d + " (today)" : d, () => Promise.resolve(list.filter((x) => new Date(x.air).getDay() === i))]);
-    // Today first, then the days after it.
+    const onDay = (i) => list.filter((x) => new Date(x.air).getDay() === i).sort((a, b) => a.air - b.air);
+    // Today first, then the days after it. Each tab says how many come out that day.
     const order = [0, 1, 2, 3, 4, 5, 6].map((k) => (today + k) % 7);
-    const cardFor = (x, i) => {
-      const b = tile(x.tile);
-      b.classList.add("rise", "cl-card");
-      b.style.setProperty("--i", String(i));
-      if (x.aired && sameDay(new Date(x.air))) b.querySelector(".art").append(el("span", { class: "cl-up", text: "UP" }));
+    const label = (i) => { const n = onDay(i).length; return `${i === today ? "Today" : WEEK[i]}${n ? ` · ${n}` : ""}`; };
+    const tabs = order.map((i) => [label(i), () => Promise.resolve(onDay(i))]);
+    // It opens on today, or on the next day something of yours comes out.
+    const first = Math.max(0, order.findIndex((i) => onDay(i).length));
+    const isNew = (x) => x.aired && now - x.air < 86400000;
+    const sub = tab === "anime" ? "Your anime by the day new episodes come out." : tab === "series" ? "Your shows by the day new episodes come out." : "Your series and anime by the day new episodes come out.";
+    if (classic) {
+      const cardFor = (x, i) => {
+        const b = tile(x.tile);
+        b.classList.add("rise", "cl-card");
+        b.style.setProperty("--i", String(i));
+        if (isNew(x)) b.querySelector(".art").append(el("span", { class: "cl-up", text: "UP" }));
+        if (x.episode) b.append(el("div", { class: "cap wk-ep", text: `${x.episode} · ${airText(x, now)}` }));
+        return b;
+      };
+      sec.append(el("h2", { class: "cl-h", text: "Your week" }), el("p", { class: "cl-sub", text: sub }),
+        tabbed("cl-week", tabs, (items) => (items.length
+          ? [el("div", { class: "cl-grid" }, items.map(cardFor))]
+          : [el("p", { class: "cl-empty", text: "Nothing of yours comes out that day." })]), first));
+      return;
+    }
+    // Cinema and Midnight: a row of wide cards, the episode and its time on each.
+    const card = (x, i) => {
+      const t = x.tile;
+      const src = (t.backdrop || t.poster || "").replace("fillWidth=1600", "fillWidth=640");
+      const b = el("button", { class: "wk-card", style: `--i:${Math.min(i, 8)}`, "aria-label": `${t.title}${x.episode ? `, ${x.episode}` : ""}`, dataset: { key: t.key } },
+        el("div", { class: "wk-art" }, src ? el("img", { src, alt: "", loading: "lazy", decoding: "async" }) : noArt(t),
+          isNew(x) ? el("span", { class: "wk-new", text: "NEW" }) : null),
+        el("div", { class: "wk-text" },
+          el("strong", { text: t.title }),
+          el("span", { class: "wk-ep" }, x.episode ? el("b", { text: x.episode }) : null, x.episode_title ? ` ${x.episode_title}` : ""),
+          el("small", { class: x.aired ? "wk-when out" : "wk-when", text: airText(x, now) })));
+      b.addEventListener("click", () => { hidePreview(true); open(t); });
+      markHidden(b, t);
       return b;
     };
-    sec.append(el("h2", { class: "cl-h", text: "Your week" }),
-      el("p", { class: "cl-sub", text: tab === "anime" ? "Your anime by the day new episodes come out." : "Your shows by the day new episodes come out." }),
-      tabbed("cl-week", order.map((i) => tabs[i]), (items) => (items.length
-        ? [el("div", { class: "cl-grid" }, items.map(cardFor))]
-        : [el("p", { class: "cl-empty", text: "Nothing of yours comes out that day." })])));
+    sec.append(el("div", { class: "wk-head" }, el("h2", { text: "Your week" }), el("p", { text: sub })),
+      tabbed("wk-days", tabs, (items) => (items.length
+        ? [el("div", { class: "wk-track" }, items.map(card))]
+        : [el("p", { class: "wk-empty", text: "Nothing of yours comes out that day." })]), first));
   }).catch(() => sec.remove());
   return sec;
 }
@@ -1198,7 +1275,10 @@ async function draw(view, tab, rows, mode, seq) {
     ? el("div", { class: "tip", style: "margin:0 var(--gutter) 28px" }, el("span", { text: "Sign in to Jellyfin to see your own movies and series here and play them." }), el("a", { class: "btn small primary", href: "#settings/account", style: "margin-left:auto" }, "Sign in"))
     : null;
   const side = styleNow("watch") === "midnight" ? rankSide(rows) : null;
-  const box = el("div", { class: side ? "rows mn-rows" : "rows" }, side, inlinePicker(), chipBar(rows, tab), banner, yourWeek(tab, seq), rows.map((r, i) => rowEl(r, i)));
+  const box = el("div", { class: side ? "rows mn-rows" : "rows" });
+  const chips = chipBar(rows, tab);
+  const filters = inlineFilters(tab, box, chips);
+  box.append(...[side, inlinePicker(), filters, filters ? null : chips, banner, yourWeek(tab, seq), ...rows.map((r, i) => rowEl(r, i))].filter(Boolean));
   swapIn(view, [h, box], mode);
   const entry = keep(tab, "rows", [h, box], rows);
   watchLazyRows(view, rows, seq);
@@ -1334,7 +1414,7 @@ export function infiniteGrid(seq, fetchPage, endText) {
     return true;
   }
   // Off screen (a page being built to come back to) it is never "near": that would load every page.
-  const near = () => sentinel.isConnected && sentinel.getBoundingClientRect().top < innerHeight + 900;
+  const near = () => sentinel.isConnected && sentinel.offsetParent !== null && sentinel.getBoundingClientRect().top < innerHeight + 900;
   // One loop at a time. A second caller joins the running one; two loops used to
   // spin on each other without ever yielding, which froze the whole window.
   // `want`: keep going until there are that many cards (as many as when you left).
@@ -1353,7 +1433,7 @@ export function infiniteGrid(seq, fetchPage, endText) {
   io.observe(sentinel);
   exploreObserver?.disconnect();
   exploreObserver = io;
-  return { nodes: [grid, sentinel], fill };
+  return { nodes: [grid, sentinel], fill, get count() { return count; } };
 }
 
 /** "Explore all": every title of one row. */
