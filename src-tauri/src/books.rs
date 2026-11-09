@@ -534,6 +534,41 @@ async fn ol_get(url: &str) -> Result<Value, String> {
         .map_err(|e| format!("Open Library sent something odd: {e}"))
 }
 
+/// The details under a book's description: what it's about, who wrote it,
+/// when it came out, who published it and how long it is.
+pub async fn about(olid: &str) -> Result<Vec<(String, String)>, String> {
+    // A work key, "/works/OL123W": nothing else goes into the address.
+    let id = olid.trim_start_matches("/works/");
+    if id.is_empty() || !id.bytes().all(|b| b.is_ascii_alphanumeric()) {
+        return Ok(vec![]);
+    }
+    let url = format!(
+        "https://openlibrary.org/search.json?q={}&fields=author_name,first_publish_year,publisher,number_of_pages_median,subject,edition_count,ratings_average&limit=1",
+        enc(&format!("key:/works/{id}"))
+    );
+    let v = ol_get(&url).await?;
+    Ok(about_facts(&v["docs"][0]))
+}
+
+fn about_facts(d: &Value) -> Vec<(String, String)> {
+    let strs = |v: &Value, n: usize| -> String { v.as_array().map(|a| a.iter().filter_map(|x| x.as_str()).take(n).collect::<Vec<_>>().join(", ")).unwrap_or_default() };
+    let num = |v: &Value| v.as_i64().map(|n| n.to_string()).unwrap_or_default();
+    let rating = d["ratings_average"].as_f64().map(|r| format!("{r:.1} out of 5")).unwrap_or_default();
+    [
+        ("Genres", strs(&d["subject"], 5)),
+        ("Author", strs(&d["author_name"], 3)),
+        ("First published", num(&d["first_publish_year"])),
+        ("Publisher", strs(&d["publisher"], 2)),
+        ("Pages", num(&d["number_of_pages_median"])),
+        ("Editions", num(&d["edition_count"])),
+        ("Rating", rating),
+    ]
+    .into_iter()
+    .filter(|(_, v)| !v.is_empty())
+    .map(|(k, v)| (k.to_string(), v))
+    .collect()
+}
+
 pub async fn search(term: &str) -> Result<Vec<Value>, String> {
     let v = ol_get(&format!("https://openlibrary.org/search.json?q={}&fields=key,title,author_name,first_publish_year,cover_i&limit=30", enc(term.trim()))).await?;
     Ok(v["docs"].as_array().map(|a| a.iter().filter(|d| d["cover_i"].is_i64()).map(doc_card).collect()).unwrap_or_default())
@@ -609,6 +644,15 @@ mod tests {
         json!({ "title": title, "size": size_mb * 1024 * 1024, "seeders": seeders, "indexer": "x", "protocol": "torrent",
             "magnetUrl": if magnet { json!("magnet:?xt=urn:btih:0123456789ABCDEF0123456789ABCDEF01234567&dn=x") } else { Value::Null },
             "downloadUrl": "http://localhost:9696/1/download?link=abc" })
+    }
+
+    #[test]
+    fn about_skips_what_open_library_leaves_out() {
+        let d = serde_json::json!({ "author_name": ["Frank Herbert"], "first_publish_year": 1965, "subject": ["Science fiction", "Dune"], "number_of_pages_median": 612 });
+        let f = about_facts(&d);
+        assert_eq!(f[0], ("Genres".to_string(), "Science fiction, Dune".to_string()));
+        assert!(f.iter().any(|(k, v)| k == "Pages" && v == "612"));
+        assert!(!f.iter().any(|(k, _)| k == "Publisher" || k == "Rating"));
     }
 
     #[test]

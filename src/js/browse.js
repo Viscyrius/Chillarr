@@ -1,7 +1,7 @@
 // Home, Movies, Series, Anime and My downloads: a hero, genre chips and rows
 // of posters; hover previews; Top 10; and "Explore all" pages that keep loading.
 import { isHidden, markHidden } from "./hidden.js";
-import { $, canDelete, choose, el, genresAZ, getPref, icon, ICON, invoke, listen, metaBits, personKey, store, toast } from "./api.js";
+import { $, canDelete, choose, el, expandRow, genresAZ, getPref, icon, ICON, invoke, listen, metaBits, personKey, store, toast } from "./api.js";
 import { openDetail, playShowNow } from "./detail.js";
 import { canWatchNow, confirmRemove, isWatchNow, movieLike, play, removeWatchNow, watchNow } from "./player.js";
 import { completedActions, confirmRedownload, listable, markWatched, onMyList, removeCompleted, removeContinue, resumable, setMyList } from "./mylist.js";
@@ -805,20 +805,27 @@ async function myListPage(rows, seq) {
   const me = (await invoke("profiles_list").catch(() => [])).find((p) => p.active);
   const groups = { all, ready: all.filter((t) => t.jf_id), notyet: all.filter((t) => !t.jf_id) };
   const names = { all: "All", ready: "Downloaded", notyet: "Not downloaded" };
-  const grid = el("div", { class: "grid-lib" });
+  // One row, like Reading's My List: Show all opens it into the whole list.
+  let grid = el("div");
   const chips = el("div", { class: "chips" }, Object.keys(groups).map((k) => el("button", { class: "chip", dataset: { key: k }, onclick: () => draw(k) }, `${names[k]} ${groups[k].length}`)));
   function draw(key) {
-    grid.replaceChildren(...groups[key].map(listTile));
+    const section = rowEl({ id: "saved", title: names[key] === "All" ? "Saved for later" : names[key], tiles: [] });
+    const track = section.querySelector(".track");
+    track.replaceChildren(...groups[key].map(listTile));
+    section.querySelector(".count").textContent = String(groups[key].length);
+    expandRow(section, "mylist");
+    if (grid.parentNode) { unwatchFits(grid.querySelector(".track")); grid.replaceWith(section); }
+    grid = section;
     chips.querySelectorAll(".chip").forEach((c) => c.classList.toggle("on", c.dataset.key === key));
   }
   const lead = me ? `${me.name}'s list. Other profiles have their own.` : "Titles you saved for later.";
   if (seq !== renderSeq) return null;
+  draw("all");
   const page = el("div", { class: "enter" },
     el("div", { class: "lib-head" }, el("div", {}, el("h1", { text: "My List" }), el("p", { text: lead })), all.length ? chips : null),
     all.length ? grid : el("div", { class: "empty-state", style: "padding-top:6vh" }, el("h2", { text: "Your list is empty" }), el("p", { text: "Press + on anything to save it here. It doesn't download until you say so." }), el("a", { class: "btn primary", href: "#home" }, "Find something")),
     el("div", { class: "watchnow-slot" }),
     el("div", { class: "completed-slot" }));
-  draw("all");
   fillWatchNow(page, seq);
   fillCompleted(page, seq);
   return page;

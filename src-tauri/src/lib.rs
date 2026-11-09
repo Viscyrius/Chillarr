@@ -737,6 +737,20 @@ async fn read_explore(app: AppHandle, e: read::Explore) -> Result<serde_json::Va
     read::explore(&app, &e).await
 }
 
+/// The details under a series' or book's description (AniList or Open Library).
+#[tauri::command]
+async fn read_about(anilist: Option<i64>, olid: Option<String>) -> Result<Vec<(String, String)>, String> {
+    read_about_any(anilist, olid).await
+}
+
+pub(crate) async fn read_about_any(anilist: Option<i64>, olid: Option<String>) -> Result<Vec<(String, String)>, String> {
+    match (anilist, olid) {
+        (Some(id), _) if id > 0 => read::about(id).await,
+        (_, Some(o)) => books::about(&o).await,
+        _ => Ok(vec![]),
+    }
+}
+
 #[tauri::command]
 async fn read_similar(app: AppHandle, anilist: i64) -> Result<Vec<serde_json::Value>, String> {
     read::similar(&app, anilist).await
@@ -1195,6 +1209,7 @@ pub fn run() {
             read_genres,
             read_filter_info,
             read_similar,
+            read_about,
             read_downloads,
             read_book_rows,
             read_book_more,

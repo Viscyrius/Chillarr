@@ -1601,6 +1601,109 @@ pub async fn similar(app: &AppHandle, anilist: i64) -> Result<Vec<Value>, String
         .unwrap_or_default())
 }
 
+/// The details under a series' description, like a film's: who made it, how
+/// many chapters and volumes, how far along it is, and when it ran.
+pub async fn about(anilist: i64) -> Result<Vec<(String, String)>, String> {
+    if anilist <= 0 {
+        return Ok(vec![]);
+    }
+    let q = "query($id:Int){Media(id:$id,type:MANGA){format status chapters volumes genres countryOfOrigin source averageScore synonyms startDate{year month day} endDate{year month day} staff(perPage:12,sort:RELEVANCE){edges{role node{name{full}}}} tags{name rank isMediaSpoiler}}}";
+    let v = crate::media::anilist(&json!({ "query": q, "variables": { "id": anilist } })).await?;
+    Ok(about_facts(&v["data"]["Media"]))
+}
+
+/// AniList's Media as (label, value) pairs, in the order they show.
+fn about_facts(m: &Value) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    let mut put = |k: &str, v: String| {
+        if !v.trim().is_empty() {
+            out.push((k.to_string(), v));
+        }
+    };
+    let strs = |v: &Value| -> Vec<String> { v.as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default() };
+    put("Genres", strs(&m["genres"]).join(", "));
+    // The people who made it, by what they did: "Story", "Art", "Story & Art".
+    let mut roles: Vec<(String, Vec<String>)> = Vec::new();
+    for e in m["staff"]["edges"].as_array().into_iter().flatten() {
+        let role = e["role"].as_str().unwrap_or_default();
+        let role = role.split(" (").next().unwrap_or_default().trim();
+        let keep = ["Story", "Art", "Original Creator", "Original Story", "Author", "Illustration"].iter().any(|r| role.starts_with(r));
+        let Some(name) = e["node"]["name"]["full"].as_str() else { continue };
+        if !keep {
+            continue;
+        }
+        match roles.iter_mut().find(|(r, _)| r == role) {
+            Some((_, names)) => {
+                if !names.iter().any(|n| n == name) {
+                    names.push(name.to_string());
+                }
+            }
+            None => roles.push((role.to_string(), vec![name.to_string()])),
+        }
+    }
+    for (role, names) in roles.into_iter().take(4) {
+        put(&role.replace(" & ", " and "), names.join(", "));
+    }
+    let status = match m["status"].as_str().unwrap_or_default() {
+        "RELEASING" => "Ongoing",
+        "FINISHED" => "Finished",
+        "HIATUS" => "On hiatus",
+        "CANCELLED" => "Cancelled",
+        "NOT_YET_RELEASED" => "Coming soon",
+        _ => "",
+    };
+    put("Status", status.to_string());
+    if let Some(n) = m["chapters"].as_i64() {
+        put("Chapters", n.to_string());
+    }
+    if let Some(n) = m["volumes"].as_i64() {
+        put("Volumes", n.to_string());
+    }
+    let date = |d: &Value| -> Option<String> {
+        let y = d["year"].as_i64()?;
+        const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+        Some(match d["month"].as_i64().filter(|m| (1..=12).contains(m)) {
+            Some(mo) => format!("{} {y}", MONTHS[mo as usize - 1]),
+            None => y.to_string(),
+        })
+    };
+    match (date(&m["startDate"]), date(&m["endDate"])) {
+        (Some(a), Some(b)) if a != b => put("Ran", format!("{a} to {b}")),
+        (Some(a), Some(_)) => put("Year", a),
+        (Some(a), None) if status == "Ongoing" || status == "On hiatus" => put("Started", a),
+        (Some(a), None) => put("Year", a),
+        _ => {}
+    }
+    let kind = match (m["format"].as_str().unwrap_or_default(), m["countryOfOrigin"].as_str().unwrap_or_default()) {
+        ("NOVEL", _) => "Light novel",
+        ("ONE_SHOT", _) => "One shot",
+        (_, "KR") => "Manhwa (Korea)",
+        (_, "CN") | (_, "TW") => "Manhua (China)",
+        ("MANGA", _) => "Manga (Japan)",
+        _ => "",
+    };
+    put("Type", kind.to_string());
+    let source = match m["source"].as_str().unwrap_or_default() {
+        "LIGHT_NOVEL" => "A light novel",
+        "NOVEL" => "A novel",
+        "WEB_NOVEL" => "A web novel",
+        "VIDEO_GAME" | "GAME" => "A game",
+        "ANIME" => "An anime",
+        _ => "",
+    };
+    put("Based on", source.to_string());
+    if let Some(s) = m["averageScore"].as_i64() {
+        put("Score", format!("{s}%"));
+    }
+    let themes: Vec<String> = m["tags"]
+        .as_array()
+        .map(|a| a.iter().filter(|t| t["isMediaSpoiler"] != true && t["rank"].as_i64().unwrap_or(0) >= 60).filter_map(|t| t["name"].as_str().map(String::from)).take(6).collect())
+        .unwrap_or_default();
+    put("Themes", themes.join(", "));
+    put("Also known as", strs(&m["synonyms"]).into_iter().take(3).collect::<Vec<_>>().join(", "));
+    out
+}
+
 /// `adult`: this profile turned 18+ on (Include or Only in a reading tab), so
 /// 18+ titles are found too. Otherwise they never are.
 pub async fn search(app: &AppHandle, term: &str, adult: bool) -> Result<Vec<Value>, String> {
@@ -1631,6 +1734,32 @@ mod tests {
         let fill = vec![ch(11, 1.0, false), ch(12, 2.0, true), ch(13, 3.0, false), ch(14, 4.0, false), ch(15, 5.0, false)];
         let m: Vec<(i64, usize)> = merge_copies(vec![main, fill]).into_iter().map(|(c, i)| (c.id, i)).collect();
         assert_eq!(m, vec![(1, 0), (12, 1), (3, 0), (14, 1), (15, 1)], "sharp where it has it, a copy already here is kept, the rest filled");
+    }
+
+    #[test]
+    fn about_reads_anilist_plainly() {
+        let m = json!({
+            "format": "MANGA", "status": "RELEASING", "chapters": null, "volumes": 12, "genres": ["Action", "Drama"], "countryOfOrigin": "KR",
+            "source": "WEB_NOVEL", "averageScore": 84, "synonyms": ["Solo Leveling"], "startDate": { "year": 2018, "month": 3 }, "endDate": {},
+            "staff": { "edges": [
+                { "role": "Story", "node": { "name": { "full": "A" } } },
+                { "role": "Art (Ch. 1-10)", "node": { "name": { "full": "B" } } },
+                { "role": "Art", "node": { "name": { "full": "C" } } },
+                { "role": "Translator", "node": { "name": { "full": "D" } } }
+            ] },
+            "tags": [{ "name": "Dungeon", "rank": 90 }, { "name": "Twist", "rank": 95, "isMediaSpoiler": true }, { "name": "Weak", "rank": 20 }]
+        });
+        let f: HashMap<String, String> = about_facts(&m).into_iter().collect();
+        assert_eq!(f["Genres"], "Action, Drama");
+        assert_eq!(f["Story"], "A");
+        assert_eq!(f["Art"], "B, C");
+        assert!(!f.contains_key("Translator") && !f.contains_key("Chapters"));
+        assert_eq!(f["Volumes"], "12");
+        assert_eq!(f["Status"], "Ongoing");
+        assert_eq!(f["Started"], "Mar 2018");
+        assert_eq!(f["Type"], "Manhwa (Korea)");
+        assert_eq!(f["Based on"], "A web novel");
+        assert_eq!(f["Themes"], "Dungeon");
     }
 
     #[test]
