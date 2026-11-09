@@ -163,7 +163,7 @@ fn encode(term: &str) -> String {
     term.bytes().map(|b| if b.is_ascii_alphanumeric() { (b as char).to_string() } else { format!("%{b:02X}") }).collect()
 }
 
-async fn ask(app: &AppHandle, term: &str, source: Source) -> Answer {
+async fn ask(app: &AppHandle, term: &str, source: Source, adult: bool) -> Answer {
     let enc = encode(term);
     let mut hits = match source {
         Source::Catalog => {
@@ -192,7 +192,12 @@ async fn ask(app: &AppHandle, term: &str, source: Source) -> Answer {
         Source::Radarr => {
             let Some(a) = arr(app, AppId::Radarr) else { return Answer::Skipped };
             match a.list(&format!("movie/lookup?term={enc}")).await {
-                Ok(v) => v.iter().take(20).map(|m| hit(tiles::from_radarr(m), term, false, pop_movie(m["popularity"].as_f64().unwrap_or(0.0)))).collect(),
+                Ok(v) => v
+                    .iter()
+                    .take(20)
+                    .filter(|m| adult || !crate::catalog::adult_cert(m["certification"].as_str().unwrap_or_default()))
+                    .map(|m| hit(tiles::from_radarr(m), term, false, pop_movie(m["popularity"].as_f64().unwrap_or(0.0))))
+                    .collect(),
                 Err(e) => return Answer::Failed(e.to_string()),
             }
         }
@@ -205,6 +210,12 @@ async fn ask(app: &AppHandle, term: &str, source: Source) -> Answer {
         }
     };
     fill_genres(app, &mut hits);
+    if !adult {
+        // 18+ films only once 18+ is on; the library's own stay.
+        let media = app.state::<Media>();
+        let catalog = media.catalog.lock().unwrap();
+        hits.retain(|h| h.owned || h.tile.kind != "movie" || !h.tile.tmdb.is_some_and(|id| crate::catalog::adult_cert(catalog.cert(id))));
+    }
     Answer::Hits(hits)
 }
 
@@ -242,7 +253,7 @@ pub async fn all(app: &AppHandle, term: &str) -> Found {
     if term.chars().count() < 2 {
         return Found::default();
     }
-    let (a, b, c, d, e) = tokio::join!(ask(app, term, SOURCES[0]), ask(app, term, SOURCES[1]), ask(app, term, SOURCES[2]), ask(app, term, SOURCES[3]), ask(app, term, SOURCES[4]));
+    let (a, b, c, d, e) = tokio::join!(ask(app, term, SOURCES[0], false), ask(app, term, SOURCES[1], false), ask(app, term, SOURCES[2], false), ask(app, term, SOURCES[3], false), ask(app, term, SOURCES[4], false));
     let answers = [Some(a), Some(b), Some(c), Some(d), Some(e)];
     for (s, a) in SOURCES.iter().zip(&answers) {
         log_failure(app, *s, a.as_ref().unwrap());
@@ -264,7 +275,9 @@ pub struct Update {
 
 /// Asks every source at once and sends a "search-update" each time one
 /// answers. A newer search (a higher `seq`) silences this one.
-pub async fn live(app: AppHandle, term: String, seq: u64) {
+/// `adult`: 18+ is on in this profile's movie filters, so R and NC-17 films
+/// the library doesn't have are found too.
+pub async fn live(app: AppHandle, term: String, seq: u64, adult: bool) {
     let page = crate::viewer::current().map(|v| format!("{}/{}", v.session.user_id, v.page)).unwrap_or_default();
     newest(&page, seq, true);
     let term = term.trim().to_string();
@@ -275,7 +288,7 @@ pub async fn live(app: AppHandle, term: String, seq: u64) {
     for (i, s) in SOURCES.iter().copied().enumerate() {
         let (app, term, tx) = (app.clone(), term.clone(), tx.clone());
         tauri::async_runtime::spawn(crate::viewer::carry(async move {
-            let a = ask(&app, &term, s).await;
+            let a = ask(&app, &term, s, adult).await;
             log_failure(&app, s, &a);
             let _ = tx.send((i, a));
         }));

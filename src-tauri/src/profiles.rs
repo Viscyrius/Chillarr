@@ -360,6 +360,18 @@ fn new_pin(pin: &str) -> Result<String, String> {
     Ok(format!("{}:{}", hex(&salt), hash_pin(pin, &salt)))
 }
 
+/// A party password (party.rs), salted and hashed the same way as a PIN.
+pub(crate) fn seal_secret(text: &str) -> Result<String, String> {
+    let mut salt = [0u8; 16];
+    getrandom::getrandom(&mut salt).map_err(|_| "Couldn't set a password right now.".to_string())?;
+    Ok(format!("{}:{}", hex(&salt), hash_pin(text, &salt)))
+}
+
+/// Whether `text` matches a secret made by `seal_secret` (or a PIN).
+pub(crate) fn secret_matches(stored: &str, text: &str) -> bool {
+    pin_matches(stored, text)
+}
+
 fn pin_matches(stored: &str, pin: &str) -> bool {
     let Some((salt, hash)) = stored.split_once(':') else { return false };
     let salt: Vec<u8> = (0..salt.len() / 2).filter_map(|i| u8::from_str_radix(&salt[i * 2..i * 2 + 2], 16).ok()).collect();

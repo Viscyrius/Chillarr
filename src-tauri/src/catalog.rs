@@ -236,6 +236,11 @@ pub struct Filter {
     /// Series: TVmaze's types, any of these and none of `not_show_types`.
     pub show_types: Vec<String>,
     pub not_show_types: Vec<String>,
+    /// 18+: hide (default) | include | only, like reading's. Anime: Ecchi and
+    /// AniList's isAdult. Movies: R, NC-17 and 18 ratings.
+    pub adult: Option<String>,
+    /// Porn inside 18+: hide (default) | include. Anime: AniList's isAdult.
+    pub porn: Option<String>,
 }
 
 impl Filter {
@@ -289,6 +294,17 @@ impl Filter {
                 return false;
             }
         }
+        // Picking R or NC-17 under Age rating asks for 18+ by itself.
+        if self.kind == "movie" && !self.certs.iter().any(|c| adult_cert(c)) {
+            let adult = adult_cert(&x.cert);
+            match self.adult.as_deref() {
+                Some("include") => {}
+                Some("only") if !adult => return false,
+                Some("only") => {}
+                _ if adult => return false,
+                _ => {}
+            }
+        }
         match self.status.as_deref().filter(|s| !s.is_empty()) {
             Some(want) if series => x.status.eq_ignore_ascii_case(want),
             Some(want @ ("released" | "cinema" | "soon")) => movie_stage(x, t.year, today) == want,
@@ -319,6 +335,35 @@ fn sort_filtered(v: &mut [(Tile, f64)], sort: &str) {
     }
 }
 
+/// A movie age rating that means 18+ (not porn: the catalog has no porn flag).
+pub fn adult_cert(cert: &str) -> bool {
+    ["R", "NC-17", "18", "X"].iter().any(|c| c.eq_ignore_ascii_case(cert.trim()))
+}
+
+/// What the 18+ and Porn choices let through on AniList, for anime and reading
+/// alike. Porn is AniList's isAdult (Hentai); 18+ without porn is Ecchi.
+#[derive(Debug, PartialEq, Eq)]
+pub struct AdultRule {
+    /// isAdult: Some(false) no porn, Some(true) only porn, None either.
+    pub is_adult: Option<bool>,
+    /// The Ecchi genre: Some(false) left out, Some(true) required, None either.
+    pub ecchi: Option<bool>,
+}
+
+pub fn adult_rule(adult: Option<&str>, porn: Option<&str>) -> AdultRule {
+    let porn = porn == Some("include");
+    match adult {
+        Some("include") => AdultRule { is_adult: if porn { None } else { Some(false) }, ecchi: None },
+        // AniList can't ask for "Ecchi or isAdult", so Only 18+ with porn is the porn.
+        Some("only") if porn => AdultRule { is_adult: Some(true), ecchi: None },
+        Some("only") => AdultRule { is_adult: Some(false), ecchi: Some(true) },
+        _ => AdultRule { is_adult: Some(false), ecchi: Some(false) },
+    }
+}
+
+/// Stands for "18+ or not" in a filter's arguments; never sent to AniList.
+const ADULT_ANY: &str = "isAdult: any";
+
 /// AniList arguments for a filter, used as the "q:" category of an anime row.
 pub fn anilist_filter(f: &Filter) -> String {
     let mut parts = vec![format!(
@@ -330,12 +375,20 @@ pub fn anilist_filter(f: &Filter) -> String {
             _ => "POPULARITY_DESC",
         }
     )];
-    let genres = f.wanted_genres();
+    let rule = adult_rule(f.adult.as_deref(), f.porn.as_deref());
+    let mut genres = f.wanted_genres();
+    let mut not_genres: Vec<&str> = f.not_genres.iter().map(String::as_str).collect();
+    match rule.ecchi {
+        Some(true) if !genres.contains(&"Ecchi") => genres.push("Ecchi"),
+        // Picking the Ecchi chip asks for it by itself, like an R rating for movies.
+        Some(false) if !not_genres.contains(&"Ecchi") && !genres.contains(&"Ecchi") => not_genres.push("Ecchi"),
+        _ => {}
+    }
     if !genres.is_empty() {
         parts.push(format!("genre_in: {}", gql_list(genres)));
     }
-    if !f.not_genres.is_empty() {
-        parts.push(format!("genre_not_in: {}", gql_list(f.not_genres.iter().map(String::as_str))));
+    if !not_genres.is_empty() {
+        parts.push(format!("genre_not_in: {}", gql_list(not_genres)));
     }
     if !f.tags.is_empty() {
         parts.push(format!("tag_in: {}", gql_list(f.tags.iter().map(String::as_str))));
@@ -380,6 +433,13 @@ pub fn anilist_filter(f: &Filter) -> String {
     }
     if let Some(r) = f.min_rating.filter(|r| *r > 0.0) {
         parts.push(format!("averageScore_greater: {}", (r * 10.0) as i64 - 1));
+    }
+    // Porn: AniList's isAdult. "Either" asks with no isAdult at all; the row
+    // query below reads this marker and drops its default isAdult: false.
+    match rule.is_adult {
+        Some(true) => parts.push("isAdult: true".into()),
+        None => parts.push(ADULT_ANY.into()),
+        Some(false) => {}
     }
     if f.sort == "top" {
         // Scores from a handful of fans aren't a ranking.
@@ -648,6 +708,11 @@ impl Catalog {
 
     pub fn get(&self, id: i64) -> Option<Tile> {
         self.movies.get(&id).map(|e| e.tile.clone())
+    }
+
+    /// A movie's US age rating, "" when not known.
+    pub fn cert(&self, id: i64) -> &str {
+        self.movies.get(&id).map(|e| e.facts.cert.as_str()).unwrap_or_default()
     }
 
     /// Movies like one, best first: TMDb's recommendations for it in TMDb's
@@ -1039,8 +1104,16 @@ pub fn anilist_args(category: &str, page: u32, year: i32, month: u32) -> String 
             _ => "sort: TRENDING_DESC".into(),
         }
     };
+    // A filter that says what it wants of 18+ keeps it; every other row is not 18+.
+    let (adult, filter) = if filter.contains(ADULT_ANY) {
+        ("", filter.replace(&format!(", {ADULT_ANY}"), "").replace(ADULT_ANY, ""))
+    } else if filter.contains("isAdult: true") {
+        ("", filter)
+    } else {
+        ("isAdult: false, ", filter)
+    };
     format!(
-        "{{ Page(page: {page}, perPage: 30) {{ media(type: ANIME, isAdult: false, {filter}) {{ id idMal format genres title {{ english romaji }} coverImage {{ extraLarge }} bannerImage averageScore description(asHtml: false) seasonYear trailer {{ id site }} }} }} }}"
+        "{{ Page(page: {page}, perPage: 30) {{ media(type: ANIME, {adult}{filter}) {{ id idMal format genres title {{ english romaji }} coverImage {{ extraLarge }} bannerImage averageScore description(asHtml: false) seasonYear trailer {{ id site }} }} }} }}"
     )
 }
 
@@ -1106,6 +1179,24 @@ mod tests {
         assert!(anilist_args("genre:Ecchi", 1, 2026, 10).contains("genre: \"Ecchi\""));
         let q = anilist_args("tag:Female Harem", 2, 2026, 10);
         assert!(q.contains("tag: \"Female Harem\"") && q.contains("page: 2") && q.contains("isAdult: false"), "{q}");
+        // 18+ from the filter: off by default, kept out of AniList's query when included.
+        let base = Filter { kind: "anime".into(), sort: "popular".into(), ..Default::default() };
+        let q = anilist_args(&anilist_filter(&base), 1, 2026, 11);
+        assert!(q.contains("isAdult: false") && q.contains("genre_not_in: [\"Ecchi\"]"), "{q}");
+        // 18+ without porn: Ecchi comes in, isAdult stays out.
+        let q = anilist_args(&anilist_filter(&Filter { adult: Some("include".into()), ..base.clone() }), 1, 2026, 11);
+        assert!(q.contains("isAdult: false") && !q.contains("Ecchi"), "{q}");
+        let q = anilist_args(&anilist_filter(&Filter { adult: Some("only".into()), ..base.clone() }), 1, 2026, 11);
+        assert!(q.contains("isAdult: false") && q.contains("genre_in: [\"Ecchi\"]"), "{q}");
+        // With porn.
+        let porn = Some("include".to_string());
+        let q = anilist_args(&anilist_filter(&Filter { adult: Some("include".into()), porn: porn.clone(), ..base.clone() }), 1, 2026, 11);
+        assert!(!q.contains("isAdult") && !q.contains("any") && !q.contains("Ecchi"), "{q}");
+        let q = anilist_args(&anilist_filter(&Filter { adult: Some("only".into()), porn: porn.clone(), ..base.clone() }), 1, 2026, 11);
+        assert!(q.contains("isAdult: true") && !q.contains("isAdult: false"), "{q}");
+        // Porn with 18+ off does nothing.
+        let q = anilist_args(&anilist_filter(&Filter { porn, ..base.clone() }), 1, 2026, 11);
+        assert!(q.contains("isAdult: false") && q.contains("genre_not_in: [\"Ecchi\"]"), "{q}");
         assert!(!anilist_args("tag:x\") { y", 1, 2026, 10).contains("\")"));
     }
 
@@ -1501,7 +1592,10 @@ mod tests {
         c.add_at(&mmeta(2, "Short Film", 2018, json!({ "OriginalLanguage": "en", "Runtime": 80, "Studio": "Pixar", "Certifications": [{ "Country": "US", "Certification": "G" }] })), 0);
         c.add_at(&mmeta(3, "Hong Kong", 1994, json!({ "OriginalLanguage": "cn", "Runtime": 102 })), 0);
         c.add_at(&mmeta(4, "Next Summer", 2099, json!({ "OriginalLanguage": "en", "Runtime": 0, "InCinema": "2099-07-01T00:00:00Z" })), 0);
-        let f = |f: Filter| titles(c.filtered(&Filter { kind: "movie".into(), ..f }, 0, 40));
+        // 18+ is off by default: R films stay out until it's picked.
+        assert_eq!(titles(c.filtered(&Filter { kind: "movie".into(), ..Default::default() }, 0, 40)), ["Hong Kong", "Next Summer", "Short Film"]);
+        assert_eq!(titles(c.filtered(&Filter { kind: "movie".into(), adult: Some("only".into()), ..Default::default() }, 0, 40)), ["Parasite"]);
+        let f = |f: Filter| titles(c.filtered(&Filter { kind: "movie".into(), adult: f.adult.clone().or(Some("include".into())), ..f }, 0, 40));
         assert_eq!(f(Filter { languages: vec!["ko".into()], ..Default::default() }), ["Parasite"]);
         assert_eq!(f(Filter { languages: vec!["zh".into()], ..Default::default() }), ["Hong Kong"], "TMDb's cn (Cantonese) files under Chinese");
         assert_eq!(f(Filter { not_languages: vec!["en".into()], ..Default::default() }), ["Hong Kong", "Parasite"]);

@@ -9,8 +9,8 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use tauri::{AppHandle, Manager};
 
-const RADARR_META: &str = "https://api.radarr.video/v1/movie";
-const SKYHOOK: &str = "https://skyhook.sonarr.tv/v1/tvdb/shows/en";
+pub(crate) const RADARR_META: &str = "https://api.radarr.video/v1/movie";
+pub(crate) const SKYHOOK: &str = "https://skyhook.sonarr.tv/v1/tvdb/shows/en";
 
 #[derive(Serialize, Clone, Debug, Default)]
 pub struct Person {

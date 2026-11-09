@@ -10,6 +10,7 @@ import { knowPerson, startProfiles, startProfilesWeb, unlockWeb } from "./profil
 import * as place from "./place.js";
 import "./nav.js";
 import { recentSearches } from "./recent.js";
+import { startNotes } from "./notify.js";
 import { applyTheme, syncIcons } from "./theme.js";
 import { applyLook, drawPickers, onStyle } from "./look.js";
 
@@ -214,6 +215,7 @@ async function startWeb() {
   route();
   // One of Chillarr's profiles: the switcher takes the avatar's place.
   startProfilesWeb().catch(() => {});
+  startNotes();
 }
 
 /** The signed-in Jellyfin user in the top bar; it opens Settings > Account & devices. */
@@ -236,7 +238,7 @@ function drawViewer() {
   warmTabs();
   invoke("refresh").then((cards) => { cards.forEach((c) => store.cards.set(c.id, c)); updateHealth(); store.emit("cards"); }).catch(() => {});
   if (!store.settings.setup_done) openSetup();
-  else startProfiles();
+  else { startProfiles(); startNotes(); }
 })();
 
 // Other modules ask for a redraw (after setup, a sign-in, a new download) this way,

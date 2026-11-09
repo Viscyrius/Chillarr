@@ -1,4 +1,5 @@
 mod arr;
+mod week;
 mod downloads_home;
 mod zipread;
 mod read_core;
@@ -6,6 +7,7 @@ mod read;
 mod read_storage;
 mod hidden;
 mod readparty;
+mod party;
 mod suwayomi;
 mod manga_net;
 mod books;
@@ -38,6 +40,7 @@ mod night;
 mod search_tap;
 mod sharpen;
 mod keepup;
+mod notify;
 mod procs;
 mod qbit;
 mod settings;
@@ -194,6 +197,12 @@ fn media_sign_out(app: AppHandle) {
     media::sign_out(&app)
 }
 
+/// Your week (Classic style): your series and anime by the day they air.
+#[tauri::command]
+async fn watch_week(app: AppHandle) -> Result<Vec<week::WeekShow>, String> {
+    week::list(&app).await
+}
+
 #[tauri::command]
 async fn media_rows(app: AppHandle, tab: String) -> Result<Vec<media::Row>, String> {
     media::rows(&app, &tab).await
@@ -221,8 +230,8 @@ async fn media_search(app: AppHandle, term: String) -> media::Found {
 
 /// Search that answers source by source with "search-update" events (search.rs).
 #[tauri::command]
-async fn media_search_live(app: AppHandle, term: String, seq: u64) {
-    search::live(app, term, seq).await
+async fn media_search_live(app: AppHandle, term: String, seq: u64, adult: Option<bool>) {
+    search::live(app, term, seq, adult.unwrap_or(false)).await
 }
 
 #[tauri::command]
@@ -250,6 +259,44 @@ async fn syncplay_say(app: AppHandle, group: String, text: String) -> Result<(),
 #[tauri::command]
 async fn syncplay_tile(app: AppHandle, id: String) -> Option<tiles::Tile> {
     syncplay::tile(&app, &id).await
+}
+
+// Watch together host tools (syncplay.rs `Room`). Host-only ones check it there.
+#[tauri::command]
+async fn syncplay_join(app: AppHandle, group: String, password: Option<String>) -> Result<(), String> {
+    syncplay::join(&app, &group, password.as_deref()).await
+}
+#[tauri::command]
+fn syncplay_room(app: AppHandle, group: String) -> Option<syncplay::RoomView> {
+    syncplay::room(&app, &group)
+}
+#[tauri::command]
+fn syncplay_locks() -> std::collections::HashMap<String, party::Lock> {
+    syncplay::locks()
+}
+#[tauri::command]
+fn syncplay_set(app: AppHandle, group: String, lock: Option<String>, password: Option<String>, host_only: Option<bool>) -> Result<syncplay::RoomView, String> {
+    syncplay::set(&app, &group, lock.as_deref(), password.as_deref(), host_only)
+}
+#[tauri::command]
+async fn syncplay_kick(app: AppHandle, group: String, who: String) -> Result<syncplay::RoomView, String> {
+    syncplay::kick(&app, &group, &who).await
+}
+#[tauri::command]
+fn syncplay_allow(app: AppHandle, group: String, who: String) -> Result<syncplay::RoomView, String> {
+    syncplay::allow(&app, &group, &who)
+}
+#[tauri::command]
+fn syncplay_host(app: AppHandle, group: String, who: String) -> Result<syncplay::RoomView, String> {
+    syncplay::make_host(&app, &group, &who)
+}
+#[tauri::command]
+async fn syncplay_seen(app: AppHandle, group: String, name: String) -> Result<(), String> {
+    syncplay::seen(&app, &group, &name).await
+}
+#[tauri::command]
+async fn syncplay_gone(app: AppHandle, group: String, name: String) -> Result<(), String> {
+    syncplay::gone(&app, &group, &name).await
 }
 
 #[tauri::command]
@@ -609,8 +656,8 @@ async fn media_downloads(app: AppHandle) -> Vec<waiting::Download> {
 }
 
 #[tauri::command]
-async fn media_stop_download(app: AppHandle, which: String, download_id: String) -> Result<String, String> {
-    waiting::stop_download(&app, &which, &download_id).await
+async fn media_stop_download(app: AppHandle, which: String, download_id: String, whole: Option<bool>) -> Result<String, String> {
+    waiting::stop_download(&app, &which, &download_id, whole.unwrap_or(false)).await
 }
 
 #[tauri::command]
@@ -680,8 +727,8 @@ async fn read_rows(app: AppHandle) -> Result<serde_json::Value, String> {
 }
 
 #[tauri::command]
-async fn read_search(app: AppHandle, term: String, adult: Option<bool>) -> Result<Vec<serde_json::Value>, String> {
-    read::search(&app, &term, adult.unwrap_or(false)).await
+async fn read_search(app: AppHandle, term: String, adult: Option<bool>, porn: Option<bool>) -> Result<Vec<serde_json::Value>, String> {
+    read::search(&app, &term, adult.unwrap_or(false), porn.unwrap_or(false)).await
 }
 
 #[tauri::command]
@@ -742,6 +789,20 @@ fn read_list_set(app: AppHandle, card: serde_json::Value, on: bool) -> Result<bo
 #[tauri::command]
 async fn read_explore(app: AppHandle, e: read::Explore) -> Result<serde_json::Value, String> {
     read::explore(&app, &e).await
+}
+
+/// The details under a series' or book's description (AniList or Open Library).
+#[tauri::command]
+async fn read_about(anilist: Option<i64>, olid: Option<String>) -> Result<Vec<(String, String)>, String> {
+    read_about_any(anilist, olid).await
+}
+
+pub(crate) async fn read_about_any(anilist: Option<i64>, olid: Option<String>) -> Result<Vec<(String, String)>, String> {
+    match (anilist, olid) {
+        (Some(id), _) if id > 0 => read::about(id).await,
+        (_, Some(o)) => books::about(&o).await,
+        _ => Ok(vec![]),
+    }
 }
 
 #[tauri::command]
@@ -806,6 +867,26 @@ fn hidden_lock(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn notify_state(app: AppHandle, target: notify::Target) -> Result<notify::State, String> {
+    notify::state(&app, &target)
+}
+
+#[tauri::command]
+fn notify_set(app: AppHandle, target: notify::Target, on: bool, auto: Option<bool>) -> Result<String, String> {
+    notify::set(&app, &target, on, auto.unwrap_or(false))
+}
+
+#[tauri::command]
+fn notify_list(app: AppHandle) -> Result<Vec<notify::Watch>, String> {
+    notify::list(&app)
+}
+
+#[tauri::command]
+fn notify_unseen(app: AppHandle) -> Result<Vec<notify::Note>, String> {
+    notify::unseen(&app)
+}
+
+#[tauri::command]
 fn hidden_set(app: AppHandle, keys: Vec<String>, hide: bool, label: Option<String>) -> Result<bool, String> {
     hidden::set(&app, &keys, hide, label.as_deref())
 }
@@ -842,16 +923,32 @@ fn readparty_start(app: AppHandle, key: String, chapter: i64, page: u32) -> Resu
     readparty::start(&app, &key, chapter, page)
 }
 #[tauri::command]
-fn readparty_join(app: AppHandle, code: String) -> Result<readparty::State, String> {
-    readparty::join(&app, &code)
+fn readparty_join(app: AppHandle, code: String, password: Option<String>) -> Result<readparty::State, String> {
+    readparty::join(&app, &code, password.as_deref())
 }
 #[tauri::command]
 fn readparty_state(app: AppHandle, code: String) -> Result<readparty::State, String> {
     readparty::state(&app, &code)
 }
 #[tauri::command]
-fn readparty_move(app: AppHandle, code: String, chapter: i64, page: u32) -> Result<readparty::State, String> {
-    readparty::moved(&app, &code, chapter, page)
+fn readparty_move(app: AppHandle, code: String, chapter: i64, page: u32, frac: Option<f32>) -> Result<readparty::State, String> {
+    readparty::moved(&app, &code, chapter, page, frac)
+}
+#[tauri::command]
+fn readparty_set(app: AppHandle, code: String, mode: Option<String>, lock: Option<String>, password: Option<String>) -> Result<readparty::State, String> {
+    readparty::set(&app, &code, mode.as_deref(), lock.as_deref(), password.as_deref())
+}
+#[tauri::command]
+fn readparty_kick(app: AppHandle, code: String, who: String) -> Result<readparty::State, String> {
+    readparty::kick(&app, &code, &who)
+}
+#[tauri::command]
+fn readparty_allow(app: AppHandle, code: String, who: String) -> Result<readparty::State, String> {
+    readparty::allow(&app, &code, &who)
+}
+#[tauri::command]
+fn readparty_host(app: AppHandle, code: String, who: String) -> Result<readparty::State, String> {
+    readparty::make_host(&app, &code, &who)
 }
 #[tauri::command]
 fn readparty_leave(app: AppHandle, code: String) -> Result<(), String> {
@@ -873,6 +970,16 @@ async fn read_book_author(name: String) -> Result<Vec<serde_json::Value>, String
 #[tauri::command]
 async fn read_book_search(term: String) -> Result<Vec<serde_json::Value>, String> {
     books::search(&term).await
+}
+
+#[tauri::command]
+async fn read_comic_rows() -> Vec<serde_json::Value> {
+    books::comic_rows_now().await
+}
+
+#[tauri::command]
+async fn read_comic_search(term: String) -> Result<Vec<serde_json::Value>, String> {
+    books::search_comics(&term).await
 }
 
 #[tauri::command]
@@ -1193,6 +1300,10 @@ pub fn run() {
             hidden_unlock,
             hidden_lock,
             hidden_set,
+            notify_state,
+            notify_set,
+            notify_list,
+            notify_unseen,
             hidden_list,
             read_mark,
             read_folder,
@@ -1208,6 +1319,7 @@ pub fn run() {
             read_genres,
             read_filter_info,
             read_similar,
+            read_about,
             read_downloads,
             read_book_rows,
             read_book_more,
@@ -1217,8 +1329,14 @@ pub fn run() {
             readparty_state,
             readparty_move,
             readparty_leave,
+            readparty_set,
+            readparty_kick,
+            readparty_allow,
+            readparty_host,
             read_book_search,
             read_book_author,
+            read_comic_rows,
+            read_comic_search,
             read_book_copies,
             read_book_get,
             read_book_remove,
@@ -1244,6 +1362,7 @@ pub fn run() {
             media_connect,
             media_sign_out,
             media_rows,
+            watch_week,
             media_episodes,
             media_search,
             media_search_live,
@@ -1284,6 +1403,15 @@ pub fn run() {
             syncplay_call,
             syncplay_tile,
             syncplay_say,
+            syncplay_join,
+            syncplay_room,
+            syncplay_locks,
+            syncplay_set,
+            syncplay_kick,
+            syncplay_allow,
+            syncplay_host,
+            syncplay_seen,
+            syncplay_gone,
             profiles_add,
             profiles_switch,
             profiles_check_pin,
@@ -1422,6 +1550,7 @@ pub fn run() {
             limit::spawn(app.handle().clone());
             sharpen::spawn(app.handle().clone());
             keepup::spawn(app.handle().clone());
+            notify::spawn(app.handle().clone());
             indexers::spawn(app.handle().clone());
             subfetch::spawn(app.handle().clone());
             search_tap::spawn(app.handle().clone());

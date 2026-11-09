@@ -296,10 +296,13 @@ fn open_while_locked(cmd: &str) -> bool {
 
 fn need(cmd: &str) -> Option<Need> {
     Some(match cmd {
-        "web_viewer" | "media_status" | "media_rows" | "media_episodes" | "media_search" | "media_search_live" | "media_play" | "media_report" | "media_forget_resume" | "media_get" | "media_get_picked" | "media_seasons" | "media_trailer"
+        "web_viewer" | "media_status" | "media_rows" | "watch_week" | "media_episodes" | "media_search" | "media_search_live" | "media_play" | "media_report" | "media_forget_resume" | "media_get" | "media_get_picked" | "media_seasons" | "media_trailer"
         | "media_explore" | "media_filter" | "media_filter_genres" | "media_filter_studios" | "media_anime_tags" | "media_details" | "media_similar" | "media_maker" | "media_my_list" | "media_my_list_marks" | "media_completed"
         | "media_watched_keys" | "completed_remove" | "media_show_episodes" | "marker_set" | "marker_restart" | "media_set_watched" | "media_segments" | "subs_search" | "subs_download" | "subs_sync" | "subs_choice" | "subs_set"
         | "media_waiting" | "media_downloads" | "watchnow_start" | "watchnow_leave" | "watchnow_cancel" | "watchnow_progress" | "watchnow_list" | "watchnow_ready" | "night_prepare" | "syncplay_info" | "syncplay_call" | "syncplay_tile" | "syncplay_say"
+        // Watch together host tools: run as the viewer; the host-only ones
+        // check the viewer is the party's host (syncplay.rs `as_host`).
+        | "syncplay_join" | "syncplay_room" | "syncplay_locks" | "syncplay_set" | "syncplay_kick" | "syncplay_allow" | "syncplay_host" | "syncplay_seen" | "syncplay_gone"
         // Takes a title off the viewer's own Watch now (watchnow.rs keeps one
         // list per Jellyfin user), and only stops a download Watch now itself
         // started and nobody else wants.
@@ -315,9 +318,12 @@ fn need(cmd: &str) -> Option<Need> {
         | "read_rows" | "read_search" | "read_library" | "read_detail" | "read_sources" | "read_follow" | "read_open" | "read_progress" | "read_mode" | "read_hide_week" | "read_mark"
         // Each profile's own hidden list and password (hidden.rs).
         | "hidden_status" | "hidden_set_password" | "hidden_unlock" | "hidden_lock" | "hidden_set" | "hidden_list"
-        | "readparty_start" | "readparty_join" | "readparty_state" | "readparty_move" | "readparty_leave"
-        | "read_book_rows" | "read_book_more" | "read_book_search" | "read_book_author" | "read_book_copies" | "read_book_get" | "read_books" | "read_book_open"
-        | "read_languages" | "read_copy_chapters" | "read_get_chapters" | "read_keep_up" | "read_list" | "read_list_set" | "read_explore" | "read_genres" | "read_filter_info" | "read_similar" | "read_downloads"
+        // Each profile's own Notify me list and notes (notify.rs).
+        | "notify_state" | "notify_set" | "notify_list" | "notify_unseen"
+        // Host-only ones check the viewer is the party's host (readparty.rs).
+        | "readparty_start" | "readparty_join" | "readparty_state" | "readparty_move" | "readparty_leave" | "readparty_set" | "readparty_kick" | "readparty_allow" | "readparty_host"
+        | "read_book_rows" | "read_book_more" | "read_book_search" | "read_book_author" | "read_comic_rows" | "read_comic_search" | "read_book_copies" | "read_book_get" | "read_books" | "read_book_open"
+        | "read_languages" | "read_copy_chapters" | "read_get_chapters" | "read_keep_up" | "read_list" | "read_list_set" | "read_explore" | "read_genres" | "read_filter_info" | "read_similar" | "read_about" | "read_downloads"
         | "read_delete_plan" => Need::Viewer,
         // Deleting reading's files (read_storage.rs), like a film's Delete.
         "read_unfollow" | "read_book_remove" | "read_stop_chapters" | "read_storage" | "read_delete_chapters" | "read_book_delete_file" => Need::Delete,
@@ -380,22 +386,29 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
             ok(st)
         }
         "media_rows" => res(media::rows(app, &arg::<String>(a, "tab")?).await),
+        "watch_week" => res(crate::week::list(app).await),
         "read_rows" => res(crate::read::rows(app).await),
         "read_book_rows" => ok(crate::books::rows().await),
         "readparty_start" => res(crate::readparty::start(app, &arg::<String>(a, "key")?, arg(a, "chapter")?, arg(a, "page")?)),
-        "readparty_join" => res(crate::readparty::join(app, &arg::<String>(a, "code")?)),
+        "readparty_join" => res(crate::readparty::join(app, &arg::<String>(a, "code")?, arg::<Option<String>>(a, "password")?.as_deref())),
         "readparty_state" => res(crate::readparty::state(app, &arg::<String>(a, "code")?)),
-        "readparty_move" => res(crate::readparty::moved(app, &arg::<String>(a, "code")?, arg(a, "chapter")?, arg(a, "page")?)),
+        "readparty_move" => res(crate::readparty::moved(app, &arg::<String>(a, "code")?, arg(a, "chapter")?, arg(a, "page")?, arg(a, "frac")?)),
+        "readparty_set" => res(crate::readparty::set(app, &arg::<String>(a, "code")?, arg::<Option<String>>(a, "mode")?.as_deref(), arg::<Option<String>>(a, "lock")?.as_deref(), arg::<Option<String>>(a, "password")?.as_deref())),
+        "readparty_kick" => res(crate::readparty::kick(app, &arg::<String>(a, "code")?, &arg::<String>(a, "who")?)),
+        "readparty_allow" => res(crate::readparty::allow(app, &arg::<String>(a, "code")?, &arg::<String>(a, "who")?)),
+        "readparty_host" => res(crate::readparty::make_host(app, &arg::<String>(a, "code")?, &arg::<String>(a, "who")?)),
         "readparty_leave" => res(crate::readparty::leave(app, &arg::<String>(a, "code")?)),
         "read_book_more" => res(crate::books::more(&arg::<String>(a, "id")?, arg::<u32>(a, "page")?).await),
         "read_book_author" => res(crate::books::by_author(&arg::<String>(a, "name")?).await),
+        "read_comic_rows" => ok(crate::books::comic_rows_now().await),
+        "read_comic_search" => res(crate::books::search_comics(&arg::<String>(a, "term")?).await),
         "read_book_search" => res(crate::books::search(&arg::<String>(a, "term")?).await),
         "read_book_copies" => res(crate::books::copies(app, &arg(a, "meta")?).await),
         "read_book_get" => res(crate::books::get(app, arg(a, "meta")?, &arg::<String>(a, "id")?).await),
         "read_book_remove" => res(crate::books::remove(app, &arg::<String>(a, "key")?).await),
         "read_books" => res(crate::read::books(app).await),
         "read_book_open" => res(crate::read::open_book(app, &arg::<String>(a, "key")?).await),
-        "read_search" => res(crate::read::search(app, &arg::<String>(a, "term")?, arg::<Option<bool>>(a, "adult")?.unwrap_or(false)).await),
+        "read_search" => res(crate::read::search(app, &arg::<String>(a, "term")?, arg::<Option<bool>>(a, "adult")?.unwrap_or(false), arg::<Option<bool>>(a, "porn")?.unwrap_or(false)).await),
         "read_library" => res(crate::read::library(app).await),
         "read_detail" => res(crate::read::detail(app, &arg::<String>(a, "key")?).await),
         "read_sources" => res(crate::read::sources(app, &arg(a, "meta")?, arg::<Option<String>>(a, "lang")?.as_deref().unwrap_or("en")).await),
@@ -409,6 +422,7 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
         "read_list_set" => res(crate::read::toggle_list(app, &arg::<Value>(a, "card")?, arg(a, "on")?)),
         "read_explore" => res(crate::read::explore(app, &arg(a, "e")?).await),
         "read_similar" => res(crate::read::similar(app, arg(a, "anilist")?).await),
+        "read_about" => res(crate::read_about_any(arg(a, "anilist")?, arg(a, "olid")?).await),
         "read_filter_info" => ok(serde_json::json!({ "tags": crate::read::TAGS.to_vec(), "adult": crate::read::adult_ok(app) })),
         "read_genres" => ok(crate::read::GENRES.to_vec()),
         "read_downloads" => res(crate::read::downloads(app).await),
@@ -427,10 +441,14 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
         "hidden_lock" => res(crate::hidden::lock(app)),
         "hidden_set" => res(crate::hidden::set(app, &arg::<Vec<String>>(a, "keys")?, arg(a, "hide")?, arg::<Option<String>>(a, "label")?.as_deref())),
         "hidden_list" => res(crate::hidden::list(app)),
+        "notify_state" => res(crate::notify::state(app, &arg(a, "target")?)),
+        "notify_set" => res(crate::notify::set(app, &arg(a, "target")?, arg(a, "on")?, arg::<Option<bool>>(a, "auto")?.unwrap_or(false))),
+        "notify_list" => res(crate::notify::list(app)),
+        "notify_unseen" => res(crate::notify::unseen(app)),
         "read_mark" => res(crate::read::mark(app, &arg::<String>(a, "key")?, &arg::<Vec<i64>>(a, "chapters")?, arg(a, "read")?).await),
         "media_episodes" => ok(media::episodes(app, &arg::<String>(a, "seriesId")?).await),
         "media_search" => ok(media::search(app, &arg::<String>(a, "term")?).await),
-        "media_search_live" => ok(crate::search::live(app.clone(), arg(a, "term")?, arg(a, "seq")?).await),
+        "media_search_live" => ok(crate::search::live(app.clone(), arg(a, "term")?, arg(a, "seq")?, arg::<Option<bool>>(a, "adult")?.unwrap_or(false)).await),
         "media_play" => res(media::play(app, &arg::<String>(a, "id")?, arg(a, "start")?, arg(a, "audio")?, arg(a, "subtitle")?).await),
         "media_report" => res(media::report(app, &arg::<String>(a, "what")?, arg(a, "body")?).await),
         "media_forget_resume" => res(media::forget_resume(app, &arg::<String>(a, "id")?).await),
@@ -468,7 +486,7 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
         "media_waiting" => ok(waiting::list(app).await),
         "media_downloads" => ok(waiting::downloads(app).await),
         "media_stop_waiting" => res(waiting::stop(app, &arg::<String>(a, "which")?, arg(a, "id")?).await),
-        "media_stop_download" => res(waiting::stop_download(app, &arg::<String>(a, "which")?, &arg::<String>(a, "downloadId")?).await),
+        "media_stop_download" => res(waiting::stop_download(app, &arg::<String>(a, "which")?, &arg::<String>(a, "downloadId")?, arg::<Option<bool>>(a, "whole")?.unwrap_or(false)).await),
         "media_delete" => res(waiting::delete_title(app, &arg::<Tile>(a, "tile")?).await),
         "media_delete_episodes" => res(waiting::delete_episodes(app, &arg::<Tile>(a, "tile")?, &arg::<Vec<(i64, i64)>>(a, "episodes")?).await),
         "watchnow_start" => res(watchnow::start(app, arg(a, "tile")?, arg(a, "season")?, arg(a, "episode")?).await),
@@ -492,6 +510,15 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
         "syncplay_info" => res(syncplay::info(app)),
         "syncplay_call" => res(syncplay::call(app, &arg::<String>(a, "method")?, &arg::<String>(a, "path")?, arg(a, "body")?).await),
         "syncplay_tile" => ok(syncplay::tile(app, &arg::<String>(a, "id")?).await),
+        "syncplay_join" => res(syncplay::join(app, &arg::<String>(a, "group")?, arg::<Option<String>>(a, "password")?.as_deref()).await),
+        "syncplay_room" => ok(syncplay::room(app, &arg::<String>(a, "group")?)),
+        "syncplay_locks" => ok(syncplay::locks()),
+        "syncplay_set" => res(syncplay::set(app, &arg::<String>(a, "group")?, arg::<Option<String>>(a, "lock")?.as_deref(), arg::<Option<String>>(a, "password")?.as_deref(), arg(a, "hostOnly")?)),
+        "syncplay_kick" => res(syncplay::kick(app, &arg::<String>(a, "group")?, &arg::<String>(a, "who")?).await),
+        "syncplay_allow" => res(syncplay::allow(app, &arg::<String>(a, "group")?, &arg::<String>(a, "who")?)),
+        "syncplay_host" => res(syncplay::make_host(app, &arg::<String>(a, "group")?, &arg::<String>(a, "who")?)),
+        "syncplay_seen" => res(syncplay::seen(app, &arg::<String>(a, "group")?, &arg::<String>(a, "name")?).await),
+        "syncplay_gone" => res(syncplay::gone(app, &arg::<String>(a, "group")?, &arg::<String>(a, "name")?).await),
         // Sent as the viewer, and only into a party they're in (syncplay.rs).
         "syncplay_say" => res(syncplay::say(app, &arg::<String>(a, "group")?, &arg::<String>(a, "text")?).await),
         "web_unlock" => res(crate::profiles::web_unlock(app, &me.session.user_id, &me.session.token, arg::<String>(a, "pin")?).await.map(|_| json!(true))),
