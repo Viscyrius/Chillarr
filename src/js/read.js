@@ -6,7 +6,7 @@
 // complete copy, found by asking every source) or a copy of your choice,
 // then which chapters.
 import { hideButton, isHidden, markHidden } from "./hidden.js";
-import { ask, canDelete, el, getPref, icon, ICON, invoke, setPref, toast } from "./api.js";
+import { ask, canDelete, el, expandRow, getPref, icon, ICON, invoke, setPref, toast } from "./api.js";
 import { openReader } from "./reader.js";
 import { openBook } from "./bookreader.js";
 import { applyLook, drawPickers, inlinePicker, onStyle, styleNow } from "./look.js";
@@ -907,9 +907,9 @@ async function listPage(view, my) {
   const [{ lib, list }, books] = await Promise.all([know(), invoke("read_books").catch(() => [])]);
   if (my !== seq) return;
   const out = [];
-  if (list.length) out.push(row("saved", "Saved for later", list.map((c) => card(c))));
-  if (lib.length) out.push(row("following", "Following", lib.map((s) => card(asCard(s), s))));
-  if (books.length) out.push(row("books", "Books", books.map(bookCard)));
+  if (list.length) out.push(expandRow(row("saved", "Saved for later", list.map((c) => card(c))), "r-saved"));
+  if (lib.length) out.push(expandRow(row("following", "Following", lib.map((s) => card(asCard(s), s))), "r-following"));
+  if (books.length) out.push(expandRow(row("books", "Books", books.map(bookCard)), "r-books"));
   body.replaceChildren(...(out.length ? out : [note("Nothing here yet. Press Add to My List on anything you'd like to read later.")]));
   return true;
 }
@@ -995,7 +995,8 @@ function shell(c) {
   const poster = c.cover ? el("img", { class: "read-poster", src: c.cover, alt: "" }) : null;
   hero.append(el("button", { class: "close", "aria-label": "Close", onclick: () => d.close() }, icon("M6 6l12 12M18 6L6 18")),
     el("div", { class: "read-head-row" }, poster, el("div", { class: "detail-head" }, el("h2", { text: c.title }), meta, options, actions)));
-  const body = el("div", { class: "detail-body" }, c.description ? el("p", { class: "overview read-overview", text: c.description }) : null);
+  const about = aboutBox(c);
+  const body = el("div", { class: "detail-body" }, c.description ? el("p", { class: "overview read-overview", text: c.description }) : null, about);
   d.replaceChildren(hero, body);
   if (!d.open) {
     // The entrance plays when it opens, not on every refresh while chapters come in.
@@ -1004,7 +1005,52 @@ function shell(c) {
     d.freshT = setTimeout(() => d.classList.remove("fresh"), 1200);
     d.showModal();
   }
-  return { actions, body, options, hideOn };
+  return { actions, body, options, hideOn, about };
+}
+
+/** Details asked for lately, so a panel redrawing itself doesn't ask again. */
+const aboutSeen = new Map();
+
+/**
+ * The details under the description, like a film's: genres, who made it, how
+ * many chapters and volumes, the latest chapter and when it came out, the
+ * status and the years. AniList for series, Open Library for books. The latest
+ * chapter comes from the chapter list, once there is one (`about.latest(chs)`).
+ */
+function aboutBox(c) {
+  const box = el("dl", { class: "facts read-facts" });
+  box.hidden = true;
+  let facts = [];
+  let latest = null;
+  const draw = () => {
+    const rows = facts.slice();
+    if (latest) {
+      const at = rows.findIndex(([k]) => k === "Status");
+      const extra = [["Latest chapter", latest.text]];
+      if (latest.count && !rows.some(([k]) => k === "Chapters")) extra.unshift(["Chapters", `${latest.count} so far`]);
+      rows.splice(at < 0 ? Math.min(1, rows.length) : at + 1, 0, ...extra);
+    }
+    box.replaceChildren(...rows.map(([k, v]) => el("div", {}, el("dt", { text: k }), el("dd", { text: v }))));
+    box.hidden = !rows.length;
+  };
+  box.latest = (chs) => {
+    const nums = (chs || []).filter((r) => r.number != null);
+    if (!nums.length) return;
+    const top = nums.reduce((a, b) => (b.number > a.number ? b : a));
+    const when = ago(top.uploaded);
+    latest = { text: when ? `${chLabel(top)}, ${when.charAt(0).toLowerCase()}${when.slice(1)}` : chLabel(top), count: chs.length };
+    draw();
+  };
+  const key = c.anilist ? `a${c.anilist}` : c.olid ? `o${c.olid}` : null;
+  if (!key) return box;
+  const seen = aboutSeen.get(key);
+  if (seen) { facts = seen; draw(); return box; }
+  invoke("read_about", { anilist: c.anilist || null, olid: c.anilist ? null : c.olid || null }).then((got) => {
+    aboutSeen.set(key, got || []);
+    facts = got || [];
+    if (box.isConnected) draw();
+  }).catch(() => {});
+  return box;
 }
 
 /** My List on any title: a toggle that remembers per profile. */
@@ -1053,11 +1099,12 @@ export async function openSeries({ key = null, card: c = null }) {
   clearTimeout(poll);
   if (!key && c && c.anilist && followedByAnilist.has(c.anilist)) key = followedByAnilist.get(c.anilist);
   if (key) return showFollowed(key, mine, c);
-  const { actions, body, options, hideOn } = shell(c);
+  const { actions, body, options, hideOn, about } = shell(c);
   // The chapters show by themselves: the copies are looked up as the panel opens,
   // and again when the translation or copy choice changes.
   const state = { lang: getPref("read-lang") || "en", copy: getPref("read-copy") || "best", onChange: () => getCopies(c, state, list, mine) };
   pickers(options, state);
+  state.about = about;
   // Follow: new chapters come in from now on, nothing older is downloaded unless picked below.
   const followBtn = el("button", { class: "btn primary", disabled: true, title: "Finding the chapters first" }, icon(ICON.plus), "Follow");
   followBtn.addEventListener("click", () => state.follow && state.follow([], followBtn));
@@ -1161,6 +1208,7 @@ async function pickChapters(c, x, state, list, mine, found, fill) {
   let chs;
   try { chs = await invoke("read_copy_chapters", { mangaId: x.manga_id, fillId: fill ? fill.manga_id : null }); } catch (e) { if (mine === panelSeq) list.replaceChildren(note(String(e))); return; }
   if (mine !== panelSeq) return;
+  if (state.about) state.about.latest(chs);
   // Nothing ticked to start with: tick what you want, or get them all.
   const picked = new Set();
   let last = null;
@@ -1241,7 +1289,8 @@ async function showFollowed(key, mine, c0) {
   const f = d.followed;
   const c = { ...(c0 || {}), ...f, chapters: d.chapters.length };
   const scroll = dlg && dlg.open ? dlg.scrollTop : 0;
-  const { actions, body, options, hideOn } = shell(c);
+  const { actions, body, options, hideOn, about } = shell(c);
+  about.latest(d.chapters);
   if (f.lang) options.append(el("span", { class: "read-lang-tag", text: f.lang.toUpperCase() }));
   const readIds = new Set(d.chapters.filter((r) => r.read).map((r) => r.id));
   const spot = d.spot;

@@ -1,7 +1,7 @@
 // Home, Movies, Series, Anime and My downloads: a hero, genre chips and rows
 // of posters; hover previews; Top 10; and "Explore all" pages that keep loading.
 import { isHidden, markHidden } from "./hidden.js";
-import { $, canDelete, el, genresAZ, getPref, icon, ICON, invoke, listen, metaBits, personKey, store, toast } from "./api.js";
+import { $, canDelete, choose, el, expandRow, genresAZ, getPref, icon, ICON, invoke, listen, metaBits, personKey, store, toast } from "./api.js";
 import { openDetail, playShowNow } from "./detail.js";
 import { canWatchNow, confirmRemove, isWatchNow, movieLike, play, removeWatchNow, watchNow } from "./player.js";
 import { completedActions, confirmRedownload, listable, markWatched, onMyList, removeCompleted, removeContinue, resumable, setMyList } from "./mylist.js";
@@ -684,6 +684,21 @@ function stopSection(cls, title, note, items, stop, label = "Stop") {
   return section;
 }
 
+/** Stop on a download. A series' (or anime's) asks first whether to stop
+ *  just that download or the whole show: every episode download, and
+ *  nothing more fetched for it. Closing the question stops nothing. */
+async function stopDownload(d) {
+  let whole = false;
+  if (d.app === "sonarr") {
+    const pick = await choose(`Stop ${d.tile.title}?`,
+      "The whole series cancels every episode it's downloading and stops getting new ones. What's already downloaded stays.",
+      [], "The whole series", "Just this download");
+    if (pick == null) return null;
+    whole = pick === "yes";
+  }
+  return invoke("media_stop_download", { which: d.app, downloadId: d.download_id, whole });
+}
+
 /** Downloading now on My downloads: one entry per torrent, each with Stop. Kept current. */
 async function fillDownloads(view, seq) {
   const slot = view.querySelector(".downloads-slot");
@@ -693,7 +708,7 @@ async function fillDownloads(view, seq) {
   const sig = sigFor(view, ".downloads-slot", list);
   if (sig == null) return;
   const section = list.length
-    ? stopSection("downloads", "Downloading now", null, list, canDelete() && ((d) => invoke("media_stop_download", { which: d.app, downloadId: d.download_id })))
+    ? stopSection("downloads", "Downloading now", null, list, canDelete() && stopDownload)
     : el("div");
   section.classList.add("downloads-slot");
   section._sig = sig;
@@ -790,20 +805,27 @@ async function myListPage(rows, seq) {
   const me = (await invoke("profiles_list").catch(() => [])).find((p) => p.active);
   const groups = { all, ready: all.filter((t) => t.jf_id), notyet: all.filter((t) => !t.jf_id) };
   const names = { all: "All", ready: "Downloaded", notyet: "Not downloaded" };
-  const grid = el("div", { class: "grid-lib" });
+  // One row, like Reading's My List: Show all opens it into the whole list.
+  let grid = el("div");
   const chips = el("div", { class: "chips" }, Object.keys(groups).map((k) => el("button", { class: "chip", dataset: { key: k }, onclick: () => draw(k) }, `${names[k]} ${groups[k].length}`)));
   function draw(key) {
-    grid.replaceChildren(...groups[key].map(listTile));
+    const section = rowEl({ id: "saved", title: names[key] === "All" ? "Saved for later" : names[key], tiles: [] });
+    const track = section.querySelector(".track");
+    track.replaceChildren(...groups[key].map(listTile));
+    section.querySelector(".count").textContent = String(groups[key].length);
+    expandRow(section, "mylist");
+    if (grid.parentNode) { unwatchFits(grid.querySelector(".track")); grid.replaceWith(section); }
+    grid = section;
     chips.querySelectorAll(".chip").forEach((c) => c.classList.toggle("on", c.dataset.key === key));
   }
   const lead = me ? `${me.name}'s list. Other profiles have their own.` : "Titles you saved for later.";
   if (seq !== renderSeq) return null;
+  draw("all");
   const page = el("div", { class: "enter" },
     el("div", { class: "lib-head" }, el("div", {}, el("h1", { text: "My List" }), el("p", { text: lead })), all.length ? chips : null),
     all.length ? grid : el("div", { class: "empty-state", style: "padding-top:6vh" }, el("h2", { text: "Your list is empty" }), el("p", { text: "Press + on anything to save it here. It doesn't download until you say so." }), el("a", { class: "btn primary", href: "#home" }, "Find something")),
     el("div", { class: "watchnow-slot" }),
     el("div", { class: "completed-slot" }));
-  draw("all");
   fillWatchNow(page, seq);
   fillCompleted(page, seq);
   return page;

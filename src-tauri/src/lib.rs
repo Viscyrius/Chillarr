@@ -602,8 +602,8 @@ async fn media_downloads(app: AppHandle) -> Vec<waiting::Download> {
 }
 
 #[tauri::command]
-async fn media_stop_download(app: AppHandle, which: String, download_id: String) -> Result<String, String> {
-    waiting::stop_download(&app, &which, &download_id).await
+async fn media_stop_download(app: AppHandle, which: String, download_id: String, whole: Option<bool>) -> Result<String, String> {
+    waiting::stop_download(&app, &which, &download_id, whole.unwrap_or(false)).await
 }
 
 #[tauri::command]
@@ -735,6 +735,20 @@ fn read_list_set(app: AppHandle, card: serde_json::Value, on: bool) -> Result<bo
 #[tauri::command]
 async fn read_explore(app: AppHandle, e: read::Explore) -> Result<serde_json::Value, String> {
     read::explore(&app, &e).await
+}
+
+/// The details under a series' or book's description (AniList or Open Library).
+#[tauri::command]
+async fn read_about(anilist: Option<i64>, olid: Option<String>) -> Result<Vec<(String, String)>, String> {
+    read_about_any(anilist, olid).await
+}
+
+pub(crate) async fn read_about_any(anilist: Option<i64>, olid: Option<String>) -> Result<Vec<(String, String)>, String> {
+    match (anilist, olid) {
+        (Some(id), _) if id > 0 => read::about(id).await,
+        (_, Some(o)) => books::about(&o).await,
+        _ => Ok(vec![]),
+    }
 }
 
 #[tauri::command]
@@ -1195,6 +1209,7 @@ pub fn run() {
             read_genres,
             read_filter_info,
             read_similar,
+            read_about,
             read_downloads,
             read_book_rows,
             read_book_more,

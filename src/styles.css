@@ -2605,3 +2605,16 @@ body[data-mode="read"] #together-btn { display: none; }
 body[data-rshade="light"] .rp-dialog { box-shadow: 0 30px 80px rgba(20, 30, 50, 0.3); }
 @media (prefers-reduced-motion: reduce) { .rp-dialog { animation: none; } }
 .rp-dialog .rp-people { margin: 12px 0 20px; }
+
+/* My List rows (Movies and Reading): Show all opens the row into every title. */
+.row-head .row-expand { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; padding: 6px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--accent); font: 600 13px var(--display); cursor: pointer; }
+.row-head .row-expand:hover, .row-head .row-expand:focus-visible { background: var(--raised); }
+.row-head .row-expand svg { width: 16px; height: 16px; }
+.row.expanded .track { flex-wrap: wrap; overflow: visible; scroll-snap-type: none; row-gap: 18px; }
+.row.expanded .arrow { display: none; }
+html.no-flexgap .row-head .row-expand > :not([hidden]) ~ :not([hidden]) { margin-left: 4px; }
+html.no-flexgap .row.expanded .track > * { margin-bottom: 18px; }
+html.tv .row-head .row-expand { font-size: 16px; padding: 8px 14px; }
+/* Details under a series' or book's description. */
+.read-detail .read-facts { margin-top: 18px; }
+body[data-rshade="light"] .read-detail .facts dd { color: var(--text); }
