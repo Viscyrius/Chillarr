@@ -602,8 +602,8 @@ async fn media_downloads(app: AppHandle) -> Vec<waiting::Download> {
 }
 
 #[tauri::command]
-async fn media_stop_download(app: AppHandle, which: String, download_id: String) -> Result<String, String> {
-    waiting::stop_download(&app, &which, &download_id).await
+async fn media_stop_download(app: AppHandle, which: String, download_id: String, whole: Option<bool>) -> Result<String, String> {
+    waiting::stop_download(&app, &which, &download_id, whole.unwrap_or(false)).await
 }
 
 #[tauri::command]

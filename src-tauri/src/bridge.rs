@@ -467,7 +467,7 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
         "media_waiting" => ok(waiting::list(app).await),
         "media_downloads" => ok(waiting::downloads(app).await),
         "media_stop_waiting" => res(waiting::stop(app, &arg::<String>(a, "which")?, arg(a, "id")?).await),
-        "media_stop_download" => res(waiting::stop_download(app, &arg::<String>(a, "which")?, &arg::<String>(a, "downloadId")?).await),
+        "media_stop_download" => res(waiting::stop_download(app, &arg::<String>(a, "which")?, &arg::<String>(a, "downloadId")?, arg::<Option<bool>>(a, "whole")?.unwrap_or(false)).await),
         "media_delete" => res(waiting::delete_title(app, &arg::<Tile>(a, "tile")?).await),
         "media_delete_episodes" => res(waiting::delete_episodes(app, &arg::<Tile>(a, "tile")?, &arg::<Vec<(i64, i64)>>(a, "episodes")?).await),
         "watchnow_start" => res(watchnow::start(app, arg(a, "tile")?, arg(a, "season")?, arg(a, "episode")?).await),

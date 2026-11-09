@@ -1,7 +1,7 @@
 // Home, Movies, Series, Anime and My downloads: a hero, genre chips and rows
 // of posters; hover previews; Top 10; and "Explore all" pages that keep loading.
 import { isHidden, markHidden } from "./hidden.js";
-import { $, canDelete, el, expandRow, genresAZ, getPref, icon, ICON, invoke, listen, metaBits, personKey, store, toast } from "./api.js";
+import { $, canDelete, choose, el, expandRow, genresAZ, getPref, icon, ICON, invoke, listen, metaBits, personKey, store, toast } from "./api.js";
 import { openDetail, playShowNow } from "./detail.js";
 import { canWatchNow, confirmRemove, isWatchNow, movieLike, play, removeWatchNow, watchNow } from "./player.js";
 import { completedActions, confirmRedownload, listable, markWatched, onMyList, removeCompleted, removeContinue, resumable, setMyList } from "./mylist.js";
@@ -684,6 +684,21 @@ function stopSection(cls, title, note, items, stop, label = "Stop") {
   return section;
 }
 
+/** Stop on a download. A series' (or anime's) asks first whether to stop
+ *  just that download or the whole show: every episode download, and
+ *  nothing more fetched for it. Closing the question stops nothing. */
+async function stopDownload(d) {
+  let whole = false;
+  if (d.app === "sonarr") {
+    const pick = await choose(`Stop ${d.tile.title}?`,
+      "The whole series cancels every episode it's downloading and stops getting new ones. What's already downloaded stays.",
+      [], "The whole series", "Just this download");
+    if (pick == null) return null;
+    whole = pick === "yes";
+  }
+  return invoke("media_stop_download", { which: d.app, downloadId: d.download_id, whole });
+}
+
 /** Downloading now on My downloads: one entry per torrent, each with Stop. Kept current. */
 async function fillDownloads(view, seq) {
   const slot = view.querySelector(".downloads-slot");
@@ -693,7 +708,7 @@ async function fillDownloads(view, seq) {
   const sig = sigFor(view, ".downloads-slot", list);
   if (sig == null) return;
   const section = list.length
-    ? stopSection("downloads", "Downloading now", null, list, canDelete() && ((d) => invoke("media_stop_download", { which: d.app, downloadId: d.download_id })))
+    ? stopSection("downloads", "Downloading now", null, list, canDelete() && stopDownload)
     : el("div");
   section.classList.add("downloads-slot");
   section._sig = sig;
