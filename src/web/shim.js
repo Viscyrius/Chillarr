@@ -630,14 +630,38 @@
       if (!qc || !qc.ok) throw qc && qc.status === 401 ? "Quick Connect is off in Jellyfin. Turn it on in the dashboard to switch profiles here." : "Jellyfin isn't answering. Try again in a moment.";
       const { Code, Secret } = await qc.json();
       // Wrong PIN, wrong password, too many tries: Chillarr says so here.
-      const got = await invoke("profiles_switch_web", { id, pin, password, code: Code, trust: trust() });
-      const r = await fetch(`${location.origin}/Users/AuthenticateWithQuickConnect`, {
-        method: "POST",
-        headers: { Authorization: auth, "Content-Type": "application/json" },
-        body: JSON.stringify({ Secret }),
-      }).catch(() => null);
-      if (!r || !r.ok) throw "Jellyfin didn't sign that profile in. Try again.";
-      const a = await r.json();
+      // The new login, once Chillarr approved the code. Jellyfin has already
+      // ended the old one by then, so giving up here would mean the sign-in
+      // page: a dropped connection or a busy Jellyfin is tried again for up
+      // to a minute and a half. Only Jellyfin saying the code isn't approved
+      // (400/401/403/404) stops it at once.
+      const login = async (tries) => {
+        for (let i = 0; ; i++) {
+          const r = await fetch(`${location.origin}/Users/AuthenticateWithQuickConnect`, {
+            method: "POST",
+            headers: { Authorization: auth, "Content-Type": "application/json" },
+            body: JSON.stringify({ Secret }),
+            cache: "no-store",
+          }).catch(() => null);
+          if (r && r.ok) {
+            const a = await r.json().catch(() => null);
+            if (a && a.AccessToken && a.User && a.User.Id) return a;
+          } else if (r && [400, 401, 403, 404].includes(r.status)) return null;
+          if (i + 1 >= tries) return null;
+          await pause(Math.min(1000 + i * 1000, 5000));
+        }
+      };
+      let got, a;
+      try { got = await invoke("profiles_switch_web", { id, pin, password, code: Code, trust: trust() }); }
+      catch (e) {
+        // The approval may have gone through with only its answer lost (the
+        // connection dropped): then the old login is gone and the new one waits.
+        a = await login(1);
+        if (!a) throw e;
+        got = null;
+      }
+      if (!a) a = await login(25);
+      if (!a) throw "Jellyfin didn't sign that profile in. Try again.";
       // Signed in on another DeviceId than the old login (a Jellyfin app id the
       // bridge can't take): Jellyfin didn't end the old one, so it's ended here.
       if (appId && device() !== appId) {
