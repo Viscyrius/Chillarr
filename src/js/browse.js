@@ -1178,6 +1178,7 @@ function patchRows(view, tab, entry, fresh, seq) {
 }
 
 const WEEK = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const WEEK_LONG = ["Sundays", "Mondays", "Tuesdays", "Wednesdays", "Thursdays", "Fridays", "Saturdays"];
 
 /** The week's answer, shared by the tabs drawn within a minute of each other. */
 let weekAsk = null;
@@ -1190,6 +1191,7 @@ function watchWeek() {
 
 /** "Out today", "Out 2 days ago", "Fri 21:00". */
 function airText(x, now) {
+  if (x.between) return `Between seasons · usually ${WEEK_LONG[new Date(x.air).getDay()]}`;
   const d = new Date(x.air);
   const days = Math.round((new Date(now.getFullYear(), now.getMonth(), now.getDate()) - new Date(d.getFullYear(), d.getMonth(), d.getDate())) / 86400000);
   const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -1209,17 +1211,24 @@ function yourWeek(tab, seq) {
   watchWeek().then((all) => {
     if (seq !== renderSeq) return;
     const list = all.filter((x) => (tab === "anime" ? x.anime : tab === "series" ? !x.anime : true)).filter((x) => !isHidden(x.tile));
-    if (!list.length) { sec.remove(); return; }
+    if (!list.length) {
+      // Home stays clean; Series and Anime say what would show here.
+      if (tab === "home") { sec.remove(); return; }
+      sec.append(el("div", { class: classic ? "" : "wk-head" }, el("h2", { class: classic ? "cl-h" : "", text: "Your week" }),
+        el("p", { class: classic ? "cl-sub" : "", text: `Your ${tab === "anime" ? "anime" : "shows"} that are still running show here, on the day new episodes come out. Watch one, or add it to My List.` })));
+      return;
+    }
     const now = new Date();
     const today = now.getDay();
-    const onDay = (i) => list.filter((x) => new Date(x.air).getDay() === i).sort((a, b) => a.air - b.air);
+    // Shows with an episode this week first, then the ones between seasons.
+    const onDay = (i) => list.filter((x) => new Date(x.air).getDay() === i).sort((a, b) => (a.between - b.between) || (a.air - b.air));
     // Today first, then the days after it. Each tab says how many come out that day.
     const order = [0, 1, 2, 3, 4, 5, 6].map((k) => (today + k) % 7);
     const label = (i) => { const n = onDay(i).length; return `${i === today ? "Today" : WEEK[i]}${n ? ` · ${n}` : ""}`; };
     const tabs = order.map((i) => [label(i), () => Promise.resolve(onDay(i))]);
     // It opens on today, or on the next day something of yours comes out.
     const first = Math.max(0, order.findIndex((i) => onDay(i).length));
-    const isNew = (x) => x.aired && now - x.air < 86400000;
+    const isNew = (x) => x.aired && !x.between && now - x.air < 86400000;
     const sub = tab === "anime" ? "Your anime by the day new episodes come out." : tab === "series" ? "Your shows by the day new episodes come out." : "Your series and anime by the day new episodes come out.";
     if (classic) {
       const cardFor = (x, i) => {
@@ -1227,7 +1236,7 @@ function yourWeek(tab, seq) {
         b.classList.add("rise", "cl-card");
         b.style.setProperty("--i", String(i));
         if (isNew(x)) b.querySelector(".art").append(el("span", { class: "cl-up", text: "UP" }));
-        if (x.episode) b.append(el("div", { class: "cap wk-ep", text: `${x.episode} · ${airText(x, now)}` }));
+        b.append(el("div", { class: "cap wk-ep", text: [x.episode, airText(x, now)].filter(Boolean).join(" · ") }));
         return b;
       };
       sec.append(el("h2", { class: "cl-h", text: "Your week" }), el("p", { class: "cl-sub", text: sub }),
@@ -1247,7 +1256,7 @@ function yourWeek(tab, seq) {
         el("div", { class: "wk-text" },
           el("strong", { text: t.title }),
           el("span", { class: "wk-ep" }, x.episode ? el("b", { text: x.episode }) : null, x.episode_title ? ` ${x.episode_title}` : ""),
-          el("small", { class: x.aired ? "wk-when out" : "wk-when", text: airText(x, now) })));
+          el("small", { class: x.between ? "wk-when" : x.aired ? "wk-when out" : "wk-when soon", text: airText(x, now) })));
       b.addEventListener("click", () => { hidePreview(true); open(t); });
       markHidden(b, t);
       return b;

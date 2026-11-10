@@ -246,7 +246,7 @@ impl Media {
         self.edit_saved(false, |list| list.iter().map(|t| t.key.clone()).collect())
     }
 
-    fn saved_list(&self) -> Vec<Tile> {
+    pub(crate) fn saved_list(&self) -> Vec<Tile> {
         self.edit_saved(false, |list| list.clone())
     }
 

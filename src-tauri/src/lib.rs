@@ -822,6 +822,12 @@ async fn read_maker_works(app: AppHandle, staff: i64, adult: Option<bool>) -> Re
     read::maker_works(&app, staff, adult.unwrap_or(false)).await
 }
 
+/// A Manga, Manhwa, Manhua or Novels tab's rows: trending, popular, top, then genres.
+#[tauri::command]
+async fn read_kind_rows(app: AppHandle, kind: String) -> Result<serde_json::Value, String> {
+    read::kind_rows(&app, &kind).await
+}
+
 /// Reading Home's rows made from what this profile reads.
 #[tauri::command]
 async fn read_for_you(app: AppHandle) -> Result<serde_json::Value, String> {
@@ -1340,6 +1346,7 @@ pub fn run() {
             read_makers,
             read_maker_works,
             read_for_you,
+            read_kind_rows,
             read_about,
             read_downloads,
             read_book_rows,

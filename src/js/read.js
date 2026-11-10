@@ -330,7 +330,21 @@ function withSelect(section, kind) {
 
 /** Where a row's "Explore all" goes: every title in it, a page at a time (allPage). */
 const allHref = (id, title) => `#r-all/${encodeURIComponent(id)}/${encodeURIComponent(title)}`;
-const hasAll = (id) => id in ROW_EXPLORE || /^(books-|comics-|foryou-|because-\d)/.test(id);
+const hasAll = (id) => id in ROW_EXPLORE || /^(books-|comics-|foryou-|because-\d|k\.)/.test(id);
+
+/** A Manga/Manhwa/Manhua/Novels row ("k.<kind>.<row>") as the query for its whole page, like read.rs kind_row_query. */
+function kindRowQuery(id) {
+  const m = /^k\.(manga|manhwa|manhua|novels)\.(.+)$/.exec(id);
+  if (!m) return null;
+  const [, kind, r] = m;
+  if (r === "trending") return { kind, sort: "trending" };
+  if (r === "popular") return { kind, sort: "popular" };
+  if (r === "top") return { kind, sort: "score" };
+  if (r === "ongoing") return { kind, sort: "popular", status: "RELEASING" };
+  if (r === "new") return { kind, sort: "popular", year_from: new Date().getFullYear() - 1 };
+  if (r.startsWith("g:")) return { kind, sort: "popular", genres: [r.slice(2)] };
+  return null;
+}
 /** Rows of your own that open a page of their own instead. */
 const ROW_HOME = { reading: "#r-mylist", finished: "#r-mylist", books: "#r-books" };
 
@@ -866,6 +880,30 @@ async function explorePage(view, tab, my) {
   const grid = el("div", { class: "grid read-grid" });
   const more = el("div", { class: "read-more" });
   const panel = el("div", { class: "fl-bar read-fl" });
+  // Like Movies' tabs: rows (trending, popular, by genre...) until a filter or
+  // another order is picked; then every match, more as you scroll.
+  const rowsBox = el("div", { class: "read-kind-rows" }, ...skel());
+  const filteredNote = el("div", { class: "fl-tab-note read-kind-note" });
+  const filtering = () => filterCount(f) > 0 || f.sort !== "popular";
+  let rowsAsked = false;
+  function showMode() {
+    const on = filtering();
+    rowsBox.hidden = on;
+    grid.hidden = !on;
+    more.hidden = !on;
+    filteredNote.hidden = !on;
+    filteredNote.replaceChildren(...(on ? [el("span", { text: "Showing what matches your filters." }),
+      el("button", { class: "linkish", onclick: () => change((x) => Object.assign(x, { ...BLANK_FILTER })) }, "Back to all rows")] : []));
+    if (!on && !rowsAsked) {
+      rowsAsked = true;
+      remembered(`kr:${kind}`, 30 * 60000, () => invoke("read_kind_rows", { kind })).then((rows) => {
+        if (my !== seq) return;
+        rowsBox.replaceChildren(...rows.map((r) => (r.id === "trending" && styleNow() === "cinema"
+          ? row(`k.${kind}.top10`, "Top 10 today", r.items.slice(0, 10).map((c, i) => topTen(c, i + 1)), `k.${kind}.trending`)
+          : row(`k.${kind}.${r.id}`, r.title, r.items.map((c) => card(c))))));
+      }).catch((e) => { rowsAsked = false; if (my === seq) rowsBox.replaceChildren(note(String(e)), el("button", { class: "btn soft", style: "margin: 0 var(--gutter)", onclick: () => { rowsBox.replaceChildren(...skel()); showMode(); } }, "Try again")); });
+    }
+  }
   let moreOpen = false;
   const { button: toggle, count: showCount } = filtersButton(panel, "read-filters-open");
   const order = orderSelect(SORTS, f.sort, (v) => change((x) => (x.sort = v)));
@@ -918,7 +956,7 @@ async function explorePage(view, tab, my) {
       ["Top rated", () => exploreItems({ kind, sort: "score" }).then((x) => x.slice(0, 10))],
       ["Most read", () => exploreItems({ kind, sort: "popular" }).then((x) => x.slice(0, 10))],
     ], (items) => items.map(rankRow)));
-    body = el("div", { class: "read-page mn-home mn-explore" }, picker, filterHead, el("div", { class: "mn-cols" }, el("div", { class: "mn-main" }, panel, grid, more), side));
+    body = el("div", { class: "read-page mn-home mn-explore" }, picker, filterHead, el("div", { class: "mn-cols" }, el("div", { class: "mn-main" }, panel, filteredNote, rowsBox, grid, more), side));
   } else if (style === "classic") {
     const top5 = el("section", { class: "cl-block cl-top5" }, tabbed("cl-top", [
       ["Trending", () => exploreItems({ kind, sort: "trending" }).then((x) => x.slice(0, 5))],
@@ -926,9 +964,9 @@ async function explorePage(view, tab, my) {
     ], (items) => [el("div", { class: "cl-ranks" }, items.map(classicRank))]));
     body = el("div", { class: "read-page cl-home cl-explore" }, picker,
       el("div", { class: "cl-banner" }, el("h1", { text: TAB_TITLE[tab] }), el("p", { text: `The ${TAB_TITLE[tab].toLowerCase()} people are reading now, and everything else to find.` })),
-      top5, filterHead, panel, grid, more);
+      top5, filterHead, panel, filteredNote, rowsBox, grid, more);
   } else {
-    body = page(picker, filterHead, panel, grid, more);
+    body = page(picker, filterHead, panel, filteredNote, rowsBox, grid, more);
   }
   view.replaceChildren(top, body);
   if (style !== "classic") {
@@ -941,7 +979,7 @@ async function explorePage(view, tab, my) {
   await know();
   let pageNo = 0, done = false, busy = false, run = 0;
   async function next() {
-    if (busy || done || my !== seq) return;
+    if (busy || done || my !== seq || !filtering()) return;
     busy = true;
     const mine = run;
     more.replaceChildren(el("div", { class: "skel skel-row" }));
@@ -967,12 +1005,14 @@ async function explorePage(view, tab, my) {
     setPref(`read-filter-${kind}`, JSON.stringify(f));
     run++; pageNo = 0; done = false; busy = false;
     grid.replaceChildren();
+    showMode();
     next();
   }
   const io = new IntersectionObserver((e) => { if (e[0].isIntersecting) next(); }, { rootMargin: "900px" });
   io.observe(more);
   const stop = () => { if (my !== seq) io.disconnect(); };
   window.addEventListener("hashchange", stop, { once: true });
+  showMode();
   await next();
   return true;
 }
@@ -1003,7 +1043,7 @@ async function allPage(view, my) {
       const genre = /^foryou-(.+)$/.exec(id);
       const got = books ? await invoke("read_book_more", { id, page: pageNo })
         : because ? { items: pageNo > 1 ? [] : await invoke("read_similar", { anilist: Number(because[1]) }), more: false }
-          : await invoke("read_explore", { e: { ...(genre ? { kind: "all", genres: [genre[1]], sort: "popular" } : ROW_EXPLORE[id]), page: pageNo } });
+          : await invoke("read_explore", { e: { ...(genre ? { kind: "all", genres: [genre[1]], sort: "popular" } : kindRowQuery(id) || ROW_EXPLORE[id]), page: pageNo } });
       if (my !== seq) return;
       grid.append(...(got.items || []).map((c, k) => { const t = card(c); t.style.setProperty("--i", String(Math.min(k, 20))); t.classList.add("rise"); return t; }));
       done = !got.more;
