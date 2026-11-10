@@ -378,7 +378,18 @@
 
   /** Back to jellyfin-web's sign-in. Waits forever, so nothing after it runs on a dead login. */
   let leaving = false;
+  // A profile switch on its way: resolves true once the new login is saved
+  // (the page then starts again as them), false if it failed.
+  let switching = null;
   function toLogin(why = "no-login", dead = null) {
+    // Mid-switch: Jellyfin ends the old login the moment it approves the new
+    // one, before this page has the new one. Anything refused in that gap
+    // (a background call, the event stream) waits for the switch instead of
+    // signing the page out, which used to drop phones on Jellyfin's sign-in.
+    if (switching && !leaving) {
+      switching.then((ok) => { if (!ok) toLogin(why, dead); });
+      return new Promise(() => {});
+    }
     // A login switched meanwhile (Quick Connect in another tab) isn't the one that failed.
     if (dead && server() && server().AccessToken !== dead.AccessToken) { location.reload(); return new Promise(() => {}); }
     if (!leaving) {
@@ -600,6 +611,18 @@
     async switchProfile(id, pin = null, password = null) {
       const s = server();
       if (!s) return toLogin();
+      if (switching) throw "Already switching. One moment.";
+      let done;
+      switching = new Promise((r) => { done = r; });
+      try { return await this.switchTo(s, id, pin, password, () => done(true)); }
+      catch (e) {
+        // Failed: a refusal that waited goes on to the sign-in if the old login is really gone.
+        switching = null;
+        done(false);
+        throw e;
+      }
+    },
+    async switchTo(s, id, pin, password, saved) {
       const version = (APP && APP.appVersion) || await fetch(`${location.origin}/System/Info/Public`).then((r) => r.json()).then((j) => j.Version).catch(() => "12.1.0");
       const q = (v) => String(v).replace(/"/g, "");
       const auth = `MediaBrowser Client="${q((APP && APP.appName) || "Jellyfin Web")}", Device="${q((APP && APP.deviceName) || "Chillarr web")}", DeviceId="${q(device())}", Version="${q(version)}"`;
@@ -627,6 +650,7 @@
       if (got && got.trust) { try { localStorage.setItem(`chillarr_trust_${s.Id}`, got.trust); } catch (e) { /* storage blocked */ } }
       // No Logout for the old token: signing in with the same DeviceId already ended it in Jellyfin.
       leaving = true;
+      saved();
       location.replace(location.pathname);
       return new Promise(() => {});
     },
