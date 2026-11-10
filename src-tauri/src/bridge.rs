@@ -256,9 +256,15 @@ async fn who(app: &AppHandle, c: &Claim, fresh: bool) -> Result<Viewer, AuthErro
                 Known::Ok(Viewer { session, admin, can_delete: admin || me["Policy"]["EnableContentDeletion"] == true, page: c.page.clone() })
             }
         }
-        // Up but slow says nothing about the token: never sign someone out for it.
-        Err(crate::jellyfin::JfError::Down | crate::jellyfin::JfError::Busy) => return Err(AuthError::Down),
-        Err(_) => Known::Bad,
+        // Only Jellyfin saying no (401/403) is a bad sign-in. Anything else (down,
+        // slow, 503 while it starts, a dropped connection) says nothing about the
+        // token: on 2026-11-10 a 503 during a restart was taken as "signed out"
+        // and sent a phone mid watch party to Jellyfin's own pages.
+        Err(crate::jellyfin::JfError::Rejected) => {
+            log(app, Level::Unknown, format!("A web page's sign-in was turned down by Jellyfin (device {}).", c.device.chars().take(12).collect::<String>()));
+            Known::Bad
+        }
+        Err(_) => return Err(AuthError::Down),
     };
     let mut cache = auth_cache().lock().unwrap();
     if cache.len() >= MAX_KNOWN {
@@ -324,11 +330,12 @@ fn need(cmd: &str) -> Option<Need> {
         | "readparty_start" | "readparty_join" | "readparty_state" | "readparty_move" | "readparty_leave" | "readparty_set" | "readparty_kick" | "readparty_allow" | "readparty_host"
         | "read_book_rows" | "read_book_more" | "read_book_search" | "read_book_author" | "read_comic_rows" | "read_comic_search" | "read_book_copies" | "read_book_get" | "read_books" | "read_book_open"
         | "read_languages" | "read_copy_chapters" | "read_get_chapters" | "read_keep_up" | "read_list" | "read_list_set" | "read_explore" | "read_genres" | "read_filter_info" | "read_similar" | "read_about" | "read_downloads"
-        | "read_makers" | "read_maker_works" | "read_for_you"
+        | "read_makers" | "read_maker_works" | "read_for_you" | "read_kind_rows"
         | "read_delete_plan" => Need::Viewer,
         // Deleting reading's files (read_storage.rs), like a film's Delete.
         "read_unfollow" | "read_book_remove" | "read_stop_chapters" | "read_storage" | "read_delete_chapters" | "read_book_delete_file" => Need::Delete,
-        "media_delete" | "media_delete_episodes" | "media_stop_download" | "media_stop_waiting" => Need::Delete,
+        // Deleting from the library is the PC window's, main profile only (lib.rs main_profile_only).
+        "media_stop_download" | "media_stop_waiting" => Need::Delete,
         "storage_overview" | "storage_set_cleanup" | "library_scan" | "library_stats" | "seeding" | "set_seeding" | "get_settings" | "shelf_status" | "meili_status" | "subs_status" => Need::Admin,
         _ => return None,
     })
@@ -360,6 +367,11 @@ fn res<T: Serialize>(r: Result<T, String>) -> Result<Value, String> {
 
 /// Runs a command (already allowed) as the current viewer. Err is the
 /// command's own error, for the page to show.
+/// Now, in Unix milliseconds (a web page's own clock reads the same way).
+fn chrono_now_ms() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64)
+}
+
 async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
     use crate::{completed, details, history, marker, media, pick, similar, skip, storage, subfetch, subs, syncplay, waiting, watchnow};
     let me = viewer::current().ok_or("No viewer")?;
@@ -367,13 +379,19 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
     let app = &app;
     match cmd {
         "web_viewer" => {
+            // This browser went back to Jellyfin's own pages last time (shim.js says why).
+            if let Some(x) = a.get("exit").filter(|x| x.is_object()) {
+                let clean = |v: &Value, n: usize| v.as_str().unwrap_or("?").chars().filter(|c| c.is_ascii_alphanumeric() || "-_/.".contains(*c)).take(n).collect::<String>();
+                let ago = x["at"].as_i64().map(|t| (chrono_now_ms() - t).max(0) / 60_000).unwrap_or(-1);
+                log(app, Level::Amber, format!("{}'s browser went back to Jellyfin's own pages {ago} min ago: {} (on {}).", me.session.user, clean(&x["why"], 40), clean(&x["page"], 40)));
+            }
             let (theme, audio_pref, audio_lang) = {
                 let st = app.state::<crate::SettingsState>();
                 let s = st.current.lock().unwrap();
                 (s.theme.clone(), s.audio_pref.clone(), s.audio_lang.clone())
             };
             let locked = crate::profiles::web_locked(app, &me.session.user_id, &me.session.token);
-            ok(json!({ "user_id": me.session.user_id, "name": me.session.user, "admin": me.admin, "can_delete": me.can_delete, "theme": theme, "audio_pref": audio_pref, "audio_lang": audio_lang, "locked": locked }))
+            ok(json!({ "user_id": me.session.user_id, "name": me.session.user, "admin": me.admin, "can_delete": me.can_delete, "theme": theme, "audio_pref": audio_pref, "audio_lang": audio_lang, "locked": locked, "kids": crate::profiles::is_kids(app, &me.session.user_id) }))
         }
         // The viewer's own name; the PC's addresses and the owner's account
         // are the window's business.
@@ -426,6 +444,7 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
         "read_makers" => res(crate::read::makers(arg(a, "anilist")?).await),
         "read_maker_works" => res(crate::read::maker_works(app, arg(a, "staff")?, arg::<Option<bool>>(a, "adult")?.unwrap_or(false)).await),
         "read_for_you" => res(crate::read::for_you(app).await),
+        "read_kind_rows" => res(crate::read::kind_rows(app, &arg::<String>(a, "kind")?).await),
         "read_about" => res(crate::read_about_any(arg(a, "anilist")?, arg(a, "olid")?).await),
         "read_filter_info" => ok(serde_json::json!({ "tags": crate::read::TAGS.to_vec(), "adult": crate::read::adult_ok(app) })),
         "read_genres" => ok(crate::read::GENRES.to_vec()),
@@ -533,7 +552,7 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
         // Known by the key Chillarr gave the device (it keeps it); none or an
         // unknown one makes a new device, so a page can't take over another's.
         "remote_device" => res(crate::remote::for_device(app, arg::<Option<String>>(a, "key")?.as_deref(), &arg::<Option<String>>(a, "name")?.unwrap_or_default(), arg::<Option<bool>>(a, "renew")?.unwrap_or(false)).await),
-        "profiles_add" => res(crate::profiles::add_web(app, &me.session.user_id, &arg::<String>(a, "name")?, &arg::<String>(a, "color")?, arg(a, "pin")?).await),
+        "profiles_add" => res(crate::profiles::add_web(app, &me.session.user_id, &arg::<String>(a, "name")?, &arg::<String>(a, "color")?, arg(a, "pin")?, arg::<Option<bool>>(a, "kids")?.unwrap_or(false)).await),
         "storage_overview" => ok(storage::overview(app).await),
         "storage_set_cleanup" => res(storage::set_cleanup(app, arg(a, "days")?)),
         "library_stats" => ok(media::library_stats(app).await),
@@ -763,6 +782,47 @@ async fn reply(sock: &mut TcpStream, origin: Option<&str>, status: &str, kind: &
     sock.shutdown().await
 }
 
+/// A command that only reads: the viewer's cached rows (media::rows) stay.
+/// Anything else may change them, so they're built again on the next ask.
+fn keeps_rows(cmd: &str) -> bool {
+    cmd.starts_with("read_")
+        || matches!(
+            cmd,
+            "media_rows" | "media_status" | "media_search" | "media_search_live" | "media_get" | "media_get_picked" | "media_details" | "media_similar" | "media_seasons" | "media_episodes" | "media_trailer"
+                | "media_explore" | "media_filter" | "media_filter_genres" | "media_filter_studios" | "media_anime_tags" | "media_maker" | "watch_week" | "hidden_status" | "web_viewer" | "profiles_list"
+        )
+}
+
+/// `body` gzipped, or None when it's too small to be worth it.
+fn gzip(body: &[u8]) -> Option<Vec<u8>> {
+    use std::io::Write;
+    if body.len() < 1400 {
+        return None;
+    }
+    let mut z = flate2::write::GzEncoder::new(Vec::with_capacity(body.len() / 6), flate2::Compression::fast());
+    z.write_all(body).ok()?;
+    z.finish().ok()
+}
+
+async fn reply_gz(sock: &mut TcpStream, origin: Option<&str>, kind: &str, body: &[u8]) -> std::io::Result<()> {
+    let head = format!(
+        "HTTP/1.1 200 OK
+Content-Type: {kind}
+Content-Encoding: gzip
+Content-Length: {}
+Cache-Control: no-store
+X-Content-Type-Options: nosniff
+{}Connection: close
+
+",
+        body.len(),
+        cors(origin)
+    );
+    sock.write_all(head.as_bytes()).await?;
+    sock.write_all(body).await?;
+    sock.shutdown().await
+}
+
 /// A reading page: the ticket in its address never changes, so it may be cached.
 async fn reply_page(sock: &mut TcpStream, origin: Option<&str>, status: &str, kind: &str, body: &[u8]) -> std::io::Result<()> {
     let cache = if status.starts_with("200") { "private, max-age=21600, immutable" } else { "no-store" };
@@ -884,11 +944,15 @@ async fn serve(app: AppHandle, mut sock: TcpStream, gate: Gate) -> std::io::Resu
         }
     };
     let own = v.session.token.clone();
+    let who = v.session.user_id.clone();
     let out = viewer::run(v, async {
         check_items(&app, cmd, &args).await?;
         run(&app, cmd, &args).await
     })
     .await;
+    if out.is_ok() && !keeps_rows(cmd) {
+        crate::media::forget_rows(&who);
+    }
     match out {
         Ok(value) => {
             let text = value.to_string();
@@ -900,7 +964,12 @@ async fn serve(app: AppHandle, mut sock: TcpStream, gate: Gate) -> std::io::Resu
             // The browser's own Origin header, which a page can't set; the
             // shim's copy only for a client that sends none.
             let text = rewrite(&text, &base, origin.or_else(|| origin_ok(&claim.origin)));
-            reply(&mut sock, origin, "200 OK", "application/json", text.as_bytes()).await
+            // Compressed for a browser that takes it: a tab's rows are 150-400 KB
+            // of JSON, about a tenth gzipped, and phones reach this over far lines.
+            match header(&head, "accept-encoding").filter(|v| v.contains("gzip")).and_then(|_| gzip(text.as_bytes())) {
+                Some(z) => reply_gz(&mut sock, origin, "application/json", &z).await,
+                None => reply(&mut sock, origin, "200 OK", "application/json", text.as_bytes()).await,
+            }
         }
         Err(e) => error(&mut sock, origin, "400 Bad Request", &e).await,
     }
@@ -995,7 +1064,7 @@ mod tests {
         assert_eq!(need("watchnow_ready"), Some(Need::Viewer));
         assert_eq!(need("night_prepare"), Some(Need::Viewer));
         assert_eq!(need("comments_add"), Some(Need::Viewer));
-        assert_eq!(need("media_delete"), Some(Need::Delete));
+        assert_eq!(need("media_delete"), None, "deleting is the PC window's only");
         assert_eq!(need("storage_set_cleanup"), Some(Need::Admin));
     }
 

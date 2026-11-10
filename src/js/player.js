@@ -9,6 +9,25 @@ const box = $("#player");
 // Audio, playback moves to a fresh element (freshVideo) without it.
 let video = $("#video");
 let hls = null;
+/* hls.js is 400 KB of script: it used to load (and run) before the first page
+   could draw, which on a phone over a weak line was seconds of nothing. Now
+   it comes when a title opens or starts, while the server is still being
+   asked how to play it. */
+let hlsLoading = null;
+export function loadHls() {
+  if (window.Hls) return Promise.resolve();
+  if (!hlsLoading) {
+    hlsLoading = new Promise((done) => {
+      const s = document.createElement("script");
+      s.src = "vendor/hls.min.js";
+      s.onload = () => done();
+      // Not there (offline): the browser plays HLS itself where it can; a later title tries again.
+      s.onerror = () => { hlsLoading = null; s.remove(); done(); };
+      document.head.appendChild(s);
+    });
+  }
+  return hlsLoading;
+}
 let session = null; // { tile, info, playlist, watchKey }
 let reportTimer = null;
 let idleTimer = null;
@@ -204,7 +223,8 @@ let padTimer = null, osdTimer = null, mouseAt = null;
 
 function body(extra = {}) {
   return {
-    ItemId: session.tile.jf_id,
+    // A stale Watch now tile plays its library copy (media::play): reports go there.
+    ItemId: session.info.itemId || session.tile.jf_id,
     MediaSourceId: session.info.mediaSourceId,
     PlaySessionId: session.info.playSessionId,
     PlayMethod: session.info.playMethod,
@@ -568,6 +588,7 @@ async function load(tile, playlist, startAt, opts = {}) {
   const seq = ++loadSeq;
   wakeSound();
   $("#p-spinner").hidden = false;
+  const hlsReady = loadHls(); // alongside the ask below, not after it
   let info;
   try {
     // `track`: Jellyfin's numbers just moved (a night copy arrived), so the old one means nothing.
@@ -587,6 +608,10 @@ async function load(tile, playlist, startAt, opts = {}) {
   if (audio == null && session?.tile.jf_id !== tile.jf_id) {
     const carried = carriedAudio(tile, info) ?? preferredAudio(info);
     if (carried != null) return load(tile, playlist, startAt, { ...opts, audio: carried });
+  }
+  if (info.hls && !window.Hls) {
+    await hlsReady;
+    if (seq !== loadSeq || box.hidden) return;
   }
   // The browser playing HLS itself (iPhone): its sound can't go through Web Audio.
   nativeHls = playsNative(info);
@@ -970,7 +995,7 @@ seek.addEventListener("mousemove", (e) => {
   const half = tipPicture(at) ? 100 : 30;
   seekTip.style.left = `${Math.max(half, Math.min(r.width - half, x))}px`;
   seekTip.hidden = false;
-});
+}, { passive: true });
 seek.addEventListener("mouseleave", () => (seekTip.hidden = true));
 
 /** The style that shows Jellyfin's preview picture for time `at` (trickplay.rs) `shown` px wide, or null when it has none. */
@@ -1249,7 +1274,7 @@ window.addEventListener("mousemove", (e) => {
     exitPad();
   }
   poke();
-});
+}, { passive: true });
 
 window.addEventListener("keydown", (e) => {
   if (box.hidden) return;
@@ -1966,6 +1991,14 @@ export async function watchNow(tile, opts = {}) {
       return;
     }
   }
+  // Downloaded and imported already: the backend handed it to the library, and that copy plays.
+  if (!isWatchNow(got)) {
+    if (seq !== loadSeq) return;
+    wn = null;
+    close(false);
+    await play({ ...got, chose: true, resume_seconds: opts.start ?? got.resume_seconds }, null, opts.where);
+    return;
+  }
   if (seq !== loadSeq) {
     // Closed while it got ready: nobody is watching it after all. Unless the
     // same title was pressed again meanwhile: that newer session is watching it.
@@ -2078,7 +2111,7 @@ function dropEarly(keep = null) {
   if (!e || e.key === keep) return;
   e.run.then((got) => {
     // It failed (nothing to undo), or it's being watched after all.
-    if (!got || wn?.key === got.key) return;
+    if (!got || !isWatchNow(got) || wn?.key === got.key) return;
     invoke("watchnow_remove", { key: got.key }).catch(() => {});
   });
 }

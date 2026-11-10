@@ -1,5 +1,6 @@
 // Routing between tabs, the top bar, search, and the first-run tutorial.
 import { refreshHidden } from "./hidden.js";
+import { setKids } from "./filterpanel.js";
 import { $, el, getPref, invoke, personKey, screenMode, setPerson, setPref, store, viewer, WEB, windowFull } from "./api.js";
 import { renderTab, renderSearch, renderExplore, renderMaker, stopBrowse, warmTabs, markRestyle } from "./browse.js";
 import { renderFilter } from "./filter.js";
@@ -11,7 +12,7 @@ import * as place from "./place.js";
 import "./nav.js";
 import { recentSearches } from "./recent.js";
 import { startNotes } from "./notify.js";
-import { applyTheme, syncIcons } from "./theme.js";
+import { applyTheme, setTabTint, syncIcons } from "./theme.js";
 import { applyLook, drawPickers, onStyle } from "./look.js";
 
 const view = $("#view");
@@ -34,7 +35,10 @@ function applyMode(mode, animate) {
   const btn = $("#mode-btn");
   btn.setAttribute("aria-label", reading ? "Switch to watching" : "Switch to reading");
   btn.title = reading ? "Movies and shows" : "Reading";
-  $("#search").placeholder = reading ? "Manga, manhwa, novels, books" : "Movies, series, anime";
+  // A phone's box is a few letters wide: just "Search" there (the narrowest
+  // only the magnifier), not the start of a list cut off.
+  const narrow = matchMedia("(max-width: 380px)").matches ? "" : matchMedia("(max-width: 430px)").matches ? "Search" : null;
+  $("#search").placeholder = narrow ?? (reading ? "Manga, manhwa, novels, books" : "Movies, series, anime");
   // Each mode has its own style and shade.
   applyLook();
   drawPickers();
@@ -71,6 +75,7 @@ function route(redraw = false) {
   const left = place.current();
   const { id, fresh } = place.entry();
   document.querySelectorAll("[data-tab]").forEach((a) => a.classList.toggle("on", a.dataset.tab === tab));
+  setTabTint(tab);
   if (tab === current && tab !== "settings" && tab !== "explore" && tab !== "filter" && tab !== "r-all" && tab !== "maker" && tab !== "r-author" && tab !== "r-maker") return;
   // Leaving a page: remember where you were on it. Search results aren't a
   // page of their own; the place from before the search stays.
@@ -180,7 +185,8 @@ document.addEventListener("contextmenu", (e) => {
    counts: a slow TV may wait a long time on its first rows), so index.html's
    guard, which is for a page that never came alive, leaves this visit be. */
 (() => {
-  const seen = () => { if (!window.__CHILLARR_BOOTED__ && view.firstElementChild) { window.__CHILLARR_BOOTED__ = true; mo.disconnect(); } };
+  // Always set once drawn: reading the flag first can say "yes" while the shim is still only waiting.
+  const seen = () => { if (view.firstElementChild) { window.__CHILLARR_BOOTED__ = true; mo.disconnect(); } };
   const mo = new MutationObserver(seen);
   mo.observe(view, { childList: true, subtree: true });
 })();
@@ -188,7 +194,10 @@ document.addEventListener("contextmenu", (e) => {
 /** Start in Jellyfin's web pages: no profiles, setup or app health, just the signed-in user. */
 async function startWeb() {
   document.body.classList.add("web");
-  try { Object.assign(viewer, await invoke("web_viewer")); setPerson(viewer.user_id); refreshHidden(); if (viewer.theme) applyTheme(viewer.theme); if (viewer.locked) await unlockWeb(viewer); }
+  // Why this browser last went back to Jellyfin's own pages (shim.js), told to Chillarr's log once.
+  let exit = null;
+  try { exit = JSON.parse(localStorage.getItem("chillarr_exit") || "null"); } catch (e) { /* none */ }
+  try { Object.assign(viewer, await invoke("web_viewer", exit ? { exit } : {})); try { localStorage.removeItem("chillarr_exit"); } catch (e) { /* storage blocked */ } setPerson(viewer.user_id); setKids(!!viewer.kids); refreshHidden(); if (viewer.theme) applyTheme(viewer.theme); if (viewer.locked) await unlockWeb(viewer); }
   catch (e) {
     view.replaceChildren(el("div", { class: "web-down" }, el("h1", { text: "Chillarr isn't answering" }), el("p", { text: String(e) }),
       el("button", { class: "btn primary", onclick: () => location.reload() }, "Try again")));

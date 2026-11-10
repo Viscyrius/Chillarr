@@ -1,7 +1,7 @@
 // Home, Movies, Series, Anime and My downloads: a hero, genre chips and rows
 // of posters; hover previews; Top 10; and "Explore all" pages that keep loading.
 import { isHidden, markHidden } from "./hidden.js";
-import { $, ask, canDelete, choose, el, expandRow, genresAZ, getPref, icon, ICON, invoke, listen, metaBits, personKey, store, toast } from "./api.js";
+import { $, ask, canDelete, canStop, choose, WEB, el, expandRow, genresAZ, getPref, icon, ICON, invoke, listen, metaBits, personKey, picProps, store, toast } from "./api.js";
 import { openDetail, playShowNow } from "./detail.js";
 import { canWatchNow, confirmRemove, isWatchNow, movieLike, play, removeWatchNow, watchNow } from "./player.js";
 import { completedActions, confirmRedownload, listable, markWatched, onMyList, removeCompleted, removeContinue, resumable, setMyList } from "./mylist.js";
@@ -9,6 +9,7 @@ import { goBack, remember, restore } from "./place.js";
 import { inlinePicker, styleNow } from "./look.js";
 import { tabbed } from "./read.js";
 import { FILTER_KIND, inlineFilters } from "./filter.js";
+import { adultOf, adultShows } from "./filterpanel.js";
 import { selectable, stopSelecting } from "./select.js";
 
 const WIDE = new Set(["continue", "downloading"]);
@@ -51,12 +52,43 @@ function noArt(t) {
     el("small", { text: t.year ? String(t.year) : kind }));
 }
 
+let seenIO = null;
+/** Gives a deferred poster its picture once its card is on screen or about to
+    be. The card is watched, not the picture: a picture with no address yet has
+    no size, and WebKit (iPhones) never calls a zero-size element visible. */
+function whenSeen(img, box) {
+  if (!seenIO) {
+    seenIO = new IntersectionObserver((hits) => {
+      for (const h of hits) {
+        if (!h.isIntersecting) continue;
+        seenIO.unobserve(h.target);
+        const i = h.target._img;
+        if (!i) continue;
+        if (i.dataset.srcset) i.srcset = i.dataset.srcset;
+        i.src = i.dataset.src;
+      }
+    }, { rootMargin: "400px 400px" });
+  }
+  box._img = img;
+  seenIO.observe(box);
+}
+
 function art(t, wide) {
   // Jellyfin's backdrops are asked for at the hero's 1600px; a card is about 300.
   const src = wide ? (t.backdrop || t.poster || "").replace("fillWidth=1600", "fillWidth=640") : t.poster || t.backdrop;
   const box = el("div", { class: "art" });
   if (src) {
-    const img = el("img", { src, alt: "", loading: "lazy", decoding: "async" });
+    // The size the card is drawn at (styles.css: 112px / 228px on a phone), not the biggest there is.
+    // (A backdrop standing in for a poster is cropped to a sliver of it: kept as it is.)
+    const poster = src === t.poster;
+    const fit = wide ? picProps(src, [300, 480, 640], poster ? 1.5 : 0.5625, "(max-width: 600px) 228px, 300px")
+      : poster ? picProps(src, [185, 342, 500], 1.5, "(max-width: 600px) 112px, 200px") : { src };
+    // In a browser (phones over a far line) a poster is only asked for when its
+    // card comes into view, rows scrolled sideways included: Home used to ask
+    // for 300+ pictures at once, all queued ahead of what's on screen.
+    const later = WEB && "IntersectionObserver" in window;
+    const img = el("img", later ? { alt: "", decoding: "async", "data-src": fit.src, "data-srcset": fit.srcset, sizes: fit.sizes } : { ...fit, alt: "", loading: "lazy", decoding: "async" });
+    if (later) whenSeen(img, box);
     img.addEventListener("load", () => img.classList.add("loaded"), { once: true });
     img.addEventListener("error", () => img.replaceWith(noArt(t)));
     box.append(img);
@@ -118,6 +150,12 @@ export function tile(t, wide = false, rank = 0) {
 }
 
 /* ---------- Hover preview card ---------- */
+// Hover-card trailers: the connection to YouTube is made ahead of the first
+// one, only where there are hover cards (a mouse). A phone on a weak line
+// doesn't spend its first second on two handshakes it never uses.
+if (matchMedia("(hover: hover) and (pointer: fine)").matches && !document.documentElement.classList.contains("tv")) {
+  for (const href of ["https://www.youtube-nocookie.com", "https://i.ytimg.com"]) document.head.append(el("link", { rel: "preconnect", href }));
+}
 // A poster opens like a door: the poster stays under the pointer, a little
 // larger, and the details swing out to the side with room to read, with the
 // trailer playing above them. Wide cards (Continue watching) already are the
@@ -593,7 +631,7 @@ const RANKS = [["top10", "Top 10"], ["trending", "Trending"], ["popular-series",
 function rankItem(t, i) {
   const b = el("button", { class: "rk", style: `--i:${i}`, onclick: () => { hidePreview(true); open(t); } },
     el("span", { class: "rk-n", text: String(i + 1).padStart(2, "0") }),
-    t.poster ? el("img", { class: "rk-img", src: t.poster, alt: "", loading: "lazy", decoding: "async" }) : el("span", { class: "rk-img" }),
+    t.poster ? el("img", { class: "rk-img", ...picProps(t.poster, [92, 154], 1.5, "46px"), alt: "", loading: "lazy", decoding: "async" }) : el("span", { class: "rk-img" }),
     el("span", { class: "rk-text" },
       el("strong", { text: t.title }),
       el("small", { text: [t.year, ...genresAZ(t.genres || [], 2)].filter(Boolean).join(" · ") })),
@@ -714,7 +752,7 @@ async function fillDownloads(view, seq) {
   const sig = sigFor(view, ".downloads-slot", list);
   if (sig == null) return;
   const section = list.length
-    ? stopSection("downloads", "Downloading now", null, list, canDelete() && stopDownload)
+    ? stopSection("downloads", "Downloading now", null, list, canStop() && stopDownload)
     : el("div");
   section.classList.add("downloads-slot");
   section._sig = sig;
@@ -748,7 +786,7 @@ async function fillWaiting(view, seq) {
   if (sig == null) return;
   const slotNow = view.querySelector(".waiting-slot");
   const section = stopSection("enter", "Waiting list", "Chillarr keeps looking for these. The moment a copy is out, it downloads it and lets you know.",
-    list.filter((w) => !(w.tile.status || "").startsWith("Downloading")), canDelete() && ((w) => invoke("media_stop_waiting", { which: w.app, id: w.id })));
+    list.filter((w) => !(w.tile.status || "").startsWith("Downloading")), canStop() && ((w) => invoke("media_stop_waiting", { which: w.app, id: w.id })));
   section.classList.add("waiting-slot");
   section._sig = sig;
   if (section.querySelector(".wait-item")) put(slotNow, section, seq);
@@ -1166,6 +1204,7 @@ function patchRows(view, tab, entry, fresh, seq) {
 }
 
 const WEEK = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const WEEK_LONG = ["Sundays", "Mondays", "Tuesdays", "Wednesdays", "Thursdays", "Fridays", "Saturdays"];
 
 /** The week's answer, shared by the tabs drawn within a minute of each other. */
 let weekAsk = null;
@@ -1178,6 +1217,7 @@ function watchWeek() {
 
 /** "Out today", "Out 2 days ago", "Fri 21:00". */
 function airText(x, now) {
+  if (x.between) return `Between seasons · usually ${WEEK_LONG[new Date(x.air).getDay()]}`;
   const d = new Date(x.air);
   const days = Math.round((new Date(now.getFullYear(), now.getMonth(), now.getDate()) - new Date(d.getFullYear(), d.getMonth(), d.getDate())) / 86400000);
   const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -1197,17 +1237,24 @@ function yourWeek(tab, seq) {
   watchWeek().then((all) => {
     if (seq !== renderSeq) return;
     const list = all.filter((x) => (tab === "anime" ? x.anime : tab === "series" ? !x.anime : true)).filter((x) => !isHidden(x.tile));
-    if (!list.length) { sec.remove(); return; }
+    if (!list.length) {
+      // Home stays clean; Series and Anime say what would show here.
+      if (tab === "home") { sec.remove(); return; }
+      sec.append(el("div", { class: classic ? "" : "wk-head" }, el("h2", { class: classic ? "cl-h" : "", text: "Your week" }),
+        el("p", { class: classic ? "cl-sub" : "", text: `Your ${tab === "anime" ? "anime" : "shows"} that are still running show here, on the day new episodes come out. Watch one, or add it to My List.` })));
+      return;
+    }
     const now = new Date();
     const today = now.getDay();
-    const onDay = (i) => list.filter((x) => new Date(x.air).getDay() === i).sort((a, b) => a.air - b.air);
+    // Shows with an episode this week first, then the ones between seasons.
+    const onDay = (i) => list.filter((x) => new Date(x.air).getDay() === i).sort((a, b) => (a.between - b.between) || (a.air - b.air));
     // Today first, then the days after it. Each tab says how many come out that day.
     const order = [0, 1, 2, 3, 4, 5, 6].map((k) => (today + k) % 7);
     const label = (i) => { const n = onDay(i).length; return `${i === today ? "Today" : WEEK[i]}${n ? ` · ${n}` : ""}`; };
     const tabs = order.map((i) => [label(i), () => Promise.resolve(onDay(i))]);
     // It opens on today, or on the next day something of yours comes out.
     const first = Math.max(0, order.findIndex((i) => onDay(i).length));
-    const isNew = (x) => x.aired && now - x.air < 86400000;
+    const isNew = (x) => x.aired && !x.between && now - x.air < 86400000;
     const sub = tab === "anime" ? "Your anime by the day new episodes come out." : tab === "series" ? "Your shows by the day new episodes come out." : "Your series and anime by the day new episodes come out.";
     if (classic) {
       const cardFor = (x, i) => {
@@ -1215,7 +1262,7 @@ function yourWeek(tab, seq) {
         b.classList.add("rise", "cl-card");
         b.style.setProperty("--i", String(i));
         if (isNew(x)) b.querySelector(".art").append(el("span", { class: "cl-up", text: "UP" }));
-        if (x.episode) b.append(el("div", { class: "cap wk-ep", text: `${x.episode} · ${airText(x, now)}` }));
+        b.append(el("div", { class: "cap wk-ep", text: [x.episode, airText(x, now)].filter(Boolean).join(" · ") }));
         return b;
       };
       sec.append(el("h2", { class: "cl-h", text: "Your week" }), el("p", { class: "cl-sub", text: sub }),
@@ -1228,13 +1275,14 @@ function yourWeek(tab, seq) {
     const card = (x, i) => {
       const t = x.tile;
       const src = (t.backdrop || t.poster || "").replace("fillWidth=1600", "fillWidth=640");
+      const fit = picProps(src, [300, 480, 640], src === t.poster ? 1.5 : 0.5625, "(max-width: 640px) 240px, 300px");
       const b = el("button", { class: "wk-card", style: `--i:${Math.min(i, 8)}`, "aria-label": `${t.title}${x.episode ? `, ${x.episode}` : ""}`, dataset: { key: t.key } },
-        el("div", { class: "wk-art" }, src ? el("img", { src, alt: "", loading: "lazy", decoding: "async" }) : noArt(t),
+        el("div", { class: "wk-art" }, src ? el("img", { ...fit, alt: "", loading: "lazy", decoding: "async" }) : noArt(t),
           isNew(x) ? el("span", { class: "wk-new", text: "NEW" }) : null),
         el("div", { class: "wk-text" },
           el("strong", { text: t.title }),
           el("span", { class: "wk-ep" }, x.episode ? el("b", { text: x.episode }) : null, x.episode_title ? ` ${x.episode_title}` : ""),
-          el("small", { class: x.aired ? "wk-when out" : "wk-when", text: airText(x, now) })));
+          el("small", { class: x.between ? "wk-when" : x.aired ? "wk-when out" : "wk-when soon", text: airText(x, now) })));
       b.addEventListener("click", () => { hidePreview(true); open(t); });
       markHidden(b, t);
       return b;
@@ -1453,7 +1501,7 @@ export async function renderExplore(view, category, title, mode = null, want = 0
 
 /** 18+ on in this profile's Movies or Anime filters: R films and ecchi anime show on a person's page. */
 function makerAdult() {
-  return ["filter-movie", "filter-anime"].some((k) => { try { const a = JSON.parse(getPref(k) || "{}").adult; return a === "include" || a === "only"; } catch (e) { return false; } });
+  return ["filter-movie", "filter-anime"].some((k) => { try { return adultShows(adultOf(JSON.parse(getPref(k) || "{}"))); } catch (e) { return false; } });
 }
 
 /** Everything one director, creator or anime staff member made (makers.rs). */
@@ -1544,7 +1592,7 @@ export function renderSearch(view, term) {
   // What's on screen stays, dimmed, until the new results are in.
   page.root.classList.add("stale");
   // R and NC-17 films only once 18+ is on in this profile's movie filters.
-  const adult = (() => { try { const a = JSON.parse(getPref("filter-movie") || "{}").adult; return a === "include" || a === "only"; } catch (e) { return false; } })();
+  const adult = (() => { try { return adultShows(adultOf(JSON.parse(getPref("filter-movie") || "{}"))); } catch (e) { return false; } })();
   invoke("media_search_live", { term, seq, adult })
     .catch(() => null)
     .then(() => setTimeout(() => {

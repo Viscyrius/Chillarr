@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.18.1 (2026-11-10)
+- Fixed: on a phone or in a browser, Chillarr went back to Jellyfin's old look by itself, usually about 20 seconds after a page finished loading, or when you came back to the app. 0.18.0 made this much worse. It now only goes back if Chillarr's page truly can't start, and then a "Back to Chillarr" button is right there.
+- Fixed: when Jellyfin restarted (an update, or Chillarr starting it), phones were signed out and dropped on Jellyfin's old look, which is what kicked you out of a watch party. Now the page waits a few seconds for Jellyfin to come back and carries on. You're only sent to sign in if Jellyfin itself says your sign-in is gone.
+- Chillarr no longer restarts Jellyfin for an update while anyone has used it in the last 10 minutes, not just while something is playing.
+- After an update, a phone that still has the old page open keeps working until it's reloaded.
+- If Chillarr's page ever does go back to Jellyfin's own, it notes why, and Chillarr's log says so the next time it opens.
+- Faster on phones and in the browser: the app comes as one file instead of 27, pictures only load when they come into view (Home used to ask for 300 at once), series posters come in a size made for phones (a tenth of the size), what the PC sends is compressed, and a tab you opened a moment ago comes back at once.
+- Deleting from your library (and reading downloads) is only on the main profile, and only in the Chillarr app on the PC. It's gone from other profiles and from phones.
+- Settings > Library & storage: tick several titles (or Select all) and delete them in one go. They leave the list straight away and are deleted together. Deleting is for good, not to the Recycle Bin.
+- Kids profiles: R and NC-17 films and Ecchi anime are kept out of every row, Similar and Watch now too, not only search and filters. A kids' profile in the Chillarr app can only make kids' profiles.
+- Fixed: Series always showed the filtered grid with "Filters 1" instead of its rows.
+- Fixed: "Back to all rows" in reading kept the grid and turned 18+ off.
+- Two new colours: Sakura (soft pink) and Aurora (teal over deep indigo). Pick them under the Look button or Settings > Appearance.
+- Every tab has a look of its own now: away from Home, Movies, Series, Anime, My List, Downloads and each reading tab (Books, Manga and the rest) get their own soft glow at the top, made from your colour, so it works with every theme.
+- Reading tabs come back instantly when you switch back to them: Home and Books (Books used to take several seconds each time), and Manga, Manhwa, Manhua and Novels, right where you were in the list, still loading more as you scroll. Home and Books still show your progress and new chapters: they're redrawn after a few minutes, or straight away when something you read changes.
+
+## 0.18.0 (2026-11-10)
+- Kids profiles: when you add or edit a profile there's a Kids profile switch. A kids' profile only opens titles rated up to PG and never sees 18+, in filters, search or anywhere else. Only the main profile can turn it off again, and a kids' profile can only make kids' profiles.
+- 18+ is on from the start for everyone else: R and NC-17 films and mature anime and manga show in search, filters and on a director's or writer's page without turning anything on. Porn is still its own choice and stays off until you pick it. You can still turn 18+ off in Filters.
+- Watch parties: everyone in the party can find the R-rated film the host is playing now. It used to be hidden from them until they turned on 18+.
+- Fixed: on a phone, Jellyfin's old look sometimes came back instead of Chillarr and stayed until you closed the app. A slow connection counted as Chillarr being broken; now it only falls back on a real error, and tries Chillarr again next time. A phone left open over an update also lost the page; it now moves to the new one.
+- Fixed: a Watch now title that had finished downloading still played through the slow download stream, so it took a while to start (Ghost in the Shell). It now plays the downloaded file straight away and keeps your place.
+- Videos never ask for more than the file's own quality, so a film with picture subtitles turned on doesn't come out bigger than the file itself. Much easier on weak Wi-Fi.
+- Faster on phones and in the browser: the video player loads only when you play something, posters and pictures come in the size they're shown at (about half the data on Home), and the blur effects are gone on phones. Buttons are easier to tap, and the top bar no longer runs off the edge on small laptops and tablets.
+
+## 0.17.1 (2026-11-10)
+- Manga, Manhwa, Manhua and Novels open on rows now, like Movies: Top 10 today, Most popular, Top rated, Ongoing, New and rising, then a row for each genre (Action, Fantasy, Romance, Comedy, Drama and more). Every row's title and Explore all open the whole list. Pick a filter or another order and the matching titles take the rows' place; Back to all rows brings them back.
+- Your week shows every show of yours that is still running, not only ones with an episode in Sonarr this week. Your shows are the ones you download, watch, put on My List or favourite. Each sits on the day it airs, with the episode out this week or the next one announced; a show between seasons says so ("Between seasons, usually Wednesdays"). Air days come from Sonarr, TVmaze and AniList. On Series and Anime it stays on the page with a short note when nothing of yours is running.
+- My List rows open and close from their title too, not just the Show all link, in watching and reading.
+
 ## 0.17.0 (2026-11-10)
 - Movies, Series and Anime have their filters right on the page, like the reading tabs. Filters and Order sit above the rows with the genre chips beside them; pick anything and the matching titles take the rows' place. Back to all rows (or Clear filters) brings the rows back. Home's Filters still opens them on their own page.
 - Your week now shows on Series, Anime and Home in every style, not just Classic: your shows by the day their episodes come out, each card with the episode (S2 E7) and when it's out ("Out today", "Fri at 21:00"). It opens on today, or on the next day something of yours comes out.

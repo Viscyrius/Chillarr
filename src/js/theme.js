@@ -11,6 +11,10 @@ export const THEMES = [
   { id: "marquee", name: "Marquee", accent: "#ff3d5a", tint: [350, 18] },
   { id: "reel", name: "Reel", accent: "#f2c14e", tint: [38, 16] },
   { id: "mono", name: "Mono", accent: "#e7e7ec", tint: [240, 0] },
+  // Soft cherry-blossom pink over a plum-tinted dark.
+  { id: "sakura", name: "Sakura", accent: "#ff8fb8", tint: [325, 24] },
+  // Teal over deep indigo: the one preset whose surfaces aren't its accent's hue.
+  { id: "aurora", name: "Aurora", accent: "#4fe3c1", tint: [248, 34] },
 ];
 const DEFAULT = { preset: "ember", accent: "#ff6a3d", surface: "tinted" };
 const KEY = "chillarr-theme";
@@ -79,12 +83,37 @@ export function palette(theme) {
 let current = { ...DEFAULT };
 export const currentTheme = () => current;
 
+/* ---------- Each tab's own light ----------
+   Away from Home every tab has a glow of its own at the top of the page, a
+   turn of the theme's accent around the colour wheel, so it works with any
+   theme (Mono stays grey). Only two CSS variables change on a tab switch;
+   the glow itself is one fixed, still layer (styles.css body::before). */
+const TAB_TURN = {
+  movies: 0, series: 48, anime: -48, mylist: 150, downloads: 96, explore: 0, filter: 0, maker: 24,
+  "r-home": 200, "r-manga": -24, "r-manhwa": 28, "r-manhua": 62, "r-novels": 118, "r-books": 210,
+  "r-mylist": 150, "r-downloads": 96, "r-all": 0, "r-author": 210, "r-maker": 24,
+};
+let tabNow = "home";
+export function setTabTint(tab) {
+  tabNow = tab;
+  const root = document.documentElement.style;
+  const turn = TAB_TURN[tab];
+  if (turn === undefined) { root.setProperty("--tab-a", "0"); root.setProperty("--tab-a2", "0"); return; }
+  const [h, s] = rgbToHsl(hexToRgb(usableAccent(current.accent)));
+  const sat = Math.min(80, s);
+  root.setProperty("--tab-rgb", hslToRgb(h + turn, sat, 58).join(", "));
+  root.setProperty("--tab-rgb2", hslToRgb(h + turn + 36, sat, 52).join(", "));
+  root.setProperty("--tab-a", "0.26");
+  root.setProperty("--tab-a2", "0.16");
+}
+
 /** The colours, at once. Nothing is saved. */
 export function applyTheme(theme) {
   current = { ...DEFAULT, ...theme };
   const vars = palette(current);
   const root = document.documentElement.style;
   for (const k of Object.keys(vars)) root.setProperty(`--${k}`, vars[k]);
+  setTabTint(tabNow);
   document.querySelector('meta[name="theme-color"]')?.setAttribute("content", vars.bg);
   try { localStorage.setItem(KEY, JSON.stringify(current)); } catch (e) { /* storage blocked */ }
   drawLogos();
