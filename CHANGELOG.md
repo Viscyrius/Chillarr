@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.18.0 (2026-11-10)
+- Kids profiles: when you add or edit a profile there's a Kids profile switch. A kids' profile only opens titles rated up to PG and never sees 18+, in filters, search or anywhere else. Only the main profile can turn it off again, and a kids' profile can only make kids' profiles.
+- 18+ is on from the start for everyone else: R and NC-17 films and mature anime and manga show in search, filters and on a director's or writer's page without turning anything on. Porn is still its own choice and stays off until you pick it. You can still turn 18+ off in Filters.
+- Watch parties: everyone in the party can find the R-rated film the host is playing now. It used to be hidden from them until they turned on 18+.
+- Fixed: on a phone, Jellyfin's old look sometimes came back instead of Chillarr and stayed until you closed the app. A slow connection counted as Chillarr being broken; now it only falls back on a real error, and tries Chillarr again next time. A phone left open over an update also lost the page; it now moves to the new one.
+- Fixed: a Watch now title that had finished downloading still played through the slow download stream, so it took a while to start (Ghost in the Shell). It now plays the downloaded file straight away and keeps your place.
+- Videos never ask for more than the file's own quality, so a film with picture subtitles turned on doesn't come out bigger than the file itself. Much easier on weak Wi-Fi.
+- Faster on phones and in the browser: the video player loads only when you play something, posters and pictures come in the size they're shown at (about half the data on Home), and the blur effects are gone on phones. Buttons are easier to tap, and the top bar no longer runs off the edge on small laptops and tablets.
+
 ## 0.17.1 (2026-11-10)
 - Manga, Manhwa, Manhua and Novels open on rows now, like Movies: Top 10 today, Most popular, Top rated, Ongoing, New and rising, then a row for each genre (Action, Fantasy, Romance, Comedy, Drama and more). Every row's title and Explore all open the whole list. Pick a filter or another order and the matching titles take the rows' place; Back to all rows brings them back.
 - Your week shows every show of yours that is still running, not only ones with an episode in Sonarr this week. Your shows are the ones you download, watch, put on My List or favourite. Each sits on the day it airs, with the episode out this week or the next one announced; a show between seasons says so ("Between seasons, usually Wednesdays"). Air days come from Sonarr, TVmaze and AniList. On Series and Anime it stays on the page with a short note when nothing of yours is running.
