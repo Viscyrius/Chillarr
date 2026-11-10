@@ -1122,6 +1122,8 @@ async fn rows_all(app: &AppHandle, tab: &str) -> Result<Vec<Row>, String> {
         }
     }
     let (downloading, tracked) = tokio::join!(queue(app), tracked(app));
+    // Other profiles see only what they asked for on its way (asked.rs).
+    let downloading = crate::asked::keep(app, downloading);
     let library: Vec<Tile> = lib_movies.iter().chain(lib_series.iter()).chain(lib_anime.iter()).cloned().collect();
     let own = |v: Vec<Tile>| mark_tracked(crate::catalog::merge_owned(v, &library), &tracked);
     let year = { use chrono::Datelike; chrono::Local::now().year() as i64 };
@@ -1703,6 +1705,7 @@ pub struct Added {
 
 pub async fn get_it(app: &AppHandle, tile: Tile, quality: &str) -> Result<String, String> {
     let added = add(app, &tile, quality).await?;
+    crate::asked::note_with(app, &tile, &[format!("{}:{}", if added.app == AppId::Radarr { "radarr" } else { "sonarr" }, added.id)]);
     follow(app.clone(), added.app, added.id, tile.key.clone(), tile.title.clone());
     Ok(added.msg)
 }
@@ -1918,7 +1921,7 @@ pub async fn toggle_my_list(app: &AppHandle, tile: Tile, on: bool) -> Result<boo
 
 /// Everything you asked for that isn't watchable yet, with where it stands.
 pub async fn my_list(app: &AppHandle) -> Vec<Tile> {
-    crate::waiting::list(app).await.into_iter().take(40).map(|w| w.tile).collect()
+    crate::asked::keep_waiting(app, crate::waiting::list(app).await).into_iter().take(40).map(|w| w.tile).collect()
 }
 
 fn enc(term: &str) -> String {

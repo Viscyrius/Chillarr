@@ -823,6 +823,32 @@ pub fn without_watch_now(list: Vec<Download>, owned: &HashSet<String>) -> Vec<Do
     list.into_iter().filter(|d| !owned.contains(&d.download_id.to_ascii_lowercase())).collect()
 }
 
+/// Other profiles stop only downloads they asked for (asked.rs); the owner any.
+pub async fn may_stop_download(app: &AppHandle, download_id: &str) -> Result<(), String> {
+    if crate::asked::sees_all(app) {
+        return Ok(());
+    }
+    let mine = crate::asked::keep_by(app, downloads(app).await, |d| &d.tile);
+    if mine.iter().any(|d| d.download_id.eq_ignore_ascii_case(download_id)) {
+        Ok(())
+    } else {
+        Err("Only whoever asked for it, or the main profile, can stop that.".into())
+    }
+}
+
+/// `may_stop_download` for the waiting list.
+pub async fn may_stop_waiting(app: &AppHandle, which: &str, id: i64) -> Result<(), String> {
+    if crate::asked::sees_all(app) {
+        return Ok(());
+    }
+    let mine = crate::asked::keep_waiting(app, list(app).await);
+    if mine.iter().any(|w| w.app == which && w.id == id) {
+        Ok(())
+    } else {
+        Err("Only whoever asked for it, or the main profile, can stop that.".into())
+    }
+}
+
 /// What Radarr and Sonarr are downloading, one entry per torrent (Watch
 /// now's own left out, see `without_watch_now`).
 pub async fn downloads(app: &AppHandle) -> Vec<Download> {

@@ -527,12 +527,28 @@ fn describe(pick: &Pick) -> String {
 pub async fn get_picked(app: &AppHandle, tile: Tile, quality: &str, pick: Pick) -> Result<String, String> {
     let whole = pick.seasons.is_empty() && pick.episodes.is_empty();
     let (a, lookup, anime, _) = series_lookup(app, &tile).await?;
+    // Who asked (asked.rs), under Sonarr's names for it too. A show not in
+    // Sonarr yet gets its Sonarr id from `media::add` below (get_it's note).
+    {
+        let mut extra = Vec::new();
+        if let Some(tvdb) = lookup["tvdbId"].as_i64().filter(|i| *i > 0) {
+            extra.push(format!("tvdb:{tvdb}"));
+        }
+        if let Some(id) = lookup["id"].as_i64().filter(|i| *i > 0) {
+            extra.push(format!("sonarr:{id}"));
+        }
+        if let Some(t) = lookup["title"].as_str() {
+            extra.push(format!("name:{}", t.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect::<String>()));
+        }
+        crate::asked::note_with(app, &tile, &extra);
+    }
     if whole {
         // A new show: added whole. One already in Sonarr (got through the picker
         // before, so only some seasons are wanted) has every season and missing
         // episode marked first, since SeriesSearch only looks for wanted ones.
         let Some(id) = lookup["id"].as_i64().filter(|i| *i > 0) else {
             let added = crate::media::add(app, &tile, quality).await?;
+            crate::asked::note_with(app, &tile, &[format!("sonarr:{}", added.id)]);
             // Anime is added with only its first season wanted; Whole show means all of it.
             if anime && added.id > 0 {
                 for _ in 0..30 {

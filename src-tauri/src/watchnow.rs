@@ -1421,6 +1421,7 @@ pub async fn start(app: &tauri::AppHandle, tile: crate::tiles::Tile, season: Opt
         return Err("That one isn't for kids' profiles.".into());
     }
     let uid = uid(app)?;
+    crate::asked::note(app, &tile);
     let key = key_for(&tile, season, episode).ok_or("Chillarr can't tell which title this is.")?;
     let guard = match FLIGHTS.claim(&format!("{uid}|{key}")) {
         Flight::Lead(g) => g,

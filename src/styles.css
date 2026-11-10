@@ -1063,6 +1063,25 @@ body.web .health-dot { display: none; }
 .pf-editor { max-width: 560px; align-items: stretch; text-align: left; }
 .pf-editor h1 { text-align: left; }
 .pf-sub { margin: -12px 0 0; color: var(--muted); }
+/* Manage profiles > Activity (profiles.js openActivity) */
+.pf-act { max-width: 680px; width: 100%; align-items: stretch; text-align: left; }
+.pf-act h1 { text-align: left; }
+.pf-act-list { display: grid; gap: 10px; max-height: 62vh; overflow-y: auto; padding-right: 4px; }
+.pf-act-row { display: flex; gap: 14px; align-items: flex-start; padding: 14px; border-radius: 12px; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.06); animation: pf-pop 0.35s var(--out) both; }
+.pf-act-row.idle { border-color: rgba(var(--accent-rgb), 0.35); }
+.pf-act-row > .pf-avatar { flex: none; }
+.pf-act-main { flex: 1; min-width: 0; display: grid; gap: 4px; }
+.pf-act-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.pf-act-tag { font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 999px; background: rgba(255,255,255,0.08); color: var(--muted); }
+.pf-act-tag.warn { background: rgba(var(--accent-rgb), 0.18); color: var(--accent); }
+.pf-act-when { color: var(--muted); }
+.pf-act-now, .pf-act-recent { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 3px; font-size: 13px; }
+.pf-act-now li { color: var(--accent); }
+.pf-act-recent li { display: flex; gap: 10px; justify-content: space-between; color: var(--text); }
+.pf-act-recent li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pf-act-recent li small { flex: none; color: var(--muted); }
+.pf-act-none { color: var(--muted); }
+html.no-flexgap .pf-act-row > * + * { margin-left: 14px; }
 .pf-edit-row { display: flex; gap: 24px; align-items: flex-start; flex-wrap: wrap; }
 .pf-fields { flex: 1; min-width: 220px; display: grid; gap: 14px; }
 .pf-fields input { height: 44px; border-radius: 8px; border: 1px solid var(--line-2); background: rgba(255,255,255,0.05); color: var(--text); padding: 0 14px; font: 500 15px var(--display); }

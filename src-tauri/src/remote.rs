@@ -563,6 +563,16 @@ pub fn forget(app: &AppHandle, id: &str) -> Status {
     r.status()
 }
 
+/// A removed profile: every phone-remote code handed to a device it was signed in on stops working.
+pub fn forget_user(app: &AppHandle, user: &str) {
+    let r = app.state::<Remote>();
+    let before = r.saved.lock().unwrap().devices.len();
+    r.saved.lock().unwrap().devices.retain(|d| d.user != user);
+    if r.saved.lock().unwrap().devices.len() != before {
+        r.store();
+    }
+}
+
 /// Looks up this PC's Tailscale name and IP again (a process call: off the async threads).
 async fn refresh_tailscale(app: &AppHandle) {
     let got = tokio::task::spawn_blocking(crate::media::tailscale_self).await.ok().flatten();
