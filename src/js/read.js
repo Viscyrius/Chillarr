@@ -466,7 +466,7 @@ const KEEP_MS = { "r-home": 3 * 60000, "r-books": 3 * 60000 };
 // Manga, Manhwa, Manhua, Novels: AniList's rankings, kept longer. Their grid
 // keeps loading as you scroll after it comes back (explorePage's resume).
 const KEEP_GRID_MS = 15 * 60000;
-const kept = new Map(); // `${person}:${tab}` -> { nodes, at, tab }
+const kept = new Map(); // `${person}:${style}:${tab}` -> { nodes, at, tab }
 let shown = null; // the reading page on screen: { key, tab, view, done }
 const keepFor = (tab) => KEEP_MS[tab] || (TAB_TITLE[tab] ? KEEP_GRID_MS : 0);
 
@@ -492,7 +492,9 @@ export async function renderRead(view, tab) {
   applyLook();
   pvHide(true);
   drawPickers(); // the top bar's Style picker, on every reading tab
-  const key = `${personKey()}:${tab}`;
+  // The style is part of the key: a page kept in another style is never put
+  // back after a style change (it used to be, so only the colours changed).
+  const key = `${personKey()}:${styleNow()}:${tab}`;
   const back = kept.get(key);
   kept.delete(key);
   if (back && Date.now() - back.at < keepFor(tab)) {

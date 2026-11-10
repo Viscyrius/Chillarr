@@ -215,6 +215,12 @@ fn auth_cache() -> &'static Mutex<HashMap<(String, String), (Instant, Known)>> {
     C.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+/// A removed profile: its remembered sign-ins go at once, so its next call is
+/// asked of Jellyfin (where the account is gone) instead of passing on the cache.
+pub fn forget_user(uid: &str) {
+    auth_cache().lock().unwrap().retain(|_, (_, k)| !matches!(k, Known::Ok(v) if v.session.user_id == uid));
+}
+
 enum AuthError {
     /// No usable sign-in, or Jellyfin turned it down.
     Signin,
@@ -506,10 +512,17 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
         "subs_choice" => res(subfetch::choice(app, &arg::<Tile>(a, "tile")?).await),
         "subs_set" => res(subfetch::set(app, &arg::<String>(a, "key")?, &arg::<String>(a, "title")?, arg(a, "langs")?)),
         "subs_status" => ok(subs::status(app).await),
-        "media_waiting" => ok(waiting::list(app).await),
-        "media_downloads" => ok(waiting::downloads(app).await),
-        "media_stop_waiting" => res(waiting::stop(app, &arg::<String>(a, "which")?, arg(a, "id")?).await),
-        "media_stop_download" => res(waiting::stop_download(app, &arg::<String>(a, "which")?, &arg::<String>(a, "downloadId")?, arg::<Option<bool>>(a, "whole")?.unwrap_or(false)).await),
+        // Other profiles see and stop only what they asked for (asked.rs).
+        "media_waiting" => ok(crate::asked::keep_waiting(app, waiting::list(app).await)),
+        "media_downloads" => ok(crate::asked::keep_by(app, waiting::downloads(app).await, |d| &d.tile)),
+        "media_stop_waiting" => {
+            let (which, id) = (arg::<String>(a, "which")?, arg::<i64>(a, "id")?);
+            res(async { waiting::may_stop_waiting(app, &which, id).await?; waiting::stop(app, &which, id).await }.await)
+        }
+        "media_stop_download" => {
+            let did = arg::<String>(a, "downloadId")?;
+            res(async { waiting::may_stop_download(app, &did).await?; waiting::stop_download(app, &arg::<String>(a, "which")?, &did, arg::<Option<bool>>(a, "whole")?.unwrap_or(false)).await }.await)
+        }
         "media_delete" => res(waiting::delete_title(app, &arg::<Tile>(a, "tile")?).await),
         "media_delete_episodes" => res(waiting::delete_episodes(app, &arg::<Tile>(a, "tile")?, &arg::<Vec<(i64, i64)>>(a, "episodes")?).await),
         "watchnow_start" => res(watchnow::start(app, arg(a, "tile")?, arg(a, "season")?, arg(a, "episode")?).await),
@@ -657,9 +670,19 @@ fn foreign_tokens(app: &AppHandle, own: &str) -> Vec<String> {
 /// answers people Jellyfin knows.
 pub fn start(app: AppHandle) {
     for name in SHARED_EVENTS {
+        let h = app.clone();
         app.listen_any(name, move |e| {
             let payload: Value = serde_json::from_str(e.payload()).unwrap_or(Value::Null);
-            send(None, None, name, &payload);
+            // A download's progress names the title: only for the owner and
+            // whoever asked for it (asked.rs). "Look again" (no key) is for all.
+            match payload["key"].as_str().filter(|k| !k.is_empty()) {
+                Some(key) => {
+                    for uid in crate::asked::audience(&h, key) {
+                        send(Some(uid), None, name, &payload);
+                    }
+                }
+                None => send(None, None, name, &payload),
+            }
         });
     }
     tauri::async_runtime::spawn(async move {

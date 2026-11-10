@@ -117,7 +117,7 @@ function openPicker(manage = false) {
     b.addEventListener("click", () => (manage ? edit(p) : choose(p)));
     return b;
   });
-  if (list.length < 8) {
+  if (list.length < 12) { // profiles.rs MAX_PROFILES
     tiles.push(el("button", { class: "pf-tile pf-add", onclick: () => openEditor(null) },
       el("span", { class: "pf-face" }, el("span", { class: "pf-avatar big plus" }, "+")), el("span", { class: "pf-name" }, "Add profile")));
   }
@@ -127,6 +127,7 @@ function openPicker(manage = false) {
     el("div", { class: "pf-foot" },
       WEB ? el("button", { class: "btn ghost", onclick: () => { closePicker(); location.hash = "settings/account"; } }, "Account")
         : el("button", { class: "btn ghost", onclick: () => openPicker(!manage) }, manage ? "Done" : "Manage profiles"),
+      manage && ownerHere() && list.length > 1 ? el("button", { class: "btn ghost", onclick: openActivity }, "Activity") : null,
       canClose && !manage ? el("button", { class: "btn ghost", onclick: closePicker }, "Back") : null)));
   root.hidden = false;
   root.classList.remove("out");
@@ -159,10 +160,14 @@ function setBehind(off) {
   }
 }
 
+/** The owner at this PC, watching as the main profile: they run every profile
+ *  without its PIN (profiles.rs owner_at_pc checks the same, and has the last word). */
+const ownerHere = () => !WEB && !root.dataset.startup && !!list.find((x) => x.active)?.owner;
+
 async function choose(p, pin = null, login = null) {
   if (WEB) return chooseWeb(p, pin);
   if (p.needs_login && login == null) { loginPad(p); return; }
-  if (p.has_pin && pin == null) { pinPad(p); return; }
+  if (p.has_pin && pin == null && !ownerHere()) { pinPad(p); return; }
   try {
     await invoke("profiles_switch", { id: p.id, pin, login });
   } catch (e) {
@@ -264,11 +269,67 @@ function pinPad(p, error = "", submit = (pin) => choose(p, pin), back = () => op
   boxes[0].focus();
 }
 
+/* ---------- Activity (the main profile, in this PC's window) ----------
+   When each profile was last on, what it's playing now and what it watched
+   lately, read from Jellyfin, so Jellyfin's own TV and phone apps count too.
+   A profile nobody has used in a month is marked, with Remove right there. */
+const INACTIVE_DAYS = 30;
+
+function ago(iso) {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t) || t < Date.UTC(2001, 0, 1)) return null; // Jellyfin's "never" is year 1
+  const m = Math.max(0, Math.round((Date.now() - t) / 60000));
+  if (m < 2) return "just now";
+  if (m < 60) return `${m} minutes ago`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h} hour${h === 1 ? "" : "s"} ago`;
+  const d = Math.round(h / 24);
+  if (d < 60) return `${d} day${d === 1 ? "" : "s"} ago`;
+  const mo = Math.round(d / 30);
+  return `${mo} month${mo === 1 ? "" : "s"} ago`;
+}
+
+const daysSince = (iso) => { const t = Date.parse(iso || ""); return Number.isFinite(t) && t > Date.UTC(2001, 0, 1) ? (Date.now() - t) / 86400000 : Infinity; };
+
+async function openActivity() {
+  const body = el("div", { class: "pf-act-list" }, el("p", { class: "pf-sub", text: "Asking Jellyfin..." }));
+  root.replaceChildren(el("div", { class: "pf-inner pf-act" },
+    el("h1", { text: "Activity" }),
+    el("p", { class: "pf-sub", text: "When each profile was last on, on any device, and what they watched. Only you see this." }),
+    body,
+    el("div", { class: "pf-foot" }, el("button", { class: "btn ghost", onclick: () => openPicker(true) }, "Back"))));
+  let all;
+  try { all = await invoke("profiles_activity"); } catch (e) { body.replaceChildren(el("p", { class: "err", text: String(e) })); return; }
+  body.replaceChildren(...all.map((a) => {
+    const p = list.find((x) => x.id === a.id) || a;
+    const last = a.now.length ? "Watching now" : ago(a.last_active);
+    const idle = !a.owner && !a.now.length && daysSince(a.last_active) >= INACTIVE_DAYS;
+    const remove = a.owner ? null : el("button", { class: "btn ghost small danger", onclick: async () => {
+      const ok = await ask(`Remove ${a.name}?`, "Their Jellyfin account goes, and with it every way they had in: their sign-ins on phones and TVs, the phone remote, what they watched and their My List. Downloaded movies and shows stay.", [], "Remove");
+      if (!ok) return;
+      try { await invoke("profiles_remove", { id: a.id }); await load(); window.dispatchEvent(new Event("chillarr:refresh")); toast(`Removed ${a.name}.`); openActivity(); } catch (e) { toast(String(e), true); }
+    } }, "Remove");
+    return el("div", { class: idle ? "pf-act-row idle" : "pf-act-row" },
+      avatar(p, "small"),
+      el("div", { class: "pf-act-main" },
+        el("div", { class: "pf-act-head" },
+          el("strong", { text: a.name }),
+          a.owner ? el("span", { class: "pf-act-tag", text: "You" }) : null,
+          a.kids ? el("span", { class: "pf-act-tag", text: "Kids" }) : null,
+          idle ? el("span", { class: "pf-act-tag warn", text: "Inactive" }) : null),
+        el("small", { class: "pf-act-when", text: last ? (a.now.length ? last : `Last on ${last}`) : "Never signed in" }),
+        a.now.length ? el("ul", { class: "pf-act-now" }, a.now.map((n) => el("li", { text: `${n.paused ? "Paused" : "Playing"}: ${n.title}, on ${n.device}` }))) : null,
+        a.recent.length ? el("ul", { class: "pf-act-recent" }, a.recent.map((r) => el("li", {}, el("span", { text: r.title }), el("small", { text: `${r.done ? "Watched" : "Started"} ${ago(r.at) || ""}` })))) : el("small", { class: "pf-act-none", text: "Nothing watched yet." })),
+      remove);
+  }));
+}
+
 /* ---------- Manage ---------- */
 // A profile with a PIN opens for editing only with that PIN (the backend
 // checks it again on every change).
 function edit(p) {
-  if (!p.has_pin) { openEditor(p); return; }
+  if (!p.has_pin || ownerHere()) { openEditor(p); return; }
   const back = () => openPicker(true);
   const forgot = p.owner ? null : () => forgotPin(p);
   const submit = async (pin) => {

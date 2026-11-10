@@ -15,6 +15,8 @@ export const THEMES = [
   { id: "sakura", name: "Sakura", accent: "#ff8fb8", tint: [325, 24] },
   // Teal over deep indigo: the one preset whose surfaces aren't its accent's hue.
   { id: "aurora", name: "Aurora", accent: "#4fe3c1", tint: [248, 34] },
+  // Warm peach over deep violet, like the sky just after sunset.
+  { id: "dusk", name: "Dusk", accent: "#ffa877", tint: [266, 30] },
 ];
 const DEFAULT = { preset: "ember", accent: "#ff6a3d", surface: "tinted" };
 const KEY = "chillarr-theme";

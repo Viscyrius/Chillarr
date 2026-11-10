@@ -1,4 +1,5 @@
 mod arr;
+mod asked;
 mod week;
 mod downloads_home;
 mod zipread;
@@ -342,6 +343,12 @@ async fn profiles_remove(app: AppHandle, id: String, pin: Option<String>, login:
     profiles::remove(&app, &id, pin, login).await
 }
 
+/// Manage profiles > Activity: the owner at this PC only (not in bridge.rs need()).
+#[tauri::command]
+async fn profiles_activity(app: AppHandle) -> Result<Vec<profiles::Activity>, String> {
+    profiles::activity(&app).await
+}
+
 /// Drives, the biggest titles, and the clean-up choice (Settings > Library & storage).
 /// Smarter search in Jellyfin (meili.rs).
 #[tauri::command]
@@ -654,11 +661,12 @@ async fn media_trailer(app: AppHandle, tile: tiles::Tile) -> Option<String> {
 
 #[tauri::command]
 async fn media_downloads(app: AppHandle) -> Vec<waiting::Download> {
-    waiting::downloads(&app).await
+    asked::keep_by(&app, waiting::downloads(&app).await, |d| &d.tile)
 }
 
 #[tauri::command]
 async fn media_stop_download(app: AppHandle, which: String, download_id: String, whole: Option<bool>) -> Result<String, String> {
+    waiting::may_stop_download(&app, &download_id).await?;
     waiting::stop_download(&app, &which, &download_id, whole.unwrap_or(false)).await
 }
 
@@ -685,11 +693,12 @@ async fn media_delete(app: AppHandle, tile: tiles::Tile) -> Result<String, Strin
 
 #[tauri::command]
 async fn media_waiting(app: AppHandle) -> Vec<waiting::Waiting> {
-    waiting::list(&app).await
+    asked::keep_waiting(&app, waiting::list(&app).await)
 }
 
 #[tauri::command]
 async fn media_stop_waiting(app: AppHandle, which: String, id: i64) -> Result<String, String> {
+    waiting::may_stop_waiting(&app, &which, id).await?;
     waiting::stop(&app, &which, id).await
 }
 
@@ -1459,6 +1468,7 @@ pub fn run() {
             profiles_forget_web_devices,
             profiles_update,
             profiles_remove,
+            profiles_activity,
             profiles_set_password,
             storage_set_cleanup,
             media_my_list_marks,

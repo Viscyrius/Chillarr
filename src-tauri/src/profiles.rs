@@ -408,7 +408,23 @@ fn pin_gate(tries: &Mutex<Tries>, id: &str, stored: Option<&str>, pin: Option<&s
     Ok(())
 }
 
+/// The owner, at this PC, watching as the main profile: the window (not a
+/// browser through bridge.rs), unlocked, no other profile picked. They run
+/// every profile: rename, change or clear its PIN, set its password, remove it,
+/// without knowing that profile's PIN. Getting here already took the main
+/// profile's PIN (or the Chillarr login) when it has one.
+pub fn owner_at_pc(app: &AppHandle) -> bool {
+    let media = app.state::<Media>();
+    crate::viewer::current().is_none()
+        && !media.is_locked()
+        && media.profile.lock().unwrap().is_none()
+        && !app.state::<Profiles>().store.lock().unwrap().needs_login
+}
+
 fn check_pin(app: &AppHandle, p: &Profile, pin: Option<&str>) -> Result<(), String> {
+    if owner_at_pc(app) {
+        return Ok(());
+    }
     let profiles = app.state::<Profiles>();
     let before = profiles.try_state(&p.id);
     let r = pin_gate(&profiles.tries, &p.id, p.pin.as_deref(), pin, Instant::now());
@@ -465,8 +481,119 @@ fn device_for(app: &AppHandle, user_id: &str) -> String {
 }
 
 /// Makes the Jellyfin account and the profile for it.
+/// One profile as the owner sees it in Manage profiles > Activity.
+#[derive(Serialize, Clone)]
+pub struct Activity {
+    pub id: String,
+    pub name: String,
+    pub color: String,
+    pub owner: bool,
+    pub kids: bool,
+    /// Last time Jellyfin saw the account do anything (RFC 3339), from any device.
+    pub last_active: Option<String>,
+    pub last_login: Option<String>,
+    /// What they have open right now, one per device.
+    pub now: Vec<NowPlaying>,
+    /// Their latest plays, newest first.
+    pub recent: Vec<Played>,
+}
+
+#[derive(Serialize, Clone)]
+pub struct NowPlaying {
+    pub title: String,
+    pub device: String,
+    pub paused: bool,
+}
+
+#[derive(Serialize, Clone)]
+pub struct Played {
+    pub title: String,
+    pub at: String,
+    pub done: bool,
+}
+
+/// Jellyfin's name for an item as a person would say it: "Show: S1 E2 Name" or the film.
+fn item_title(i: &serde_json::Value) -> String {
+    let name = i["Name"].as_str().unwrap_or("").to_string();
+    match i["SeriesName"].as_str() {
+        Some(show) => match (i["ParentIndexNumber"].as_i64(), i["IndexNumber"].as_i64()) {
+            (Some(s), Some(e)) => format!("{show}: S{s} E{e} {name}"),
+            _ => format!("{show}: {name}"),
+        },
+        None => name,
+    }
+}
+
+/// What every profile is up to, for the owner at this PC only: when each was
+/// last active, what's playing now, and what they watched lately. Read from
+/// Jellyfin as the owner, so it covers Jellyfin's own TV and phone apps too.
+pub async fn activity(app: &AppHandle) -> Result<Vec<Activity>, String> {
+    if !owner_at_pc(app) {
+        return Err("Only the main profile, on this PC, sees what everyone is doing.".into());
+    }
+    let me = owner(app).ok_or("Sign in to Jellyfin first.")?;
+    let admin = jf_admin(app).filter(|j| j.user_id.is_some()).ok_or("Sign in to Jellyfin first.")?;
+    ensure_owner(app, &me);
+    let list = app.state::<Profiles>().store.lock().unwrap().list.clone();
+    let users = admin.get_json("/Users").await.map_err(|e| format!("Couldn't ask Jellyfin: {e}"))?;
+    let sessions = admin.get_json("/Sessions").await.unwrap_or_default();
+    let mut out = Vec::new();
+    for p in list {
+        let u = users.as_array().and_then(|a| a.iter().find(|u| u["Id"].as_str() == Some(p.id.as_str()))).cloned().unwrap_or_default();
+        let now = sessions
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter(|s| s["UserId"].as_str() == Some(p.id.as_str()) && s["NowPlayingItem"].is_object())
+                    .map(|s| NowPlaying {
+                        title: item_title(&s["NowPlayingItem"]),
+                        device: format!("{} ({})", s["DeviceName"].as_str().unwrap_or("a device"), s["Client"].as_str().unwrap_or("")).replace(" ()", ""),
+                        paused: s["PlayState"]["IsPaused"] == true,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let played = admin
+            .get_json(&format!("/Users/{}/Items?Recursive=true&IncludeItemTypes=Movie,Episode&SortBy=DatePlayed&SortOrder=Descending&Limit=12&Fields=UserData&EnableImages=false", p.id))
+            .await
+            .unwrap_or_default();
+        let recent = played["Items"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|i| {
+                        let at = i["UserData"]["LastPlayedDate"].as_str()?.to_string();
+                        Some(Played { title: item_title(i), at, done: i["UserData"]["Played"] == true })
+                    })
+                    .take(6)
+                    .collect()
+            })
+            .unwrap_or_default();
+        out.push(Activity {
+            owner: p.id == me.user_id,
+            last_active: u["LastActivityDate"].as_str().map(String::from),
+            last_login: u["LastLoginDate"].as_str().map(String::from),
+            id: p.id,
+            name: p.name,
+            color: p.color,
+            kids: p.kids,
+            now,
+            recent,
+        });
+    }
+    out.sort_by_key(|a| !a.owner);
+    Ok(out)
+}
+
+/// The most profiles there can be, from the PC window or a browser (the
+/// picker's Add tile hides at this many too). Each is a Jellyfin account.
+pub const MAX_PROFILES: usize = 12;
+
 pub async fn add(app: &AppHandle, name: &str, color: &str, pin: Option<String>, kids: bool) -> Result<View, String> {
     app.state::<Profiles>().writable()?;
+    if app.state::<Profiles>().store.lock().unwrap().list.len() >= MAX_PROFILES {
+        return Err(format!("That's {MAX_PROFILES} profiles already. Remove one first."));
+    }
     let name = name.trim();
     if name.is_empty() || name.len() > 30 {
         return Err("Give the profile a name (up to 30 letters).".into());
@@ -541,8 +668,6 @@ pub async fn switch(app: &AppHandle, id: &str, pin: Option<String>, login: Optio
 
 // ---------- inside Jellyfin's web pages (bridge.rs) ----------
 
-/// The most profiles there can be once one is added from a browser.
-const WEB_MAX_PROFILES: usize = 12;
 
 #[derive(Serialize, Clone)]
 pub struct WebView {
@@ -878,9 +1003,6 @@ pub async fn add_web(app: &AppHandle, viewer: &str, name: &str, color: &str, pin
     if !all.iter().any(|v| v.id == viewer) {
         return Err("Only Chillarr's profiles can add one here.".into());
     }
-    if all.len() >= WEB_MAX_PROFILES {
-        return Err(format!("That's {WEB_MAX_PROFILES} profiles already. Remove one in the Chillarr app first."));
-    }
     let admin = jf_admin(app).filter(|j| j.user_id.is_some()).ok_or("Sign in to Jellyfin first.")?;
     let theirs = admin.get_json(&format!("/Users/{viewer}")).await.map_err(|e| format!("Couldn't read your Jellyfin account: {e}"))?;
     // A kids' profile only makes kids' profiles.
@@ -1086,6 +1208,11 @@ pub async fn remove(app: &AppHandle, id: &str, pin: Option<String>, login: Optio
     if media.profile.lock().unwrap().as_ref().is_some_and(|p| p.user_id == id) {
         media.set_profile(None);
     }
+    // Every way in goes with the account: browsers' remembered sign-ins and
+    // the phone remote's codes for their devices.
+    crate::bridge::forget_user(id);
+    crate::remote::forget_user(app, id);
+    crate::asked::forget_user(app, id);
     let _ = std::fs::remove_file(app.path().app_data_dir().map(|d| d.join(format!("saved-{id}.json"))).unwrap_or_default());
     let _ = std::fs::remove_file(app.path().app_data_dir().map(|d| crate::history::file(&d, id)).unwrap_or_default());
     let gone = app.state::<crate::watchnow::WatchNow>().forget(id);

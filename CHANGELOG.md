@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.19.0 (2026-11-10)
+- Fixed: picking another style (Cinema, Midnight or Classic) on a reading tab only changed the colours and kept the old layout. It now redraws the page in the new style, like the watching tabs always did.
+- New colour: Dusk, a warm peach over deep violet. Pick it under the Look button or Settings > Appearance.
+- Up to 12 profiles now (it was 8).
+- The main profile, in the Chillarr app on the PC, runs every profile: open, edit, change or remove anyone's PIN, set their password, or remove them, without knowing their PIN.
+- Manage profiles > Activity (main profile, on the PC only): when each profile was last on, on any device, what they're watching right now and on which device, and what they watched lately. Anyone not on for a month is marked Inactive, with Remove right there.
+- Removing a profile now cuts off every way they had in at once: their Jellyfin account, their sign-ins on phones and TVs, and the phone remote codes for their devices.
+- Privacy: other profiles no longer see what's downloading or waiting in general. Downloading now, On the way, the waiting list and download progress only show them what they asked for themselves, and they can only stop their own. What's in the library and ready to watch is unchanged. The main profile still sees everything.
 ## 0.18.1 (2026-11-10)
 - Fixed: on a phone or in a browser, Chillarr went back to Jellyfin's old look by itself, usually about 20 seconds after a page finished loading, or when you came back to the app. 0.18.0 made this much worse. It now only goes back if Chillarr's page truly can't start, and then a "Back to Chillarr" button is right there.
 - Fixed: when Jellyfin restarted (an update, or Chillarr starting it), phones were signed out and dropped on Jellyfin's old look, which is what kicked you out of a watch party. Now the page waits a few seconds for Jellyfin to come back and carries on. You're only sent to sign in if Jellyfin itself says your sign-in is gone.
