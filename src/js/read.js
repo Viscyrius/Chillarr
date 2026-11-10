@@ -22,6 +22,10 @@ const STATUS = { RELEASING: "Ongoing", FINISHED: "Finished", HIATUS: "On hiatus"
 const TAB_TITLE = { "r-manga": "Manga", "r-manhwa": "Manhwa", "r-manhua": "Manhua", "r-novels": "Light novels" };
 
 let seq = 0;
+// A kept page put back on screen (renderRead) is current again under its old
+// number, so its loaders (a grid's next page) carry on where they were.
+let alias = -1;
+const alive = (m) => m === seq || m === alias;
 let followedByAnilist = new Map();
 let followedLang = new Map();
 let listKeys = new Set();
@@ -455,27 +459,32 @@ function freshSection(lib, cls = "") {
    AniList and Open Library for it all again (Books took seconds every time).
    Home and Books show your progress and new chapters, so they're kept for a
    few minutes, and anything that changes what you read (chillarr:refresh)
-   lets them go. The long grids (Manga, Manhwa...) keep loading as you scroll,
-   which a kept copy couldn't, so they're drawn again; My List and Downloads
-   too: they're quick, and always current. */
+   lets them go. The tabs' grids (Manga, Manhwa...) come back where they were
+   and keep loading as you scroll. My List and Downloads are drawn again:
+   they're quick, and always current. */
 const KEEP_MS = { "r-home": 3 * 60000, "r-books": 3 * 60000 };
+// Manga, Manhwa, Manhua, Novels: AniList's rankings, kept longer. Their grid
+// keeps loading as you scroll after it comes back (explorePage's resume).
+const KEEP_GRID_MS = 15 * 60000;
 const kept = new Map(); // `${person}:${tab}` -> { nodes, at, tab }
 let shown = null; // the reading page on screen: { key, tab, view, done }
-const keepFor = (tab) => KEEP_MS[tab] || 0;
+const keepFor = (tab) => KEEP_MS[tab] || (TAB_TITLE[tab] ? KEEP_GRID_MS : 0);
 
 /** The page on screen, kept if it finished drawing. */
 function stash() {
   const s = shown;
   shown = null;
   // A page that didn't get its rows (a source wasn't answering) isn't kept.
-  if (!s || !s.done || !keepFor(s.tab) || !s.view.querySelector(".track")) return;
-  kept.set(s.key, { nodes: [...s.view.childNodes], at: Date.now(), tab: s.tab });
+  if (!s || !s.done || !keepFor(s.tab) || !s.view.querySelector(".track, .read-grid > *")) return;
+  kept.set(s.key, { nodes: [...s.view.childNodes], at: Date.now(), tab: s.tab, my: s.my });
   while (kept.size > 8) kept.delete(kept.keys().next().value);
 }
-window.addEventListener("chillarr:refresh", () => kept.clear());
+// Something you read changed: Home and Books go (they show it); the grids stay.
+window.addEventListener("chillarr:refresh", () => { for (const [k, e] of kept) if (!TAB_TITLE[e.tab]) kept.delete(k); });
 
 export async function renderRead(view, tab) {
   stash();
+  alias = -1;
   const my = ++seq;
   stopSelecting();
   currentView = view;
@@ -487,12 +496,15 @@ export async function renderRead(view, tab) {
   const back = kept.get(key);
   kept.delete(key);
   if (back && Date.now() - back.at < keepFor(tab)) {
+    alias = back.my;
     view.replaceChildren(...back.nodes);
+    // Its banner turns again and its grid watches for the bottom again.
+    for (const n of view.children) n.resume?.();
     view.querySelectorAll(".hero").forEach((h) => h.resume?.());
-    shown = { key, tab, view, done: true };
+    shown = { key, tab, view, done: true, my: back.my };
     return;
   }
-  const me = { key, tab, view, done: false };
+  const me = { key, tab, view, done: false, my };
   shown = me;
   const drawn = TAB_TITLE[tab] ? explorePage(view, tab, my)
     : tab === "r-all" ? allPage(view, my)
@@ -503,11 +515,11 @@ export async function renderRead(view, tab) {
     : tab === "r-downloads" ? downloadsPage(view, my)
     : homePage(view, my);
   // Kept only once it's all in: a page left half drawn stops (its seq moved on).
-  Promise.resolve(drawn).then(() => { if (my === seq) me.done = true; }, () => {});
+  Promise.resolve(drawn).then(() => { if (alive(my)) me.done = true; }, () => {});
   return drawn;
 }
 
-export const stopRead = () => { stash(); seq++; };
+export const stopRead = () => { stash(); alias = -1; seq++; };
 
 /** Reading tabs that are one long grid from AniList or Open Library: what's
  *  on them doesn't change when something happens elsewhere (a chapter read,
@@ -717,7 +729,7 @@ async function midnightHome(view, my) {
   view.replaceChildren(top, el("div", { class: "read-page mn-home" }, inlinePicker(), el("div", { class: "mn-cols" }, el("div", { class: "mn-main" }, updates, popular, rows), side)));
   drawPickers();
   const [{ lib: series }, got] = await Promise.all([know(), invoke("read_rows").catch(() => [])]);
-  if (my !== seq) return;
+  if (!alive(my)) return;
   const h = readHero(heroPicks(got.flatMap((r) => r.items)));
   if (h) { h.classList.add("compact"); top.replaceWith(h); }
   const trending = (got.find((r) => r.id === "trending") || got[0] || { items: [] }).items;
@@ -728,13 +740,13 @@ async function midnightHome(view, my) {
   ], (items) => items.map(rankRow)));
   popular.append(el("h2", { class: "mn-h", text: "Popular now" }), el("div", { class: "grid read-grid mn-grid" }, trending.slice(0, 18).map((c, i) => { const t = card(c); t.style.setProperty("--i", String(i)); t.classList.add("rise"); return t; })));
   rows.append(...got.filter((r) => r.items.length && r !== got.find((x) => x.id === "trending")).map((r) => row(r.id, r.title, r.items.map((c) => card(c)))));
-  forYou().then((fy) => { if (my === seq && fy.length) rows.prepend(...fy.map((r) => row(r.id, r.title, r.items.map((c) => card(c))))); });
+  forYou().then((fy) => { if (alive(my) && fy.length) rows.prepend(...fy.map((r) => row(r.id, r.title, r.items.map((c) => card(c))))); });
   const freshMn = freshSection(series, "mn-fresh");
   if (freshMn) updates.before(freshMn);
   if (series.length) {
     updates.append(el("h2", { class: "mn-h", text: "Latest updates" }), el("div", { class: "skel skel-row" }));
     const list = await followedWithChapters(series);
-    if (my !== seq) return;
+    if (!alive(my)) return;
     updates.replaceChildren(el("h2", { class: "mn-h", text: "Latest updates" }), el("div", { class: "mn-updates" }, list.map((x, i) =>
       markHidden(el("div", { class: "mn-up", style: `--i:${i}` },
         el("button", { class: "mn-up-cover", "aria-label": x.s.title, onclick: () => openSeries({ key: x.s.key, card: x.card }) }, x.s.cover ? el("img", { src: x.s.cover, alt: "", loading: "lazy" }) : null),
@@ -801,7 +813,7 @@ async function classicHome(view, my) {
   view.replaceChildren(el("div", { class: "read-page cl-home" }, inlinePicker(), el("div", { class: "cl-banner" }, el("h1", { text: "Reading" }), el("p", { text: "What everyone's reading, and what's new in yours." })), ranks, week, byGenre, fresh));
   drawPickers();
   const [{ lib: series }, got] = await Promise.all([know(), invoke("read_rows").catch(() => [])]);
-  if (my !== seq) return;
+  if (!alive(my)) return;
   const freshCl = freshSection(series, "cl-block cl-fresh");
   if (freshCl) ranks.before(freshCl);
   const trending = (got.find((r) => r.id === "trending") || got[0] || { items: [] }).items;
@@ -812,7 +824,7 @@ async function classicHome(view, my) {
   ], (items) => [el("div", { class: "cl-ranks" }, items.map(classicRank))]));
   // Picked for you: one tab per row made from what you read.
   forYou().then((fy) => {
-    if (my !== seq || !fy.length) return;
+    if (!alive(my) || !fy.length) return;
     const short = (t) => t.replace(/^Because you read /, "Like ").replace(/^More (.+) for you$/, "$1");
     byGenre.before(el("section", { class: "cl-block" }, el("h2", { class: "cl-h", text: "Picked for you" }),
       el("p", { class: "cl-sub", text: "From what you read." }),
@@ -824,12 +836,12 @@ async function classicHome(view, my) {
     (items) => [el("div", { class: "cl-grid" }, items.map((c, i) => classicCard(c, i)))]));
   fresh.append(el("h2", { class: "cl-h", text: "New and ongoing" }), el("div", { class: "skel skel-row" }));
   exploreItems({ kind: "all", status: "RELEASING", sort: "new" }).then((x) => {
-    if (my !== seq) return;
+    if (!alive(my)) return;
     fresh.replaceChildren(el("h2", { class: "cl-h", text: "New and ongoing" }), el("div", { class: "cl-grid" }, x.filter((c) => c.cover).slice(0, 10).map((c, i) => classicCard(c, i))));
   }).catch(() => fresh.remove());
   if (series.length) {
     const list = await followedWithChapters(series);
-    if (my !== seq) return;
+    if (!alive(my)) return;
     const today = new Date().getDay();
     const day = (x) => (x.newest ? new Date(x.newest).getDay() : -1);
     const tabs = WEEK.map((d, i) => [i === today ? `${d} (today)` : d, async () => list.filter((x) => day(x) === i)]);
@@ -854,7 +866,7 @@ async function homePage(view, my) {
   const top = el("div", { class: "read-hero-slot" });
   view.replaceChildren(top, page(inlinePicker(), head("Reading"), lib, rows));
   const [{ lib: series }, books] = await Promise.all([know(), invoke("read_books").catch(() => [])]);
-  if (my !== seq) return;
+  if (!alive(my)) return;
   myBooks = books;
   const reading = series.filter((s) => !s.finished);
   const done = series.filter((s) => s.finished);
@@ -868,7 +880,7 @@ async function homePage(view, my) {
   lib.replaceChildren(...out);
   try {
     const got = await invoke("read_rows");
-    if (my !== seq) return;
+    if (!alive(my)) return;
     const h = readHero(heroPicks(got.flatMap((r) => r.items)));
     if (h) { top.replaceWith(h); view.querySelector(".read-page").classList.add("under-hero"); }
     rows.replaceChildren(...got.filter((r) => r.items.length).map((r) => (r.id === "trending"
@@ -876,16 +888,16 @@ async function homePage(view, my) {
       : row(r.id, r.title, r.items.map((c) => card(c))))));
     // Picked from what you read, right under the Top 10, like Movies' "Because you watched".
     forYou().then((fy) => {
-      if (my !== seq || !fy.length) return;
+      if (!alive(my) || !fy.length) return;
       const at = rows.children[1] || null;
       for (const r of fy) rows.insertBefore(row(r.id, r.title, r.items.map((c) => card(c))), at);
     });
     invoke("read_book_rows").then((bk) => {
-      if (my !== seq) return;
+      if (!alive(my)) return;
       rows.append(...bk.filter((r) => r.items.length).slice(0, 2).map((r) => row(r.id, r.title, r.items.map((c) => card(c)))));
     }).catch(() => {});
   } catch (e) {
-    if (my === seq) rows.replaceChildren(note(String(e)));
+    if (alive(my)) rows.replaceChildren(note(String(e)));
   }
   return true;
 }
@@ -915,7 +927,7 @@ async function explorePage(view, tab, my) {
   const f = { ...BLANK_FILTER, adult: adultDefault(), ...saved, v: 2 };
   const [genres, info] = await Promise.all([invoke("read_genres").catch(() => []), filterInfo || invoke("read_filter_info").catch(() => ({ tags: [], adult: false }))]);
   filterInfo = info;
-  if (my !== seq) return;
+  if (!alive(my)) return;
   // Only the PC owner or a Jellyfin admin gets 18+; the PC refuses it for anyone else too.
   if (!info.adult) { f.adult = "hide"; f.porn = "hide"; }
   const grid = el("div", { class: "grid read-grid" });
@@ -938,11 +950,11 @@ async function explorePage(view, tab, my) {
     if (!on && !rowsAsked) {
       rowsAsked = true;
       remembered(`kr:${kind}`, 30 * 60000, () => invoke("read_kind_rows", { kind })).then((rows) => {
-        if (my !== seq) return;
+        if (!alive(my)) return;
         rowsBox.replaceChildren(...rows.map((r) => (r.id === "trending" && styleNow() === "cinema"
           ? row(`k.${kind}.top10`, "Top 10 today", r.items.slice(0, 10).map((c, i) => topTen(c, i + 1)), `k.${kind}.trending`)
           : row(`k.${kind}.${r.id}`, r.title, r.items.map((c) => card(c))))));
-      }).catch((e) => { rowsAsked = false; if (my === seq) rowsBox.replaceChildren(note(String(e)), el("button", { class: "btn soft", style: "margin: 0 var(--gutter)", onclick: () => { rowsBox.replaceChildren(...skel()); showMode(); } }, "Try again")); });
+      }).catch((e) => { rowsAsked = false; if (alive(my)) rowsBox.replaceChildren(note(String(e)), el("button", { class: "btn soft", style: "margin: 0 var(--gutter)", onclick: () => { rowsBox.replaceChildren(...skel()); showMode(); } }, "Try again")); });
     }
   }
   let moreOpen = false;
@@ -1012,7 +1024,7 @@ async function explorePage(view, tab, my) {
   view.replaceChildren(top, body);
   if (style !== "classic") {
     invoke("read_explore", { e: { kind, sort: "trending", page: 1 } }).then((g) => {
-      if (my !== seq) return;
+      if (!alive(my)) return;
       const h = readHero(heroPicks(g.items || []));
       if (h) { if (style === "midnight") h.classList.add("compact"); top.replaceWith(h); body.classList.add("after-hero"); }
     }).catch(() => {});
@@ -1020,7 +1032,7 @@ async function explorePage(view, tab, my) {
   await know();
   let pageNo = 0, done = false, busy = false, run = 0;
   async function next() {
-    if (busy || done || my !== seq || !filtering()) return;
+    if (busy || done || !alive(my) || !filtering()) return;
     busy = true;
     const mine = run;
     more.replaceChildren(el("div", { class: "skel skel-row" }));
@@ -1028,7 +1040,11 @@ async function explorePage(view, tab, my) {
       const [cmin, cmax] = LENGTHS[f.length] || LENGTHS[0];
       const got = await invoke("read_explore", { e: { kind, genres: f.genres, not_genres: f.not_genres, tags: f.tags, not_tags: f.not_tags, status: f.status, sort: f.sort,
         min_score: f.min_score, year_from: f.year_from, year_to: f.year_to, chapters_min: cmin, chapters_max: cmax, adult: f.adult, porn: f.porn, page: ++pageNo } });
-      if (my !== seq || mine !== run) return;
+      if (!alive(my) || mine !== run) {
+        // Left while it loaded: that page is asked for again when the grid comes back.
+        if (mine === run) pageNo--;
+        return;
+      }
       // Each new page's covers come in one after another.
       const start = grid.childElementCount;
       grid.append(...(got.items || []).map((c, k) => { const t = card(c); t.style.setProperty("--i", String(Math.min(k, 20))); t.classList.add("rise"); return t; }));
@@ -1037,9 +1053,9 @@ async function explorePage(view, tab, my) {
       more.replaceChildren(done ? note(grid.childElementCount ? "That's everything." : "Nothing matches these filters.") : "");
       // Still at the bottom (a tall screen, or the page came in while it was
       // already showing): the watcher won't fire again, so ask for the next now.
-      if (!done) setTimeout(() => { if (my === seq && mine === run && more.getBoundingClientRect().top < innerHeight + 900) next(); }, 0);
+      if (!done) setTimeout(() => { if (alive(my) && mine === run && more.getBoundingClientRect().top < innerHeight + 900) next(); }, 0);
     } catch (e) {
-      if (my === seq && mine === run) { more.replaceChildren(note(String(e))); done = true; }
+      if (alive(my) && mine === run) { more.replaceChildren(note(String(e))); done = true; }
     } finally { if (mine === run) busy = false; }
   }
   function restart() {
@@ -1050,9 +1066,14 @@ async function explorePage(view, tab, my) {
     next();
   }
   const io = new IntersectionObserver((e) => { if (e[0].isIntersecting) next(); }, { rootMargin: "900px" });
-  io.observe(more);
-  const stop = () => { if (my !== seq) io.disconnect(); };
-  window.addEventListener("hashchange", stop, { once: true });
+  // Watches the bottom while this page is on screen; stops when you leave.
+  const watch = () => {
+    io.observe(more);
+    window.addEventListener("hashchange", () => { if (!alive(my)) io.disconnect(); }, { once: true });
+  };
+  watch();
+  // Back from being kept (renderRead): the watcher fires at once if the bottom is in view.
+  body.resume = watch;
   showMode();
   await next();
   return true;
@@ -1071,10 +1092,10 @@ async function allPage(view, my) {
   view.replaceChildren(page(inlinePicker(), head(title, back), grid, more));
   if (!hasAll(id)) { more.replaceChildren(note("This row can't be opened.")); return true; }
   await know();
-  if (my !== seq) return;
+  if (!alive(my)) return;
   let pageNo = 0, done = false, busy = false;
   async function next() {
-    if (busy || done || my !== seq) return;
+    if (busy || done || !alive(my)) return;
     busy = true;
     more.replaceChildren(el("div", { class: "skel skel-row" }));
     try {
@@ -1085,13 +1106,13 @@ async function allPage(view, my) {
       const got = books ? await invoke("read_book_more", { id, page: pageNo })
         : because ? { items: pageNo > 1 ? [] : await invoke("read_similar", { anilist: Number(because[1]) }), more: false }
           : await invoke("read_explore", { e: { ...(genre ? { kind: "all", genres: [genre[1]], sort: "popular" } : kindRowQuery(id) || ROW_EXPLORE[id]), page: pageNo } });
-      if (my !== seq) return;
+      if (!alive(my)) return;
       grid.append(...(got.items || []).map((c, k) => { const t = card(c); t.style.setProperty("--i", String(Math.min(k, 20))); t.classList.add("rise"); return t; }));
       done = !got.more;
       more.replaceChildren(done ? note(grid.childElementCount ? "That's everything." : "Nothing here right now.") : "");
-      if (!done) setTimeout(() => { if (my === seq && more.getBoundingClientRect().top < innerHeight + 900) next(); }, 0);
+      if (!done) setTimeout(() => { if (alive(my) && more.getBoundingClientRect().top < innerHeight + 900) next(); }, 0);
     } catch (e) {
-      if (my === seq) { more.replaceChildren(note(String(e))); done = true; }
+      if (alive(my)) { more.replaceChildren(note(String(e))); done = true; }
     } finally { busy = false; }
   }
   const io = new IntersectionObserver((e) => { if (e[0].isIntersecting) next(); }, { rootMargin: "900px" });
@@ -1111,8 +1132,8 @@ async function authorPage(view, my) {
   view.replaceChildren(page(inlinePicker(), el("header", { class: "read-head maker-head" }, back, el("div", {}, el("h1", { text: name }), el("p", { class: "maker-sub", text: "All their books" }))), grid, more));
   let books;
   try { books = await invoke("read_book_author", { name }); }
-  catch (e) { if (my === seq) more.replaceChildren(note(String(e))); return true; }
-  if (my !== seq) return;
+  catch (e) { if (alive(my)) more.replaceChildren(note(String(e))); return true; }
+  if (!alive(my)) return;
   grid.append(...books.map((c, k) => { const t = card(c); t.style.setProperty("--i", String(Math.min(k, 20))); t.classList.add("rise"); return t; }));
   more.replaceChildren(note(books.length ? (books.length === 1 ? "That's the only book found." : `That's all ${books.length} books found.`) : "No books found for this author."));
   return true;
@@ -1123,18 +1144,18 @@ async function booksPage(view, my) {
   const rows = el("div", {}, ...skel());
   view.replaceChildren(page(head("Books"), mine, rows));
   myBooks = await invoke("read_books").catch(() => []);
-  if (my !== seq) return;
+  if (!alive(my)) return;
   if (myBooks.length) mine.replaceChildren(withSelect(row("books", "Your books", myBooks.map(bookCard), "mine"), "books"));
   const comics = el("div");
   // Comics and graphic novels come after the books, as soon as they're in.
   const cm = invoke("read_comic_rows").catch(() => []);
   const bk = await invoke("read_book_rows").catch(() => []);
-  if (my !== seq) return;
+  if (!alive(my)) return;
   rows.replaceChildren(...(bk.filter((r) => r.items.length).map((r) => row(r.id, r.title, r.items.map((c) => card(c))))), comics);
   // From your own books: more by the authors you read most lately, right under your books.
   const authors = [...new Set(myBooks.slice().sort((a, b) => (b.added || 0) - (a.added || 0)).map((b) => b.author).filter(Boolean))].slice(0, 2);
   Promise.all(authors.map((name) => remembered(`ba:${name}`, 30 * 60000, () => invoke("read_book_author", { name })).then((list) => ({ name, list })).catch(() => null))).then((got) => {
-    if (my !== seq) return;
+    if (!alive(my)) return;
     const have = new Set(myBooks.map((b) => (b.title || "").toLowerCase()));
     const made = got.filter(Boolean).map(({ name, list }) => ({ name, list: (list || []).filter((c) => !have.has((c.title || "").toLowerCase())) })).filter((x) => x.list.length >= 2)
       .map(({ name, list }) => {
@@ -1146,7 +1167,7 @@ async function booksPage(view, my) {
     rows.prepend(...made);
   });
   const cr = await cm;
-  if (my !== seq) return;
+  if (!alive(my)) return;
   comics.replaceChildren(...(cr.filter((r) => r.items.length).map((r) => row(r.id, r.title, r.items.map((c) => card(c))))));
   if (!rows.querySelector(".track")) rows.replaceChildren(note("Open Library isn't answering. Try again in a minute."));
   return true;
@@ -1156,7 +1177,7 @@ async function listPage(view, my) {
   const body = el("div", {}, ...skel());
   view.replaceChildren(page(head("My List"), body));
   const [{ lib, list }, books] = await Promise.all([know(), invoke("read_books").catch(() => [])]);
-  if (my !== seq) return;
+  if (!alive(my)) return;
   const out = [];
   if (list.length) out.push(expandRow(row("saved", "Saved for later", list.map((c) => card(c))), "r-saved"));
   if (lib.length) out.push(withSelect(expandRow(row("following", "Following", lib.map((s) => card(asCard(s), s))), "r-following"), "series"));
@@ -1173,7 +1194,7 @@ async function downloadsPage(view, my) {
   const draw = async () => {
     clearTimeout(timer);
     const d = await invoke("read_downloads").catch((e) => ({ error: String(e), series: [], books: [] }));
-    if (my !== seq) return;
+    if (!alive(my)) return;
     const items = [
       ...d.series.map((s) => el("div", { class: "read-dl" },
         el("img", { class: "read-dl-cover", src: s.cover || "", alt: "" }),
@@ -1191,7 +1212,7 @@ async function downloadsPage(view, my) {
     if (items.length) {
       clearTimeout(timer);
       timer = setTimeout(function again() {
-        if (my !== seq) return;
+        if (!alive(my)) return;
         if (document.hidden) { timer = setTimeout(again, 4000); return; }
         draw();
       }, 4000);
@@ -1219,7 +1240,7 @@ export async function renderReadSearch(view, term) {
     invoke("read_book_search", { term }).catch(() => []),
     invoke("read_comic_search", { term }).catch(() => []),
   ])).map((x) => x || []);
-  if (my !== seq) return;
+  if (!alive(my)) return;
   await know();
   const out = [];
   if (found.length) out.push(el("h2", { class: "read-grid-title", text: "Manga, manhwa, manhua and novels" }), el("div", { class: "grid read-grid" }, found.map((c) => card(c))));
@@ -1335,8 +1356,8 @@ async function makerPage(view, my) {
   view.replaceChildren(page(el("header", { class: "read-head maker-head" }, back, el("div", {}, el("h1", { text: name }), el("p", { class: "maker-sub", text: "Everything they wrote or drew" }))), grid, more));
   let works;
   try { [works] = await Promise.all([invoke("read_maker_works", { staff: id, adult: adultOn(false) }), know()]); }
-  catch (e) { if (my === seq) more.replaceChildren(note(String(e))); return true; }
-  if (my !== seq) return;
+  catch (e) { if (alive(my)) more.replaceChildren(note(String(e))); return true; }
+  if (!alive(my)) return;
   grid.append(...works.map((c, k) => { const t = card(c); t.style.setProperty("--i", String(Math.min(k, 20))); t.classList.add("rise"); return t; }));
   more.replaceChildren(note(works.length ? (works.length === 1 ? "That's the only series found." : `That's all ${works.length} found.`) : "Nothing found for them yet."));
   return true;

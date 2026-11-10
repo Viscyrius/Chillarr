@@ -14,7 +14,7 @@
 - Fixed: "Back to all rows" in reading kept the grid and turned 18+ off.
 - Two new colours: Sakura (soft pink) and Aurora (teal over deep indigo). Pick them under the Look button or Settings > Appearance.
 - Every tab has a look of its own now: away from Home, Movies, Series, Anime, My List, Downloads and each reading tab (Books, Manga and the rest) get their own soft glow at the top, made from your colour, so it works with every theme.
-- Reading Home and Books come back instantly when you switch back to them (Books used to take several seconds each time). Your progress and new chapters still show: they're redrawn after a few minutes, or straight away when something you read changes.
+- Reading tabs come back instantly when you switch back to them: Home and Books (Books used to take several seconds each time), and Manga, Manhwa, Manhua and Novels, right where you were in the list, still loading more as you scroll. Home and Books still show your progress and new chapters: they're redrawn after a few minutes, or straight away when something you read changes.
 
 ## 0.18.0 (2026-11-10)
 - Kids profiles: when you add or edit a profile there's a Kids profile switch. A kids' profile only opens titles rated up to PG and never sees 18+, in filters, search or anywhere else. Only the main profile can turn it off again, and a kids' profile can only make kids' profiles.
