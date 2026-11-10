@@ -1044,7 +1044,9 @@ function webAccount(panel) {
     el("div", { class: "box" },
       row("Your Jellyfin settings", "Your password, picture, languages, and how the TV and phone apps look.", jf("mypreferencesmenu")),
       viewer.admin ? row("Jellyfin dashboard", "Users, libraries and the server itself.", jf("dashboard")) : null,
-      row("Sign out", "Goes back to Jellyfin's sign-in, where someone else can sign in.", out)));
+      row("Sign out", "Goes back to Jellyfin's sign-in, where someone else can sign in.", out)),
+    // Hidden things: on phones too, or what's hidden here could never be seen again.
+    hiddenBox());
 }
 
 /** Subtitle size and controllers; seeding for an admin. Kept in this browser or on the server. */

@@ -393,7 +393,12 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
             if let Some(x) = a.get("exit").filter(|x| x.is_object()) {
                 let clean = |v: &Value, n: usize| v.as_str().unwrap_or("?").chars().filter(|c| c.is_ascii_alphanumeric() || "-_/.".contains(*c)).take(n).collect::<String>();
                 let ago = x["at"].as_i64().map(|t| (chrono_now_ms() - t).max(0) / 60_000).unwrap_or(-1);
-                log(app, Level::Amber, format!("{}'s browser went back to Jellyfin's own pages {ago} min ago: {} (on {}).", me.session.user, clean(&x["why"], 40), clean(&x["page"], 40)));
+                let why = clean(&x["why"], 40);
+                if why.starts_with("healed") {
+                    log(app, Level::Unknown, format!("{}'s browser had an old, ended sign-in after a profile switch {ago} min ago; Chillarr put the new one back.", me.session.user));
+                } else {
+                    log(app, Level::Amber, format!("{}'s browser went back to Jellyfin's own pages {ago} min ago: {why} (on {}).", me.session.user, clean(&x["page"], 40)));
+                }
             }
             let (theme, audio_pref, audio_lang) = {
                 let st = app.state::<crate::SettingsState>();
@@ -472,7 +477,7 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
         "hidden_set_password" => res(crate::hidden::set_password(app, &arg::<String>(a, "password")?, arg::<Option<String>>(a, "old")?.as_deref())),
         "hidden_unlock" => res(crate::hidden::unlock(app, &arg::<String>(a, "password")?)),
         "hidden_lock" => res(crate::hidden::lock(app)),
-        "hidden_set" => res(crate::hidden::set(app, &arg::<Vec<String>>(a, "keys")?, arg(a, "hide")?, arg::<Option<String>>(a, "label")?.as_deref())),
+        "hidden_set" => res(crate::hidden::set(app, &arg::<Vec<String>>(a, "keys")?, arg(a, "hide")?, arg::<Option<String>>(a, "label")?.as_deref(), arg::<Option<Value>>(a, "item")?)),
         "hidden_list" => res(crate::hidden::list(app)),
         "notify_state" => res(crate::notify::state(app, &arg(a, "target")?)),
         "notify_set" => res(crate::notify::set(app, &arg(a, "target")?, arg(a, "on")?, arg::<Option<bool>>(a, "auto")?.unwrap_or(false))),

@@ -119,7 +119,9 @@ export async function setHidden(hide, label, ...things) {
   if (!ids.length) { toast("That can't be hidden.", true); return false; }
   if (!state.has_password && !(await setPassword())) return false;
   try {
-    await invoke("hidden_set", { keys: ids, hide, label: label || null });
+    // The card itself goes too (hide only), so Settings can open its page while unlocked.
+    const item = hide && things[0] && typeof things[0] === "object" ? things[0] : null;
+    await invoke("hidden_set", { keys: ids, hide, label: label || null, item });
     await refreshHidden();
     toast(hide ? `${label || "It"} is hidden. Unlock hidden things in Settings > Account & devices to see it.` : `${label || "It"} shows again.`);
     return true;
@@ -143,7 +145,18 @@ export function hideButton(label, close, ...things) {
   return b;
 }
 
-/** Settings > Account & devices: the password, Unlock / Lock, and what's hidden. */
+/** Opens a hidden title's page from the unlocked list: a film or show, a
+ *  followed series, or a book. Loaded when asked, since those pages import this file. */
+async function openHidden(item) {
+  try {
+    const k = typeof item.key === "string" ? item.key : "";
+    if (/^b[0-9a-f]+$/.test(k)) return (await import("./read.js")).openBookPanel(item);
+    if (/^m[0-9a-f]+$/.test(k)) return (await import("./read.js")).openSeries({ key: k, card: item });
+    return (await import("./detail.js")).openDetail(item);
+  } catch (e) { toast(String(e), true); }
+}
+
+/** Settings > Account (in the app and on phones): the password, Show hidden / Lock, and what's hidden. */
 export function hiddenBox() {
   const box = el("div", { class: "box hd-box" });
   const draw = async () => {
@@ -162,6 +175,7 @@ export function hiddenBox() {
       const list = await invoke("hidden_list").catch(() => []);
       if (list.length) rows.push(el("ul", { class: "st-list hd-list" }, list.map((x) => el("li", {},
         el("div", { class: "st-info" }, el("b", { text: x.label })),
+        x.item ? el("button", { class: "btn small primary", onclick: () => openHidden(x.item) }, "Open") : null,
         el("button", { class: "btn small ghost", onclick: async () => {
           try { await invoke("hidden_set", { keys: [x.key], hide: false, label: null }); toast(`${x.label} shows again.`); draw(); } catch (e) { toast(String(e), true); }
         } }, "Show again")))));

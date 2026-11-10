@@ -2107,7 +2107,7 @@ html.no-grid .pf-fields > * + *, html.no-grid .skel-copy > * + * { margin-top: 1
 .hd-err { margin: 0 0 10px; color: var(--red); font-size: 13px; }
 .hd-err[hidden] { display: none; }
 .hd-list { margin-top: 8px; }
-.hd-list li { grid-template-columns: 1fr auto; }
+.hd-list li { grid-template-columns: 1fr auto auto; gap: 8px; }
 .week-hide { position: absolute; top: 8px; left: 8px; z-index: 3; width: 32px; height: 32px; border-radius: 16px; border: 0; display: grid; place-items: center; cursor: pointer;
   background: rgba(11, 10, 18, 0.78); color: #fff; opacity: 0; transition: opacity 0.2s; }
 .week-hide svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }

@@ -1,7 +1,9 @@
 # Changelog
 
 ## 0.19.1 (2026-11-10)
-- Fixed: switching to another profile on a phone (most often in Jellyfin's iPhone app) could sign you out of Chillarr completely and leave you on Jellyfin's username and password page. The switch now finishes as the new profile.
+- Fixed: switching to another profile on a phone (most often an iPhone) could sign you out of Chillarr completely and leave you on Jellyfin's username and password page. The iPhone keyboard sent the PIN twice, Chillarr started two switches, and Jellyfin's second sign-in ended the first one, which was the one the phone kept. A PIN is now sent once, a switch never runs twice at once, and the switch keeps trying through a bad connection instead of giving up. If a phone ever does end up holding an ended sign-in after a switch, Chillarr puts the right one back by itself.
+- Fixed: on phones and in the browser there was no way to see your hidden things again, because the Hidden settings were only in the Chillarr app on the PC. They're now in Settings > Account on every device: Show hidden (with your hidden password), Lock, and the list of what's hidden.
+- The hidden list now has Open next to each title, which takes you straight to its page. This works for anything hidden from now on; titles hidden before only have Show again.
 - Fixed: other profiles couldn't remove things they'd asked for. Stop on Downloading now and the waiting list said they had no permission, so their titles sat on My List > On the way for good. Every profile can now stop what it asked for itself (and still only that).
 - Other profiles can now delete a title from the library if they downloaded it themselves or it's on their My List. Delete shows on that title's page, on phones too. Everything else is still the main profile's to delete, in the Chillarr app on the PC.
 ## 0.19.0 (2026-11-10)

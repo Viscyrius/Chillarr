@@ -930,8 +930,8 @@ fn notify_unseen(app: AppHandle) -> Result<Vec<notify::Note>, String> {
 }
 
 #[tauri::command]
-fn hidden_set(app: AppHandle, keys: Vec<String>, hide: bool, label: Option<String>) -> Result<bool, String> {
-    hidden::set(&app, &keys, hide, label.as_deref())
+fn hidden_set(app: AppHandle, keys: Vec<String>, hide: bool, label: Option<String>, item: Option<serde_json::Value>) -> Result<bool, String> {
+    hidden::set(&app, &keys, hide, label.as_deref(), item)
 }
 
 #[tauri::command]

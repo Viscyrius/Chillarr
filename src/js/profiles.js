@@ -247,11 +247,16 @@ function loginPad(p, error = "") {
 function pinPad(p, error = "", submit = (pin) => choose(p, pin), back = () => openPicker(), forgot = null) {
   const boxes = Array.from({ length: 4 }, () => el("input", { class: "pf-pin-box", type: "password", inputmode: "numeric", maxlength: "1", autocomplete: "off", "aria-label": "PIN digit" }));
   const value = () => boxes.map((b) => b.value).join("");
+  // Sent once per pad: an iPhone keyboard fires another input after the 4th
+  // digit (predictions, autofill), and a second switch made Jellyfin end the
+  // first sign-in while the page kept it, so the phone landed on Jellyfin's
+  // sign-in (2026-11-10, Riyadh). A wrong PIN draws a new pad to type again.
+  let sent = false;
   boxes.forEach((b, i) => {
     b.addEventListener("input", () => {
       b.value = b.value.replace(/\D/g, "").slice(-1);
       if (b.value && i < 3) boxes[i + 1].focus();
-      if (value().length === 4) submit(value());
+      if (value().length === 4 && !sent) { sent = true; submit(value()); }
     });
     b.addEventListener("keydown", (e) => {
       if (e.key === "Backspace" && !b.value && i > 0) boxes[i - 1].focus();

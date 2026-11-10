@@ -36,7 +36,14 @@ struct Saved {
     /// name brings back all of them.
     #[serde(default)]
     groups: HashMap<String, Vec<String>>,
+    /// The card each hidden title was hidden from (by its first id), so the
+    /// unlocked list can open its page. Sealed with the rest.
+    #[serde(default)]
+    items: HashMap<String, serde_json::Value>,
 }
+
+/// A card kept for the hidden list: at most this much JSON.
+const MAX_ITEM: usize = 16 * 1024;
 
 #[derive(Default)]
 pub struct Hidden {
@@ -194,7 +201,7 @@ pub fn lock(app: &AppHandle) -> Result<(), String> {
 }
 
 /// Hides a title (all its ids) or shows it again. Showing again needs it unlocked.
-pub fn set(app: &AppHandle, keys: &[String], hide: bool, label: Option<&str>) -> Result<bool, String> {
+pub fn set(app: &AppHandle, keys: &[String], hide: bool, label: Option<&str>, item: Option<serde_json::Value>) -> Result<bool, String> {
     let uid = uid(app)?;
     let state = app.state::<Hidden>();
     let _io = state.io.lock().unwrap();
@@ -212,6 +219,9 @@ pub fn set(app: &AppHandle, keys: &[String], hide: bool, label: Option<&str>) ->
     if hide {
         if let Some(l) = label.map(|l| l.chars().take(200).collect::<String>()).filter(|l| !l.trim().is_empty()) {
             s.labels.insert(keys[0].clone(), l);
+        }
+        if let Some(item) = item.filter(|v| v.is_object() && serde_json::to_string(v).map_or(false, |t| t.len() <= MAX_ITEM)) {
+            s.items.insert(keys[0].clone(), item);
         }
         s.groups.insert(keys[0].clone(), keys.clone());
         for k in keys {
@@ -236,6 +246,7 @@ pub fn set(app: &AppHandle, keys: &[String], hide: bool, label: Option<&str>) ->
                 all.extend(g);
             }
             s.labels.remove(f);
+            s.items.remove(f);
         }
         s.keys.retain(|k| !all.contains(k));
     }
@@ -247,6 +258,8 @@ pub fn set(app: &AppHandle, keys: &[String], hide: bool, label: Option<&str>) ->
 pub struct Entry {
     pub key: String,
     pub label: String,
+    /// The card it was hidden from, to open its page (None for ones hidden before 0.19.1).
+    pub item: Option<serde_json::Value>,
 }
 
 /// Everything hidden by name, to show again one by one (only while unlocked).
@@ -257,7 +270,7 @@ pub fn list(app: &AppHandle) -> Result<Vec<Entry>, String> {
         return Err("Unlock hidden things first.".into());
     }
     let s = load(app, &uid);
-    let mut out: Vec<Entry> = s.labels.iter().map(|(k, l)| Entry { key: k.clone(), label: l.clone() }).collect();
+    let mut out: Vec<Entry> = s.labels.iter().map(|(k, l)| Entry { key: k.clone(), label: l.clone(), item: s.items.get(k).cloned() }).collect();
     out.sort_by(|a, b| a.label.to_lowercase().cmp(&b.label.to_lowercase()));
     Ok(out)
 }

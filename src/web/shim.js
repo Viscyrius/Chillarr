@@ -381,7 +381,21 @@
   // A profile switch on its way: resolves true once the new login is saved
   // (the page then starts again as them), false if it failed.
   let switching = null;
-  function toLogin(why = "no-login", dead = null) {
+  let switchCall = null;
+  // The login a profile switch last put in this browser (per server), kept by
+  // Chillarr itself. If the page later finds an older, ended login in
+  // jellyfin-web's list instead (seen in Jellyfin's iPhone app), it puts this
+  // one back rather than sending you to sign in.
+  const KEPT = (id) => `chillarr_login_${id}`;
+  function keptLogin(s) {
+    try { return JSON.parse(localStorage.getItem(KEPT(s.Id)) || "null"); } catch (e) { return null; }
+  }
+  function setLogin(serverId, token, userId) {
+    const c = JSON.parse(localStorage.getItem(CREDS) || "{}");
+    for (const x of c.Servers || []) if (x.Id === serverId) { x.AccessToken = token; x.UserId = userId; }
+    localStorage.setItem(CREDS, JSON.stringify(c));
+  }
+  function toLogin(why = "no-login", dead = null, tried = false) {
     // Mid-switch: Jellyfin ends the old login the moment it approves the new
     // one, before this page has the new one. Anything refused in that gap
     // (a background call, the event stream) waits for the switch instead of
@@ -392,6 +406,22 @@
     }
     // A login switched meanwhile (Quick Connect in another tab) isn't the one that failed.
     if (dead && server() && server().AccessToken !== dead.AccessToken) { location.reload(); return new Promise(() => {}); }
+    // Refused: first the login the last switch made, if it isn't this one and Jellyfin still takes it.
+    const was = dead || server();
+    const kept = why === "refused" && was && !tried && !leaving ? keptLogin(was) : null;
+    if (kept && kept.token && kept.token !== was.AccessToken) {
+      leaving = true;
+      jfSaysOk({ AccessToken: kept.token }).then((good) => {
+        if (good === true) {
+          try { setLogin(was.Id, kept.token, kept.userId); } catch (e) { /* storage blocked */ }
+          noteExit("healed-old-login-after-switch");
+          location.reload();
+        } else { leaving = false; toLogin(why, dead, true); }
+      });
+      return new Promise(() => {});
+    }
+    // Refused within 10 minutes of a switch: said so in Chillarr's log.
+    if (why === "refused" && was) { const k = keptLogin(was); if (k && Date.now() - (k.at || 0) < 600000) why = "refused-after-switch"; }
     if (!leaving) {
       leaving = true;
       const s = dead || server();
@@ -611,16 +641,21 @@
     async switchProfile(id, pin = null, password = null) {
       const s = server();
       if (!s) return toLogin();
-      if (switching) throw "Already switching. One moment.";
+      // One switch at a time. A second one (a double tap, an iPhone keyboard
+      // sending the PIN twice) made Jellyfin sign the profile in twice on this
+      // device, which ends the first sign-in: the one this page then kept.
+      // It waits for the first one instead.
+      if (switchCall) return switchCall;
       let done;
       switching = new Promise((r) => { done = r; });
-      try { return await this.switchTo(s, id, pin, password, () => done(true)); }
-      catch (e) {
+      switchCall = this.switchTo(s, id, pin, password, () => done(true)).catch((e) => {
         // Failed: a refusal that waited goes on to the sign-in if the old login is really gone.
         switching = null;
+        switchCall = null;
         done(false);
         throw e;
-      }
+      });
+      return switchCall;
     },
     async switchTo(s, id, pin, password, saved) {
       const version = (APP && APP.appVersion) || await fetch(`${location.origin}/System/Info/Public`).then((r) => r.json()).then((j) => j.Version).catch(() => "12.1.0");
@@ -667,9 +702,8 @@
       if (appId && device() !== appId) {
         await fetch(`${location.origin}/Sessions/Logout`, { method: "POST", headers: { "X-Emby-Token": s.AccessToken } }).catch(() => {});
       }
-      const c = JSON.parse(localStorage.getItem(CREDS) || "{}");
-      for (const x of c.Servers || []) if (x.Id === s.Id) { x.AccessToken = a.AccessToken; x.UserId = a.User.Id; }
-      localStorage.setItem(CREDS, JSON.stringify(c));
+      setLogin(s.Id, a.AccessToken, a.User.Id);
+      try { localStorage.setItem(KEPT(s.Id), JSON.stringify({ token: a.AccessToken, userId: a.User.Id, at: Date.now() })); } catch (e) { /* storage blocked */ }
       // The owner's password was checked: this device doesn't ask for it again.
       if (got && got.trust) { try { localStorage.setItem(`chillarr_trust_${s.Id}`, got.trust); } catch (e) { /* storage blocked */ } }
       // No Logout for the old token: signing in with the same DeviceId already ended it in Jellyfin.
