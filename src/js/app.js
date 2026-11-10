@@ -1,5 +1,6 @@
 // Routing between tabs, the top bar, search, and the first-run tutorial.
 import { refreshHidden } from "./hidden.js";
+import { setKids } from "./filterpanel.js";
 import { $, el, getPref, invoke, personKey, screenMode, setPerson, setPref, store, viewer, WEB, windowFull } from "./api.js";
 import { renderTab, renderSearch, renderExplore, renderMaker, stopBrowse, warmTabs, markRestyle } from "./browse.js";
 import { renderFilter } from "./filter.js";
@@ -183,7 +184,8 @@ document.addEventListener("contextmenu", (e) => {
    counts: a slow TV may wait a long time on its first rows), so index.html's
    guard, which is for a page that never came alive, leaves this visit be. */
 (() => {
-  const seen = () => { if (!window.__CHILLARR_BOOTED__ && view.firstElementChild) { window.__CHILLARR_BOOTED__ = true; mo.disconnect(); } };
+  // Always set once drawn: reading the flag first can say "yes" while the shim is still only waiting.
+  const seen = () => { if (view.firstElementChild) { window.__CHILLARR_BOOTED__ = true; mo.disconnect(); } };
   const mo = new MutationObserver(seen);
   mo.observe(view, { childList: true, subtree: true });
 })();
@@ -191,7 +193,10 @@ document.addEventListener("contextmenu", (e) => {
 /** Start in Jellyfin's web pages: no profiles, setup or app health, just the signed-in user. */
 async function startWeb() {
   document.body.classList.add("web");
-  try { Object.assign(viewer, await invoke("web_viewer")); setPerson(viewer.user_id); refreshHidden(); if (viewer.theme) applyTheme(viewer.theme); if (viewer.locked) await unlockWeb(viewer); }
+  // Why this browser last went back to Jellyfin's own pages (shim.js), told to Chillarr's log once.
+  let exit = null;
+  try { exit = JSON.parse(localStorage.getItem("chillarr_exit") || "null"); } catch (e) { /* none */ }
+  try { Object.assign(viewer, await invoke("web_viewer", exit ? { exit } : {})); try { localStorage.removeItem("chillarr_exit"); } catch (e) { /* storage blocked */ } setPerson(viewer.user_id); setKids(!!viewer.kids); refreshHidden(); if (viewer.theme) applyTheme(viewer.theme); if (viewer.locked) await unlockWeb(viewer); }
   catch (e) {
     view.replaceChildren(el("div", { class: "web-down" }, el("h1", { text: "Chillarr isn't answering" }), el("p", { text: String(e) }),
       el("button", { class: "btn primary", onclick: () => location.reload() }, "Try again")));

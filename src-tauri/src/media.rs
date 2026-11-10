@@ -992,7 +992,93 @@ pub fn continue_first(watch: Vec<Tile>, cont: Vec<Tile>) -> Vec<Tile> {
 /// starting, which takes it ~20-30 s, or too busy to answer). That page is the
 /// library, so an empty one would say "Nothing downloaded yet" about a full
 /// library. Other tabs just go without the library rows.
+/// A web viewer's rows, per (user, tab): building Home takes the PC about
+/// 2.5 s every time (measured 2026-11-10), which a phone waited through on
+/// every visit. Fresh for `ROWS_FRESH`; up to `ROWS_STALE` old they're
+/// answered at once and built again behind it. The window builds its own.
+const ROWS_FRESH: Duration = Duration::from_secs(20);
+const ROWS_STALE: Duration = Duration::from_secs(180);
+
+struct RowsEntry {
+    at: Instant,
+    rows: Vec<Row>,
+    refreshing: bool,
+}
+
+fn rows_cache() -> &'static Mutex<HashMap<(String, String), RowsEntry>> {
+    static C: std::sync::OnceLock<Mutex<HashMap<(String, String), RowsEntry>>> = std::sync::OnceLock::new();
+    C.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
 pub async fn rows(app: &AppHandle, tab: &str) -> Result<Vec<Row>, String> {
+    let Some(v) = crate::viewer::current() else { return rows_now(app, tab).await };
+    let key = (v.session.user_id.clone(), tab.to_string());
+    let stale = {
+        let mut c = rows_cache().lock().unwrap();
+        match c.get_mut(&key) {
+            Some(e) if e.at.elapsed() < ROWS_FRESH => return Ok(e.rows.clone()),
+            Some(e) if e.at.elapsed() < ROWS_STALE => {
+                let start = !e.refreshing;
+                e.refreshing = true;
+                Some((e.rows.clone(), start))
+            }
+            _ => None,
+        }
+    };
+    if let Some((rows, start)) = stale {
+        if start {
+            let (app, tab, key) = (app.clone(), tab.to_string(), key.clone());
+            tauri::async_runtime::spawn(crate::viewer::carry(async move {
+                let fresh = rows_now(&app, &tab).await;
+                let mut c = rows_cache().lock().unwrap();
+                match fresh {
+                    Ok(r) => { c.insert(key, RowsEntry { at: Instant::now(), rows: r, refreshing: false }); }
+                    Err(_) => { if let Some(e) = c.get_mut(&key) { e.refreshing = false; } }
+                }
+            }));
+        }
+        return Ok(rows);
+    }
+    let fresh = rows_now(app, tab).await?;
+    let mut c = rows_cache().lock().unwrap();
+    if c.len() > 200 {
+        c.retain(|_, e| e.at.elapsed() < ROWS_STALE);
+    }
+    c.insert(key, RowsEntry { at: Instant::now(), rows: fresh.clone(), refreshing: false });
+    Ok(fresh)
+}
+
+/// Something this user did may change their rows (My List, a watch, a
+/// download): the next ask builds them again.
+pub fn forget_rows(user_id: &str) {
+    rows_cache().lock().unwrap().retain(|(u, _), _| u != user_id);
+}
+
+async fn rows_now(app: &AppHandle, tab: &str) -> Result<Vec<Row>, String> {
+    let mut rows = rows_all(app, tab).await?;
+    if crate::profiles::viewer_kids(app) {
+        for r in &mut rows {
+            kids_only(app, &mut r.tiles);
+        }
+        rows.retain(|r| !r.tiles.is_empty());
+    }
+    Ok(rows)
+}
+
+/// A title a kids' profile never gets offered: an R, NC-17 or 18 film by the
+/// catalog's rating, or Ecchi and Hentai anime. Jellyfin's own PG cap covers
+/// the library; this covers what Chillarr lists from outside it.
+pub fn not_for_kids(app: &AppHandle, t: &Tile) -> bool {
+    let adult_genre = t.genres.iter().any(|g| g.eq_ignore_ascii_case("Ecchi") || g.eq_ignore_ascii_case("Hentai"));
+    let adult_film = t.kind == "movie" && t.tmdb.is_some_and(|id| crate::catalog::adult_cert(app.state::<Media>().catalog.lock().unwrap().cert(id)));
+    adult_genre || adult_film
+}
+
+pub fn kids_only(app: &AppHandle, tiles: &mut Vec<Tile>) {
+    tiles.retain(|t| !not_for_kids(app, t));
+}
+
+async fn rows_all(app: &AppHandle, tab: &str) -> Result<Vec<Row>, String> {
     let j = jf(app).filter(|j| j.user_id.is_some());
     if tab == "mylist" {
         return Ok(my_list_page(app, j.as_ref()).await);

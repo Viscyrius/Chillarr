@@ -1417,6 +1417,9 @@ fn paused_state(t: &serde_json::Value) -> bool {
 /// The tile carries the profile it was started for (`profile`), to be passed
 /// back on leave.
 pub async fn start(app: &tauri::AppHandle, tile: crate::tiles::Tile, season: Option<i64>, episode: Option<i64>) -> Result<crate::tiles::Tile, String> {
+    if crate::profiles::viewer_kids(app) && crate::media::not_for_kids(app, &tile) {
+        return Err("That one isn't for kids' profiles.".into());
+    }
     let uid = uid(app)?;
     let key = key_for(&tile, season, episode).ok_or("Chillarr can't tell which title this is.")?;
     let guard = match FLIGHTS.claim(&format!("{uid}|{key}")) {
@@ -2147,6 +2150,12 @@ async fn library_instead(app: &tauri::AppHandle, uid: &str, e: &Entry) -> Option
     let wn = app.state::<WatchNow>();
     if let Err(err) = carry_position(&j, &id, e, &real).await {
         crate::log::log(app, crate::model::Level::Amber, format!("Couldn't carry where you were in {} over to your library: {err}", e.title));
+        return Some(tile);
+    }
+    // Someone still has the placeholder open (another device, a party guest
+    // who started before): it stays, and the handover tick finishes this once
+    // they're done. Removing it now would cut their film off.
+    if wn.all().iter().any(|(u, x)| x.key == e.key && x.watching && u != uid) {
         return Some(tile);
     }
     note(app, wn.forget_position(uid, &e.key));

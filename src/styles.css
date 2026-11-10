@@ -995,6 +995,11 @@ body.pad-mode main, body.pad-mode #view { padding-bottom: 80px; }
 .st-info small { color: var(--muted); font-size: 12.5px; }
 .st-size { font: 600 14px var(--display); color: var(--text); min-width: 70px; text-align: right; }
 .st-list li.st-empty { display: block; color: var(--muted); }
+.st-list li:has(> .st-tick) { grid-template-columns: 22px 44px 1fr auto auto; }
+.st-tick, .st-pick input { width: 18px; height: 18px; accent-color: var(--accent); cursor: pointer; }
+.st-selbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 6px 4px 2px; }
+.st-selbar:empty { display: none; }
+.st-pick { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; cursor: pointer; }
 @media (prefers-reduced-motion: reduce) { .st-bar span { animation: none; } }
 
 /* Profiles (profiles.js): Who's watching?, PIN, add/edit, top-bar avatar */

@@ -893,7 +893,7 @@ async function explorePage(view, tab, my) {
     more.hidden = !on;
     filteredNote.hidden = !on;
     filteredNote.replaceChildren(...(on ? [el("span", { text: "Showing what matches your filters." }),
-      el("button", { class: "linkish", onclick: () => change((x) => Object.assign(x, { ...BLANK_FILTER })) }, "Back to all rows")] : []));
+      el("button", { class: "linkish", onclick: () => change((x) => Object.assign(x, { ...BLANK_FILTER, adult: info.adult ? adultDefault() : "hide" })) }, "Back to all rows")] : []));
     if (!on && !rowsAsked) {
       rowsAsked = true;
       remembered(`kr:${kind}`, 30 * 60000, () => invoke("read_kind_rows", { kind })).then((rows) => {

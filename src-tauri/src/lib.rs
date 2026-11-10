@@ -306,7 +306,9 @@ fn profiles_list(app: AppHandle) -> Vec<profiles::View> {
 
 #[tauri::command]
 async fn profiles_add(app: AppHandle, name: String, color: String, pin: Option<String>, kids: Option<bool>) -> Result<profiles::View, String> {
-    profiles::add(&app, &name, &color, pin, kids.unwrap_or(false)).await
+    // A kids' profile watching in the window only makes kids' profiles.
+    let kids = kids.unwrap_or(false) || profiles::viewer_kids(&app);
+    profiles::add(&app, &name, &color, pin, kids).await
 }
 
 #[tauri::command]
@@ -662,11 +664,22 @@ async fn media_stop_download(app: AppHandle, which: String, download_id: String,
 
 #[tauri::command]
 async fn media_delete_episodes(app: AppHandle, tile: tiles::Tile, episodes: Vec<(i64, i64)>) -> Result<String, String> {
+    main_profile_only(&app)?;
     waiting::delete_episodes(&app, &tile, &episodes).await
+}
+
+/// Deleting from the library: only the main profile, only in this window
+/// (the user's rule, 2026-11-10). bridge.rs doesn't offer it to the web at all.
+fn main_profile_only(app: &AppHandle) -> Result<(), String> {
+    if app.state::<media::Media>().profile.lock().unwrap().is_some() {
+        return Err("Only the main profile can delete from the library.".into());
+    }
+    Ok(())
 }
 
 #[tauri::command]
 async fn media_delete(app: AppHandle, tile: tiles::Tile) -> Result<String, String> {
+    main_profile_only(&app)?;
     waiting::delete_title(&app, &tile).await
 }
 

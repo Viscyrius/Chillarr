@@ -424,10 +424,48 @@ fn old_copies(root: &Path, stamp: &str, now: u64) -> Vec<(String, u64)> {
     out
 }
 
-/// Writes the moved pages for `olds` into the copy at `dir`.
+/// How long an old copy's own files (its scripts, styles, pictures) stay
+/// served beside the new one. A page left open keeps working until it is
+/// loaded again: on 2026-11-10 a phone that had 0.17.1 open lost its scripts
+/// the moment Jellyfin moved to 0.18.0, mid watch party, and fell back to
+/// Jellyfin's own pages. Past this only the moved pages stay.
+const KEEP_FILES_DAYS: u64 = 2;
+
+/// Where an older copy's Chillarr folder still is: in its own copy, or carried
+/// along inside a later one. None once it's gone everywhere.
+fn old_app_files(root: &Path, dir: &Path, old: &str) -> Option<PathBuf> {
+    let name = app_folder(old);
+    let mut places = vec![root.join(old).join(&name)];
+    if let Ok(rd) = std::fs::read_dir(root) {
+        places.extend(rd.flatten().map(|e| e.path().join(&name)));
+    }
+    places.into_iter().find(|p| !p.starts_with(dir) && p.join("js").is_dir())
+}
+
+/// Writes the moved pages for `olds` into the copy at `dir`, and carries each
+/// recent old copy's own files along so pages still open on it keep working.
 fn write_moved(dir: &Path, stamp: &str, olds: &[(String, u64)]) -> std::io::Result<()> {
     let folder = app_folder(stamp);
+    let root = dir.parent().map(Path::to_path_buf).unwrap_or_default();
+    let now = now_secs();
     for (old, since) in olds {
+        let target = dir.join(app_folder(old));
+        if now.saturating_sub(*since) < KEEP_FILES_DAYS * 86_400 {
+            if !target.join("js").is_dir() {
+                if let Some(from) = old_app_files(&root, dir, old) {
+                    // Best effort: without them the moved pages below still send a reload on.
+                    let _ = copy_tree(&from, &target);
+                }
+            }
+        } else if let Ok(rd) = std::fs::read_dir(&target) {
+            for e in rd.flatten() {
+                let n = e.file_name();
+                if n == "index.html" || n == "legacy.html" {
+                    continue;
+                }
+                let _ = if e.path().is_dir() { std::fs::remove_dir_all(e.path()) } else { std::fs::remove_file(e.path()) };
+            }
+        }
         for (file, page) in [("index.html", ""), ("legacy.html", "legacy.html")] {
             let path = dir.join(app_folder(old)).join(file);
             let want = moved_page(&folder, page, *since);
@@ -504,6 +542,15 @@ pub fn bridge_moved(_app: &AppHandle) {
     let folder = dir.join(app_folder(&stamp));
     if folder.is_dir() {
         let _ = std::fs::write(folder.join("bridge.json"), bridge_json(port));
+    }
+    // Older copies still served beside it (pages left open over an update) are told too.
+    if let Ok(rd) = std::fs::read_dir(&dir) {
+        for e in rd.flatten() {
+            let p = e.path();
+            if p != folder && p.join("js").is_dir() && e.file_name().to_string_lossy().starts_with("chillarr-") {
+                let _ = std::fs::write(p.join("bridge.json"), bridge_json(port));
+            }
+        }
     }
 }
 /// The stamp the last notes were logged for, so they're said once per version.
@@ -591,6 +638,29 @@ fn playing(sessions: &serde_json::Value) -> bool {
     sessions.as_array().is_some_and(|a| a.iter().any(|s| !s["NowPlayingItem"].is_null()))
 }
 
+/// How long since someone last used Jellyfin before a restart may cut in.
+const QUIET_MINUTES: i64 = 10;
+
+/// Someone (not Chillarr itself) used Jellyfin in the last `QUIET_MINUTES`:
+/// browsing, a watch party being set up, a paused film. On 2026-11-10 the
+/// restart onto 0.18.0 came while a phone was starting a watch party and
+/// threw it out; "nothing playing" alone wasn't enough. `now_utc` is
+/// "YYYY-MM-DDTHH:MM:SS" in UTC, as Jellyfin's LastActivityDate starts.
+fn in_use(sessions: &serde_json::Value, now_utc: &str) -> bool {
+    let Some(cut) = minus_minutes(now_utc, QUIET_MINUTES) else { return true };
+    sessions.as_array().is_some_and(|a| {
+        a.iter().any(|s| {
+            let last = s["LastActivityDate"].as_str().unwrap_or("");
+            s["Client"].as_str() != Some("Chillarr") && last.len() >= 19 && last[..19] > *cut
+        })
+    })
+}
+
+fn minus_minutes(utc: &str, m: i64) -> Option<String> {
+    let t = chrono::NaiveDateTime::parse_from_str(utc.get(..19)?, "%Y-%m-%dT%H:%M:%S").ok()?;
+    Some((t - chrono::Duration::minutes(m)).format("%Y-%m-%dT%H:%M:%S").to_string())
+}
+
 /// Every few minutes: a Jellyfin started before Chillarr had its copy (by an
 /// older Chillarr, or by hand) is restarted onto the copy, but only while
 /// nobody is playing anything. A Windows service can't be given --webdir.
@@ -635,7 +705,7 @@ async fn check(app: &AppHandle, said_service: &mut bool, tried: &mut String) {
     }
     let Some(j) = crate::media::jf_admin(app) else { return };
     match j.get_json("/Sessions").await {
-        Ok(s) if !playing(&s) => {}
+        Ok(s) if !playing(&s) && !in_use(&s, &chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S").to_string()) => {}
         _ => return, // Busy, or unknown: try again later rather than cut someone off.
     }
     *tried = stamp.clone();
@@ -852,6 +922,8 @@ mod tests {
         assert!(!std::fs::read_dir(&db).unwrap().flatten().any(|e| e.file_name().to_string_lossy().contains("alert")));
         // The real page of the new copy isn't mistaken for a moved one (shim.js looks for the mark).
         assert!(!std::fs::read_to_string(db.join(app_folder(b)).join("index.html")).unwrap().contains(MOVED_MARK));
+        // A page still open on the old copy keeps its scripts: only its front page moved.
+        assert!(db.join(app_folder(a)).join("js").join("app.js").is_file(), "the old copy's scripts are still served");
         let since_a = moved_since(&moved).unwrap();
         prune(root.path(), b);
 
@@ -871,6 +943,12 @@ mod tests {
         let olds = old_copies(root.path(), "dddddddddddddddd", now_secs());
         assert!(olds.iter().any(|(s, _)| s == c) && olds.iter().any(|(s, _)| s == b));
         assert!(!olds.iter().any(|(s, _)| s == a), "{olds:?}");
+
+        // Past KEEP_FILES_DAYS an old copy keeps only its moved pages.
+        let olds = vec![(b.to_string(), now_secs() - KEEP_FILES_DAYS * 86_400 - 1)];
+        write_moved(&dc, c, &olds).unwrap();
+        assert!(!dc.join(app_folder(b)).join("js").exists());
+        assert!(dc.join(app_folder(b)).join("index.html").is_file());
     }
 
     #[test]
@@ -895,6 +973,16 @@ mod tests {
     fn a_session_with_something_playing_is_busy() {
         assert!(!playing(&serde_json::json!([{ "Id": "a" }, { "Id": "b", "NowPlayingItem": null }])));
         assert!(playing(&serde_json::json!([{ "Id": "a" }, { "Id": "b", "NowPlayingItem": { "Id": "x" } }])));
+    }
+
+    #[test]
+    fn someone_using_jellyfin_lately_holds_the_restart() {
+        let now = "2026-11-10T09:57:00";
+        let s = |client: &str, last: &str| serde_json::json!([{ "Client": client, "LastActivityDate": last }]);
+        assert!(in_use(&s("Jellyfin iOS", "2026-11-10T09:52:00.1234567Z"), now), "5 min ago: in use");
+        assert!(!in_use(&s("Jellyfin iOS", "2026-11-10T09:40:00Z"), now), "17 min ago: quiet");
+        assert!(!in_use(&s("Chillarr", "2026-11-10T09:56:59Z"), now), "Chillarr's own calls don't count");
+        assert!(in_use(&s("Jellyfin Web", "2026-11-10T00:05:00Z"), "2026-11-10T00:10:00"), "across midnight");
     }
 
     /// Builds the copy from the real install into $JFWEB_OUT, for looking at

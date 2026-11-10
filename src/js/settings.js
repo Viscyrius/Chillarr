@@ -1,7 +1,7 @@
 // Settings: the six apps and Fix everything, indexers, library folders,
 // app paths, the Jellyfin account and streaming, general options, logs.
 import { hiddenBox } from "./hidden.js";
-import { $, ask, audioChoice, el, icon, ICON, invoke, LABEL, listen, ORDER, store, toast, viewer, WEB } from "./api.js";
+import { $, ask, audioChoice, canDelete, el, icon, ICON, invoke, LABEL, listen, ORDER, store, toast, viewer, WEB } from "./api.js";
 import { startProfiles } from "./profiles.js";
 import { installWithMeter, openSetup } from "./setup.js";
 import { applyTheme, currentTheme, saveTheme, themePicker } from "./theme.js";
@@ -433,10 +433,32 @@ async function drawReadingRoom(inside, room) {
   }));
   room.replaceChildren(subhead("What reading takes"), list);
 }
-const canDel = () => viewer.admin || viewer.can_delete;
+const canDel = () => canDelete();
+
+/** Deletes these titles all at once (a few at a time, so the PC isn't
+    swamped), each gone from `o.items` as soon as it's asked for. Permanent:
+    Radarr and Sonarr have no recycle bin set, and nothing goes to Windows'. */
+async function deleteMany(o, items, onEach) {
+  const gone = new Set(items);
+  o.items = o.items.filter((i) => !gone.has(i));
+  onEach();
+  const failed = [];
+  const queue = [...items];
+  const worker = async () => {
+    for (let i = queue.shift(); i; i = queue.shift()) {
+      try { await invoke("media_delete", { tile: i.tile }); } catch (e) { failed.push(`${i.tile.title}: ${e}`); }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(4, items.length) }, worker));
+  const freed = items.reduce((n, i) => n + i.size, 0);
+  if (failed.length) toast(`Couldn't delete ${failed.length}: ${failed.join("; ")}`, true);
+  else toast(items.length === 1 ? `Deleted ${items[0].tile.title}. Freed ${size(freed)}.` : `Deleted ${items.length} titles. Freed ${size(freed)}.`);
+  if (failed.length) renderSettings($("#view"), "library");
+}
 
 function storageParts(o) {
   let filter = "all";
+  const picked = new Set();
   const total = o.items.reduce((n, i) => n + i.size, 0);
   const watched = o.items.filter((i) => i.watched);
   const watchedSize = watched.reduce((n, i) => n + i.size, 0);
@@ -450,50 +472,63 @@ function storageParts(o) {
   });
   const sweep = el("button", { class: "btn small ghost", disabled: !watched.length }, watched.length ? `Delete watched now (${size(watchedSize)})` : "Nothing watched to delete");
   sweep.addEventListener("click", async () => {
-    const ok = await ask(`Delete ${watched.length} watched title${watched.length === 1 ? "" : "s"}?`, `This frees ${size(watchedSize)}. The files are deleted from your PC; you can always download them again.`, watched.map((i) => `${i.tile.title} (${size(i.size)})`), "Delete");
+    const ok = await ask(`Delete ${watched.length} watched title${watched.length === 1 ? "" : "s"}?`, `This frees ${size(watchedSize)}. The files are deleted for good (not to the Recycle Bin); you can always download them again.`, watched.map((i) => `${i.tile.title} (${size(i.size)})`), "Delete");
     if (!ok) return;
     sweep.disabled = true;
-    for (const [n, i] of watched.entries()) {
-      sweep.textContent = `Deleting ${n + 1} of ${watched.length}...`;
-      try { await invoke("media_delete", { tile: i.tile }); } catch (e) { toast(String(e), true); }
-    }
-    toast(`Freed about ${size(watchedSize)}.`);
-    renderSettings($("#view"), "library");
+    sweep.textContent = "Nothing watched to delete";
+    await deleteMany(o, watched, draw);
   });
   const tidy = el("div", { class: "box" },
     el("div", { class: "opt" }, el("span", {}, el("b", { text: "Clean up watched" }),
       el("small", { text: "Deletes episodes and movies you've finished after this many days, and they won't download again. Anything another profile is still watching stays." })), cleanup),
     el("div", { class: "opt" }, el("span", {}, el("b", { text: `${o.items.length} titles, ${size(total)}` }),
-      el("small", { text: `${watched.length} watched (${size(watchedSize)}).` })), sweep));
+      el("small", { text: `${watched.length} watched (${size(watchedSize)}).` })), canDel() ? sweep : null));
 
   const chips = el("div", { class: "st-chips" });
   const list = el("ul", { class: "st-list" });
+  const bar = el("div", { class: "st-selbar" });
   const biggest = o.items[0]?.size || 1;
   const draw = () => {
+    for (const i of [...picked]) if (!o.items.includes(i)) picked.delete(i);
     chips.replaceChildren(...[["all", "All"], ["watched", "Watched"], ["unwatched", "Not watched"]].map(([id, label]) =>
       el("button", { class: id === filter ? "chip on" : "chip", onclick: () => { filter = id; draw(); } }, label)));
     const shown = o.items.filter((i) => filter === "all" || (filter === "watched") === i.watched);
+    // Ticking several: one Delete for all of them.
+    if (canDel() && shown.length) {
+      const all = shown.every((i) => picked.has(i));
+      const sel = [...picked];
+      const go = el("button", { class: "btn small danger-fill", disabled: !sel.length }, sel.length ? `Delete ${sel.length} (${size(sel.reduce((n, i) => n + i.size, 0))})` : "Delete selected");
+      go.addEventListener("click", async () => {
+        const ok = await ask(`Delete ${sel.length} title${sel.length === 1 ? "" : "s"}?`, "They're deleted from your PC for good (not to the Recycle Bin). You can always download them again.", sel.map((i) => `${i.tile.title} (${size(i.size)})`), "Delete");
+        if (!ok) return;
+        picked.clear();
+        await deleteMany(o, sel, draw);
+      });
+      bar.replaceChildren(
+        el("label", { class: "st-pick" }, el("input", { type: "checkbox", checked: all, onchange: (e) => { for (const i of shown) { if (e.target.checked) picked.add(i); else picked.delete(i); } draw(); } }), el("span", { text: "Select all" })),
+        go);
+    } else bar.replaceChildren();
     list.replaceChildren(...shown.map((i) => {
       const del = el("button", { class: "btn small ghost danger" }, "Delete");
       del.addEventListener("click", async () => {
-        const ok = await ask(`Delete ${i.tile.title}?`, `This deletes it from your PC and frees ${size(i.size)}. You can always download it again.`, [], "Delete");
+        const ok = await ask(`Delete ${i.tile.title}?`, `This deletes it from your PC for good (not to the Recycle Bin) and frees ${size(i.size)}. You can always download it again.`, [], "Delete");
         if (!ok) return;
-        del.disabled = true;
-        try { toast(await invoke("media_delete", { tile: i.tile })); renderSettings($("#view"), "library"); } catch (e) { toast(String(e), true); del.disabled = false; }
+        await deleteMany(o, [i], draw);
       });
+      const tick = canDel() ? el("input", { type: "checkbox", class: "st-tick", "aria-label": `Select ${i.tile.title}`, checked: picked.has(i), onchange: (e) => { if (e.target.checked) picked.add(i); else picked.delete(i); draw(); } }) : null;
       const kind = i.tile.kind === "series" ? "Series" : "Movie";
-      return el("li", {},
+      return el("li", {}, tick,
         el("div", { class: "st-thumb", style: i.tile.poster ? `background-image:url("${i.tile.poster.replace(/"/g, "%22")}")` : "" }),
         el("div", { class: "st-info" },
           el("b", { text: i.tile.title }),
           el("small", { text: [kind, i.tile.year, i.watched ? "Watched" : null].filter(Boolean).join(" · ") }),
           el("div", { class: "st-bar thin" }, el("span", { style: `width:${Math.max(2, Math.round((i.size / biggest) * 100))}%` }))),
-        el("span", { class: "st-size", text: size(i.size) }), del);
+        el("span", { class: "st-size", text: size(i.size) }), canDel() ? del : null);
     }));
     if (!shown.length) list.append(el("li", { class: "st-empty" }, filter === "watched" ? "Nothing watched yet." : "Nothing here."));
   };
   draw();
-  return [tidy, subhead("What takes the most room"), chips, list];
+  return [tidy, subhead("What takes the most room"), chips, bar, list];
 }
 
 /** The Downloads folder and the Movies / Series folder pickers, with Save. */

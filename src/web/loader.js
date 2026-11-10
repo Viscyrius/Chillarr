@@ -59,16 +59,35 @@
   // (cut off, or the page came back from the browser's back/forward cache)
   // doesn't block the next one.
   var goneAt = 0;
+  // Held on Jellyfin's own Home after Chillarr's pages gave up: a button back,
+  // so nobody is stuck here until the hold runs out.
+  function backButton() {
+    if (!document.body) { document.addEventListener("DOMContentLoaded", backButton); return; }
+    if (document.getElementById("chillarr-back")) return;
+    var a = document.createElement("a");
+    a.id = "chillarr-back";
+    a.href = PAGE;
+    a.textContent = "Back to Chillarr";
+    a.setAttribute("style", "position:fixed;z-index:99999;left:50%;bottom:calc(16px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);padding:12px 22px;border-radius:24px;background:#e50914;color:#fff;font:600 15px system-ui,sans-serif;text-decoration:none;box-shadow:0 4px 16px rgba(0,0,0,.5)");
+    a.onclick = function () { try { sessionStorage.removeItem("chillarr_fallback"); } catch (e) { /* storage blocked */ } fellBack = false; };
+    document.body.appendChild(a);
+  }
   function check() {
     var hash = location.hash || "#";
     var tab = TABS.exec(hash);
-    if (!tab && !HOME.test(hash)) return;
+    if (!tab && !HOME.test(hash)) {
+      // Never over Jellyfin's player or other pages.
+      var old = document.getElementById("chillarr-back");
+      if (old && old.parentNode) old.parentNode.removeChild(old);
+      return;
+    }
     if (new Date().getTime() - goneAt < 8000) return;
     // Over https Chillarr's bridge (plain http) can't be called (mixed
     // content): jellyfin-web's own Home stays. On purpose; shim.js says the same.
     if (location.protocol === "https:") return;
-    if (fellBack && held()) return;
-    if (!signedIn()) return;
+    if (fellBack && held()) { backButton(); return; }
+    // Still holding a login Chillarr turned down: the button lets you check again.
+    if (!signedIn()) { if (token()) backButton(); return; }
     goneAt = new Date().getTime();
     location.replace(PAGE + (tab ? (tab[1] === "tv" ? "#series" : "#movies") : ""));
   }

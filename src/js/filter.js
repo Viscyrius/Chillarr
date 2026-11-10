@@ -69,7 +69,7 @@ function filterCount(f) {
   return f.genres.length + f.not_genres.length + f.tags.length + f.not_tags.length + f.languages.length + f.not_languages.length
     + !!f.status + !!f.min_rating + !!(f.year_from || f.year_to) + !!(f.runtime_min || f.runtime_max) + !!(f.episodes_min || f.episodes_max)
     + f.formats.length + !!f.season + f.certs.length + f.studios.length + f.show_types.length + f.not_show_types.length + f.countries.length
-    + !!f.owned + (f.adult && f.adult !== adultDefault() ? 1 : 0) + (pornOn(f) ? 1 : 0);
+    + !!f.owned + (f.kind !== "series" && !isKids() && f.adult && f.adult !== adultDefault() ? 1 : 0) + (pornOn(f) ? 1 : 0);
 }
 
 // The pending reload of the filters on screen; one set at a time.

@@ -15,6 +15,7 @@
       function out() {
         if (done || window.__CHILLARR_BOOTED__) return;
         done = true;
+        try { localStorage.setItem("chillarr_exit", JSON.stringify({ why: "guard-15s", at: new Date().getTime(), page: location.pathname.slice(-40) })); } catch (e) { /* storage blocked */ }
         try { sessionStorage.setItem("chillarr_fallback", "1"); } catch (e) { /* storage blocked */ }
         location.replace("../index.html#/home");
       }

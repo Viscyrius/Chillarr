@@ -17,7 +17,13 @@ export const WEB = !!window.__CHILLARR_WEB__;
 /** Who that is (web_viewer), filled in at start. On the desktop app the PC's owner can do everything. */
 export const viewer = { name: "", admin: !WEB, can_delete: !WEB };
 /** Deleting files, stopping downloads, removing Watch now titles. */
-export const canDelete = () => viewer.admin || viewer.can_delete;
+/** Stopping a download: whoever Jellyfin lets delete. */
+export const canStop = () => viewer.admin || viewer.can_delete;
+/** Deleting from the library (and reading's downloads): the main profile in
+    the PC app only, never another profile or a phone (lib.rs main_profile_only). */
+let mainProfile = false;
+export function setMainProfile(on) { mainProfile = !!on; }
+export const canDelete = () => !WEB && mainProfile;
 
 /* Settings kept on this device per person: the signed-in Jellyfin user on
    the web, the active profile in the app ("" until known: the shared ones). */
@@ -75,6 +81,11 @@ const TMDB_W = [92, 154, 185, 300, 342, 500, 780, 1280];
 const JF_STEPS = [120, 180, 240, 320, 360, 480, 640, 800, 960, 1280, 1600];
 const TMDB_RE = /\/t\/p\/(w\d+|original)\//;
 const JF_RE = /([?&])(fillWidth|fillHeight|maxWidth|maxHeight)=(\d+)/;
+// TVmaze (series) and AniList (anime) posters come at their full size; both
+// have smaller copies at fixed names. medium_portrait is 210 wide; AniList's
+// large is 230 and extraLarge about 460.
+const TVMAZE_RE = /\/uploads\/images\/(original_untouched|medium_portrait)\//;
+const ANILIST_RE = /\/cover\/(extraLarge|large|medium)\//;
 /** `u` asked for at `w` pixels wide; a Jellyfin picture sized by its height gets `h`. */
 export function picAt(u, w, h = w * 1.5) {
   if (!u) return u;
@@ -84,6 +95,10 @@ export function picAt(u, w, h = w * 1.5) {
     const want = TMDB_W.find((x) => x >= w) || 1280;
     return want < have ? u.replace(TMDB_RE, `/t/p/w${want}/`) : u;
   }
+  m = u.match(TVMAZE_RE);
+  if (m) return w <= 210 ? u.replace(TVMAZE_RE, "/uploads/images/medium_portrait/") : u;
+  m = u.match(ANILIST_RE);
+  if (m) return w <= 230 ? u.replace(ANILIST_RE, "/cover/large/") : u;
   m = u.match(JF_RE);
   if (m) {
     const px = /Height/.test(m[2]) ? h : w;
@@ -98,7 +113,14 @@ export function picAt(u, w, h = w * 1.5) {
  * keeps its one `src`.
  */
 export function picProps(u, widths, ratio, sizes) {
-  if (!u || !(TMDB_RE.test(u) || JF_RE.test(u))) return { src: u };
+  if (!u || !(TMDB_RE.test(u) || JF_RE.test(u) || TVMAZE_RE.test(u) || ANILIST_RE.test(u))) return { src: u };
+  // TVmaze and AniList have one small copy (210 and 230 wide). It stands in up
+  // to a phone's poster at 3x (about 340 px): a little soft, a tenth of the
+  // bytes (33 KB against 323 KB), which is what a weak line notices.
+  if (TVMAZE_RE.test(u) || ANILIST_RE.test(u)) {
+    const small = picAt(u, 200);
+    return small === u ? { src: u } : { src: small, srcset: `${small} 342w, ${u} 700w`, sizes };
+  }
   const seen = new Set();
   const set = [];
   for (const w of widths) {

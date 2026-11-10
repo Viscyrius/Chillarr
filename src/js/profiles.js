@@ -5,7 +5,7 @@
 // (WEB) it's pick and add only, and a pick signs the browser in as them.
 import { setKids } from "./filterpanel.js";
 import { refreshHidden } from "./hidden.js";
-import { $, ask, el, icon, invoke, setPerson, toast, WEB } from "./api.js";
+import { $, ask, el, icon, invoke, setMainProfile, setPerson, toast, WEB } from "./api.js";
 
 const COLORS = ["#e50914", "#f5a623", "#2ecc71", "#1abc9c", "#3498db", "#9b59b6", "#e84393", "#95a5a6"];
 const LOCK = "M7 11V8a5 5 0 0 1 10 0v3M6 11h12v9H6z";
@@ -25,6 +25,8 @@ async function load() {
   // On the web it's whoever is signed in (app.js), profile or not.
   if (!WEB) setPerson(list.find((p) => p.active)?.id);
   setKids(list.find((p) => p.active)?.kids);
+  // No profiles yet (Jellyfin not set up): the PC's owner is the one here.
+  if (!WEB) setMainProfile(list.length ? !!list.find((p) => p.active)?.owner : true);
   refreshHidden();
   drawTopbar();
   return list;
@@ -324,7 +326,7 @@ function openEditor(p, currentPin = null) {
   // Kids: titles rated up to PG and no 18+. Never the main profile; a kids'
   // profile on the web only makes kids' profiles (the PC holds to both).
   const me = list.find((x) => x.active);
-  const kidsLocked = isNew && WEB && !!me?.kids;
+  const kidsLocked = isNew && !!me?.kids;
   const kids = p?.owner ? null : el("input", { type: "checkbox", class: "switch", "aria-label": "Kids profile", checked: kidsLocked || !!p?.kids, disabled: kidsLocked });
   const kidsRow = kids ? el("label", { class: "pf-kids" }, kids,
     el("span", {}, el("strong", { text: "Kids profile" }), el("small", { text: "Only titles rated up to PG, and no 18+." }))) : null;

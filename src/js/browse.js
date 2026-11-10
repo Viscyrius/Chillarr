@@ -1,7 +1,7 @@
 // Home, Movies, Series, Anime and My downloads: a hero, genre chips and rows
 // of posters; hover previews; Top 10; and "Explore all" pages that keep loading.
 import { isHidden, markHidden } from "./hidden.js";
-import { $, ask, canDelete, choose, el, expandRow, genresAZ, getPref, icon, ICON, invoke, listen, metaBits, personKey, picProps, store, toast } from "./api.js";
+import { $, ask, canDelete, canStop, choose, WEB, el, expandRow, genresAZ, getPref, icon, ICON, invoke, listen, metaBits, personKey, picProps, store, toast } from "./api.js";
 import { openDetail, playShowNow } from "./detail.js";
 import { canWatchNow, confirmRemove, isWatchNow, movieLike, play, removeWatchNow, watchNow } from "./player.js";
 import { completedActions, confirmRedownload, listable, markWatched, onMyList, removeCompleted, removeContinue, resumable, setMyList } from "./mylist.js";
@@ -52,6 +52,23 @@ function noArt(t) {
     el("small", { text: t.year ? String(t.year) : kind }));
 }
 
+let seenIO = null;
+/** Gives a deferred poster its picture once it's on screen or about to be. */
+function whenSeen(img) {
+  if (!seenIO) {
+    seenIO = new IntersectionObserver((hits) => {
+      for (const h of hits) {
+        if (!h.isIntersecting) continue;
+        const i = h.target;
+        seenIO.unobserve(i);
+        if (i.dataset.srcset) i.srcset = i.dataset.srcset;
+        i.src = i.dataset.src;
+      }
+    }, { rootMargin: "400px 400px" });
+  }
+  seenIO.observe(img);
+}
+
 function art(t, wide) {
   // Jellyfin's backdrops are asked for at the hero's 1600px; a card is about 300.
   const src = wide ? (t.backdrop || t.poster || "").replace("fillWidth=1600", "fillWidth=640") : t.poster || t.backdrop;
@@ -62,7 +79,12 @@ function art(t, wide) {
     const poster = src === t.poster;
     const fit = wide ? picProps(src, [300, 480, 640], poster ? 1.5 : 0.5625, "(max-width: 600px) 228px, 300px")
       : poster ? picProps(src, [185, 342, 500], 1.5, "(max-width: 600px) 112px, 200px") : { src };
-    const img = el("img", { ...fit, alt: "", loading: "lazy", decoding: "async" });
+    // In a browser (phones over a far line) a poster is only asked for when its
+    // card comes into view, rows scrolled sideways included: Home used to ask
+    // for 300+ pictures at once, all queued ahead of what's on screen.
+    const later = WEB && "IntersectionObserver" in window;
+    const img = el("img", later ? { alt: "", decoding: "async", "data-src": fit.src, "data-srcset": fit.srcset, sizes: fit.sizes } : { ...fit, alt: "", loading: "lazy", decoding: "async" });
+    if (later) whenSeen(img);
     img.addEventListener("load", () => img.classList.add("loaded"), { once: true });
     img.addEventListener("error", () => img.replaceWith(noArt(t)));
     box.append(img);
@@ -726,7 +748,7 @@ async function fillDownloads(view, seq) {
   const sig = sigFor(view, ".downloads-slot", list);
   if (sig == null) return;
   const section = list.length
-    ? stopSection("downloads", "Downloading now", null, list, canDelete() && stopDownload)
+    ? stopSection("downloads", "Downloading now", null, list, canStop() && stopDownload)
     : el("div");
   section.classList.add("downloads-slot");
   section._sig = sig;
@@ -760,7 +782,7 @@ async function fillWaiting(view, seq) {
   if (sig == null) return;
   const slotNow = view.querySelector(".waiting-slot");
   const section = stopSection("enter", "Waiting list", "Chillarr keeps looking for these. The moment a copy is out, it downloads it and lets you know.",
-    list.filter((w) => !(w.tile.status || "").startsWith("Downloading")), canDelete() && ((w) => invoke("media_stop_waiting", { which: w.app, id: w.id })));
+    list.filter((w) => !(w.tile.status || "").startsWith("Downloading")), canStop() && ((w) => invoke("media_stop_waiting", { which: w.app, id: w.id })));
   section.classList.add("waiting-slot");
   section._sig = sig;
   if (section.querySelector(".wait-item")) put(slotNow, section, seq);
