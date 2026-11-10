@@ -34,7 +34,10 @@ function applyMode(mode, animate) {
   const btn = $("#mode-btn");
   btn.setAttribute("aria-label", reading ? "Switch to watching" : "Switch to reading");
   btn.title = reading ? "Movies and shows" : "Reading";
-  $("#search").placeholder = reading ? "Manga, manhwa, novels, books" : "Movies, series, anime";
+  // A phone's box is a few letters wide: just "Search" there (the narrowest
+  // only the magnifier), not the start of a list cut off.
+  const narrow = matchMedia("(max-width: 380px)").matches ? "" : matchMedia("(max-width: 430px)").matches ? "Search" : null;
+  $("#search").placeholder = narrow ?? (reading ? "Manga, manhwa, novels, books" : "Movies, series, anime");
   // Each mode has its own style and shade.
   applyLook();
   drawPickers();

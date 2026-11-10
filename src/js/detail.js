@@ -1,7 +1,7 @@
 // The detail panel: what a title is, Play / Resume / Download, My List, and episodes.
 import { hideButton } from "./hidden.js";
-import { $, ask, canDelete, closeDialog, el, genresAZ, getPref, icon, ICON, invoke, listen, metaBits, setPref, store, toast } from "./api.js";
-import { canWatchNow, isWatchNow, movieLike, play, removeWatchNow, startEpisode, watchNow } from "./player.js";
+import { $, ask, canDelete, closeDialog, el, genresAZ, getPref, icon, ICON, invoke, listen, metaBits, picProps, setPref, store, toast } from "./api.js";
+import { canWatchNow, isWatchNow, loadHls, movieLike, play, removeWatchNow, startEpisode, watchNow } from "./player.js";
 import { completedActions, confirmRedownload, isWatched, listable, loadWatched, onMyList, removeContinue, resumable, setMyList } from "./mylist.js";
 import { subtitlesControl } from "./subpick.js";
 import { commentsBox, loadComments } from "./comments.js";
@@ -26,7 +26,8 @@ function renderEpisodes(season) {
       const num = (ep.subtitle || "").match(/E(\d+)/)?.[1] || String(i + 1);
       const name = (ep.subtitle || "").split(" · ").slice(1).join(" · ") || ep.title;
       const thumb = el("div", { class: "thumb" });
-      if (ep.backdrop || ep.poster) thumb.append(el("img", { src: ep.backdrop || ep.poster, alt: "", loading: "lazy" }));
+      // A 196px thumbnail: never the 1600px backdrop it would otherwise ask for.
+      if (ep.backdrop || ep.poster) thumb.append(el("img", { ...picProps(ep.backdrop || ep.poster, [240, 400, 640], ep.backdrop ? 0.5625 : 1.5, "196px"), alt: "", loading: "lazy", decoding: "async" }));
       if (ep.progress) thumb.append(el("div", { class: "bar" }, el("span", { style: `width:${Math.round(ep.progress * 100)}%` })));
       const li = el("li", { class: "ep", tabindex: "0", role: "button", "aria-label": `Play ${name}` },
         el("span", { class: "num", text: num }), thumb,
@@ -841,6 +842,8 @@ export async function openDetail(t, opts = {}) {
   }
   openSeq++;
   show = null;
+  // Play is likely next: the player's HLS script comes in once the panel has opened.
+  setTimeout(loadHls, 700);
   $("#detail-where").hidden = true;
   statusPill = null;
   openKey = t.key;
@@ -980,7 +983,7 @@ function simCard(s, i) {
   const src = s.poster || s.backdrop;
   const noart = () => el("div", { class: "noart", text: s.title });
   if (src) {
-    const img = el("img", { src, alt: "", loading: "lazy", decoding: "async" });
+    const img = el("img", { ...(src === s.poster ? picProps(src, [185, 342, 500], 1.5, "150px") : { src }), alt: "", loading: "lazy", decoding: "async" });
     img.addEventListener("load", () => img.classList.add("loaded"), { once: true });
     img.addEventListener("error", () => img.replaceWith(noart()), { once: true });
     art.append(img);

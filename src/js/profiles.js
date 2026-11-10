@@ -3,6 +3,7 @@
 // Jellyfin account of its own (profiles.rs), so its history and My List
 // follow it to Jellyfin's TV and phone apps. In Jellyfin's web pages
 // (WEB) it's pick and add only, and a pick signs the browser in as them.
+import { setKids } from "./filterpanel.js";
 import { refreshHidden } from "./hidden.js";
 import { $, ask, el, icon, invoke, setPerson, toast, WEB } from "./api.js";
 
@@ -23,6 +24,7 @@ async function load() {
   list = await invoke("profiles_list", WEB ? { trust: window.__CHILLARR_JF__.trust() } : {}).catch(() => []);
   // On the web it's whoever is signed in (app.js), profile or not.
   if (!WEB) setPerson(list.find((p) => p.active)?.id);
+  setKids(list.find((p) => p.active)?.kids);
   refreshHidden();
   drawTopbar();
   return list;
@@ -108,7 +110,8 @@ function openPicker(manage = false) {
   const tiles = list.map((p) => {
     const b = el("button", { class: "pf-tile", style: `--c:${p.color}` },
       el("span", { class: "pf-face" }, avatar(p, "big"), manage ? el("span", { class: "pf-edit" }, icon(PENCIL)) : null),
-      el("span", { class: "pf-name" }, p.name, (p.has_pin || p.needs_login) && !manage ? el("span", { class: "pf-lock" }, icon(LOCK)) : null));
+      el("span", { class: "pf-name" }, p.name, (p.has_pin || p.needs_login) && !manage ? el("span", { class: "pf-lock" }, icon(LOCK)) : null),
+      p.kids ? el("span", { class: "pf-kids-tag", text: "Kids" }) : null);
     b.addEventListener("click", () => (manage ? edit(p) : choose(p)));
     return b;
   });
@@ -318,6 +321,13 @@ function openEditor(p, currentPin = null) {
   // Not the owner: a password lets this person sign in to Jellyfin's own apps
   // on their devices, and join a watch party from there.
   const jfPass = p?.owner || WEB ? null : el("input", { type: "password", autocomplete: "new-password", placeholder: "Password for Jellyfin apps (optional)", "aria-label": "Password for Jellyfin apps" });
+  // Kids: titles rated up to PG and no 18+. Never the main profile; a kids'
+  // profile on the web only makes kids' profiles (the PC holds to both).
+  const me = list.find((x) => x.active);
+  const kidsLocked = isNew && WEB && !!me?.kids;
+  const kids = p?.owner ? null : el("input", { type: "checkbox", class: "switch", "aria-label": "Kids profile", checked: kidsLocked || !!p?.kids, disabled: kidsLocked });
+  const kidsRow = kids ? el("label", { class: "pf-kids" }, kids,
+    el("span", {}, el("strong", { text: "Kids profile" }), el("small", { text: "Only titles rated up to PG, and no 18+." }))) : null;
   const err = el("p", { class: "err" });
   const save = el("button", { class: "btn primary" }, isNew ? "Add profile" : "Save");
   save.addEventListener("click", async () => {
@@ -329,7 +339,7 @@ function openEditor(p, currentPin = null) {
     try {
       if (WEB) {
         // Straight in as them: they just typed the PIN, so it isn't asked again.
-        const made = await invoke("profiles_add", { name: name.value, color, pin: pin.value });
+        const made = await invoke("profiles_add", { name: name.value, color, pin: pin.value, kids: !!kids?.checked });
         save.textContent = "Switching...";
         // It's made either way: a failed switch goes back to the picker, not to a second Add.
         try { await window.__CHILLARR_JF__.switchProfile(made.id, pin.value || null, null); }
@@ -337,8 +347,8 @@ function openEditor(p, currentPin = null) {
         return;
       }
       let id = p?.id;
-      if (isNew) id = (await invoke("profiles_add", { name: name.value, color, pin: pin.value || null })).id;
-      else await invoke("profiles_update", { id: p.id, name: name.value !== p.name ? name.value : null, color, pin: pin.value || null, currentPin });
+      if (isNew) id = (await invoke("profiles_add", { name: name.value, color, pin: pin.value || null, kids: !!kids?.checked })).id;
+      else await invoke("profiles_update", { id: p.id, name: name.value !== p.name ? name.value : null, color, pin: pin.value || null, currentPin, kids: kids && kids.checked !== !!p.kids ? kids.checked : null });
       if (jfPass?.value) {
         // A PIN just set or changed is the one it asks for now.
         const listed = await invoke("profiles_set_password", { id, password: jfPass.value, currentPin: pin.value || currentPin });
@@ -366,7 +376,7 @@ function openEditor(p, currentPin = null) {
   root.replaceChildren(el("div", { class: "pf-inner pf-editor" },
     el("h1", { text: isNew ? "Add a profile" : "Edit profile" }),
     isNew ? el("p", { class: "pf-sub", text: "Each profile keeps its own Continue watching and My List. It's also a Jellyfin account, so it works the same in Jellyfin's TV and phone apps." }) : null,
-    el("div", { class: "pf-edit-row" }, face, el("div", { class: "pf-fields" }, name, swatches, pin, jfPass)),
+    el("div", { class: "pf-edit-row" }, face, el("div", { class: "pf-fields" }, name, swatches, pin, jfPass, kidsRow)),
     err,
     el("div", { class: "pf-foot" }, save, el("button", { class: "btn ghost", onclick: () => openPicker(!isNew) }, "Cancel"), ...extras)));
   name.focus();

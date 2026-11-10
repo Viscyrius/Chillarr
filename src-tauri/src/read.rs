@@ -1700,8 +1700,9 @@ pub struct Explore {
 /// "it's a universal thing"). It stays off until someone picks Include or Only
 /// 18+ in the filters, and 18+ sources are only searched for 18+ titles. The
 /// one place to narrow it again.
-pub fn adult_ok(_app: &AppHandle) -> bool {
-    true
+pub fn adult_ok(app: &AppHandle) -> bool {
+    // A kids' profile never gets it (profiles.rs).
+    !crate::profiles::viewer_kids(app)
 }
 
 pub fn explore_args(e: &Explore, adult_allowed: bool) -> Result<String, String> {

@@ -533,7 +533,7 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
         // Known by the key Chillarr gave the device (it keeps it); none or an
         // unknown one makes a new device, so a page can't take over another's.
         "remote_device" => res(crate::remote::for_device(app, arg::<Option<String>>(a, "key")?.as_deref(), &arg::<Option<String>>(a, "name")?.unwrap_or_default(), arg::<Option<bool>>(a, "renew")?.unwrap_or(false)).await),
-        "profiles_add" => res(crate::profiles::add_web(app, &me.session.user_id, &arg::<String>(a, "name")?, &arg::<String>(a, "color")?, arg(a, "pin")?).await),
+        "profiles_add" => res(crate::profiles::add_web(app, &me.session.user_id, &arg::<String>(a, "name")?, &arg::<String>(a, "color")?, arg(a, "pin")?, arg::<Option<bool>>(a, "kids")?.unwrap_or(false)).await),
         "storage_overview" => ok(storage::overview(app).await),
         "storage_set_cleanup" => res(storage::set_cleanup(app, arg(a, "days")?)),
         "library_stats" => ok(media::library_stats(app).await),

@@ -1450,6 +1450,18 @@ async fn start_as(app: &tauri::AppHandle, uid: &str, key: &str, tile: crate::til
     let (uid, key) = (uid.to_string(), key.to_string());
     let wn = app.state::<WatchNow>();
     emit_state(app, &key, "asking", 0.0);
+    // Downloaded and imported already: the library copy plays (library_instead).
+    let probe = wn.entry(&uid, &key).unwrap_or_else(|| {
+        let mut e = new_entry(&tile, &key, season, episode);
+        if let Some((pos, dur)) = wn.recall(&uid, &key) {
+            e.position = pos;
+            e.duration = dur;
+        }
+        e
+    });
+    if let Some(t) = library_instead(app, &uid, &probe).await {
+        return Ok(t);
+    }
     let q = crate::waiting::qbit(app).ok_or("qBittorrent isn't set up. Install it first.")?;
     let existing = wn.entry(&uid, &key);
     let fresh = existing.is_none();
@@ -2057,6 +2069,98 @@ async fn real_item(app: &tauri::AppHandle, cache: &mut Lists, uid: &str, j: &cra
     }
 }
 
+/// Gives the library copy (`real`, with this profile's play data) Watch now's
+/// place in the title: watched, or the position, unless the copy is further.
+async fn carry_position(j: &crate::jellyfin::Jf, id: &str, e: &Entry, real: &serde_json::Value) -> Result<(), crate::jellyfin::JfError> {
+    let played = real["UserData"]["Played"] == true;
+    let at = crate::jellyfin::ticks_to_seconds(real["UserData"]["PlaybackPositionTicks"].as_i64().unwrap_or(0));
+    if played {
+        Ok(())
+    } else if finished(e.position, e.duration) {
+        j.set_user_data(id, &played_body(e.updated_at)).await
+    } else {
+        match position_to_write(e.position, at) {
+            // With when it was played, so Continue Watching sorts it there.
+            Some(p) if e.updated_at > 0 => j.set_user_data(id, &position_body(p, e.updated_at)).await,
+            Some(p) => j.set_position(id, p).await,
+            None => Ok(()),
+        }
+    }
+}
+
+/// The tile that plays the library copy (`real`) of a Watch now title,
+/// from wherever is further: Watch now's position or the copy's own.
+pub fn library_tile(e: &Entry, real: &serde_json::Value) -> Option<crate::tiles::Tile> {
+    let id = real["Id"].as_str().filter(|s| !s.is_empty())?;
+    let played = real["UserData"]["Played"] == true;
+    let at = crate::jellyfin::ticks_to_seconds(real["UserData"]["PlaybackPositionTicks"].as_i64().unwrap_or(0));
+    let duration = e.duration.filter(|d| *d > 0.0).or_else(|| real["RunTimeTicks"].as_i64().map(crate::jellyfin::ticks_to_seconds));
+    // Watched already: what carry_position leaves alone, the tile leaves alone too.
+    let best = if played { at } else { e.position.max(at) };
+    Some(crate::tiles::Tile {
+        key: format!("jf:{id}"),
+        jf_id: Some(id.to_string()),
+        series_id: real["SeriesId"].as_str().map(String::from),
+        resume_seconds: Some(best).filter(|p| worth_remembering(*p, duration)),
+        progress: duration.filter(|d| *d > 0.0 && !finished(best, Some(*d))).map(|d| (best / d).clamp(0.0, 1.0)),
+        played: Some(played),
+        ..tile_of(e)
+    })
+}
+
+/// The Watch now entry a Jellyfin placeholder id belongs to: this profile's
+/// own, else any profile's (the title is the same).
+pub fn entry_for_placeholder(all: &[(String, Entry)], uid: &str, jf_id: &str) -> Option<Entry> {
+    let is_it = |e: &Entry| e.strm_jf_id.as_deref().is_some_and(|id| id.eq_ignore_ascii_case(jf_id));
+    all.iter().find(|(u, e)| u == uid && is_it(e)).or_else(|| all.iter().find(|(_, e)| is_it(e))).map(|(_, e)| e.clone())
+}
+
+/// The library copy's Jellyfin id for a Watch now placeholder, once the real
+/// file is in. A tile made before the import (Continue watching, a watch
+/// party's queue, a phone page left open) still carries the placeholder;
+/// this is what plays instead (media::play).
+pub async fn library_copy_of(app: &tauri::AppHandle, jf_id: &str) -> Option<String> {
+    use tauri::Manager;
+    let uid = crate::media::active_user(app)?;
+    let j = crate::media::jf(app)?;
+    let e = entry_for_placeholder(&app.state::<WatchNow>().all(), &uid, jf_id)?;
+    let real = real_item(app, &mut Lists::new(), &uid, &j, &e).await?;
+    let id = real["Id"].as_str()?.to_string();
+    crate::log::detail(format!("Watch now {}: {jf_id} is in the library now as {id}, playing that", e.key));
+    Some(id)
+}
+
+/// Watch now pressed (any tile, any device) on a title whose real file is
+/// already in the library: the library copy plays, never the placeholder.
+/// Waiting for `handover` instead sent Ghost in the Shell back to the
+/// placeholder three times in 4 minutes after its import (2026-11-10): the
+/// tick skips a title while its entry says it's playing, and each press set that.
+/// This profile hands over here and now; a failed write keeps the entry, so
+/// the tick tries again, and the tile still starts from the right place.
+async fn library_instead(app: &tauri::AppHandle, uid: &str, e: &Entry) -> Option<crate::tiles::Tile> {
+    use tauri::Manager;
+    let j = crate::media::jf(app).filter(|j| j.user_id.as_deref() == Some(uid))?;
+    let real = real_item(app, &mut Lists::new(), uid, &j, e).await?;
+    let tile = library_tile(e, &real)?;
+    let id = tile.jf_id.clone().unwrap_or_default();
+    crate::log::detail(format!("Watch now {}: it's in the library ({id}), playing that", e.key));
+    let wn = app.state::<WatchNow>();
+    if let Err(err) = carry_position(&j, &id, e, &real).await {
+        crate::log::log(app, crate::model::Level::Amber, format!("Couldn't carry where you were in {} over to your library: {err}", e.title));
+        return Some(tile);
+    }
+    note(app, wn.forget_position(uid, &e.key));
+    let Some(mine) = wn.entry(uid, &e.key) else { return Some(tile) };
+    wn.remove(uid, &e.key);
+    note_taken(app);
+    // The `.strm` is shared: it goes only when no profile still has the title.
+    if !wn.any_has(&e.key) && mine.strm_jf_id.is_some() {
+        remove_item(app, &mine).await;
+        crate::log::log(app, crate::model::Level::Ok, format!("{} is in your library now.", mine.title));
+    }
+    Some(tile)
+}
+
 /// For every title whose real file is now in the library and that nobody
 /// is playing: each profile's position moves to the library copy (as that
 /// profile), its entry goes, and the placeholder goes once no profile has it.
@@ -2092,21 +2196,7 @@ async fn handover(app: &tauri::AppHandle) {
             if wn.all().iter().any(|(_, x)| x.key == key && x.watching) {
                 break;
             }
-            let played = real["UserData"]["Played"] == true;
-            let at = crate::jellyfin::ticks_to_seconds(real["UserData"]["PlaybackPositionTicks"].as_i64().unwrap_or(0));
-            let wrote = if played {
-                Ok(())
-            } else if finished(e.position, e.duration) {
-                j.set_user_data(id, &played_body(e.updated_at)).await
-            } else {
-                match position_to_write(e.position, at) {
-                    // With when it was played, so Continue Watching sorts it there.
-                    Some(p) if e.updated_at > 0 => j.set_user_data(id, &position_body(p, e.updated_at)).await,
-                    Some(p) => j.set_position(id, p).await,
-                    None => Ok(()),
-                }
-            };
-            if let Err(err) = wrote {
+            if let Err(err) = carry_position(j, id, e, &real).await {
                 // The entry stays, so the next tick tries again and nothing is lost.
                 crate::log::log(app, crate::model::Level::Amber, format!("Couldn't carry where you were in {} over to your library: {err}", e.title));
                 continue;
@@ -2623,6 +2713,30 @@ mod tests {
         assert_eq!(position_to_write(300.0, 300.0), None);
         // Never started: nothing to carry over.
         assert_eq!(position_to_write(0.0, 0.0), None);
+    }
+
+    #[test]
+    fn imported_title_plays_the_library_copy() {
+        // Ghost in the Shell, 2026-11-10: pressed again after the import, it went back to the placeholder.
+        let e = Entry { strm_jf_id: Some("PH".into()), position: 1200.0, duration: Some(5183.0), ..movie() };
+        let real = serde_json::json!({ "Id": "real", "UserData": { "PlaybackPositionTicks": 600_000_000_i64, "Played": false } });
+        let t = library_tile(&e, &real).unwrap();
+        assert_eq!(t.key, "jf:real", "not a Watch now key, so the player treats it as a library title");
+        assert_eq!(t.jf_id.as_deref(), Some("real"));
+        assert_eq!(t.resume_seconds, Some(1200.0), "Watch now's position carries over");
+        assert_eq!(t.tmdb, Some(27205));
+        // The copy was played further: its own position stands.
+        let further = serde_json::json!({ "Id": "real", "UserData": { "PlaybackPositionTicks": 30_000_000_000_i64 } });
+        assert_eq!(library_tile(&e, &further).unwrap().resume_seconds, Some(3000.0));
+        // Watched on the copy: nothing to resume.
+        let seen = serde_json::json!({ "Id": "real", "UserData": { "Played": true } });
+        assert_eq!(library_tile(&e, &seen).unwrap().resume_seconds, None);
+        assert!(library_tile(&e, &serde_json::json!({})).is_none());
+
+        let all = vec![("u1".to_string(), Entry { strm_jf_id: Some("ph".into()), position: 5.0, ..movie() }), ("u2".to_string(), e.clone())];
+        assert_eq!(entry_for_placeholder(&all, "u2", "PH").unwrap().position, 1200.0, "this profile's own entry first");
+        assert_eq!(entry_for_placeholder(&all, "u3", "Ph").unwrap().position, 5.0, "else anyone's");
+        assert!(entry_for_placeholder(&all, "u2", "other").is_none());
     }
 
     #[test]

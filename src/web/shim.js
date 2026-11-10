@@ -246,6 +246,84 @@
     html.removeChild(box);
   })();
 
+  /* ---------- Coming alive, or going back ---------- */
+  // This copy of the pages is gone: Chillarr made a new one (its update, or
+  // Jellyfin's) and Jellyfin restarted onto it while this page stayed open.
+  // The new copy leaves a page at this folder's address that sends you on
+  // (jfweb.rs moved_page), so loading again lands in the new one.
+  const MOVED = "data-chillarr-moved";
+  let reloading = false;
+  const moved = () => fetch("index.html", { cache: "no-store" })
+    .then((r) => (r.ok ? r.text() : ""))
+    .then((t) => t.indexOf(MOVED) >= 0, () => false);
+  const followMove = () => moved().then((yes) => {
+    if (yes && !reloading) { reloading = true; location.reload(); }
+    return yes;
+  });
+  // A page that loads code later (a tab's script) finds it missing after a move.
+  let askedAt = 0;
+  window.addEventListener("unhandledrejection", (e) => {
+    if (!(e && e.reason instanceof TypeError) || Date.now() - askedAt < 30000) return;
+    askedAt = Date.now();
+    followMove();
+  });
+
+  // index.html's guard goes to Jellyfin's own Home when the app hasn't drawn
+  // anything 15 s in. On a phone on a slow or far network that was only the
+  // scripts still coming in, and it used to leave the tab on Jellyfin's pages
+  // for good. So the guard's question (window.__CHILLARR_BOOTED__) is
+  // answered here: "not yet, but don't give up" while files keep arriving
+  // and nothing has failed, and this keeps watching from there. It goes back
+  // only on a script that can't run or load, 20 s with nothing new arriving,
+  // or 2 minutes in all; time in the background (another app, screen off)
+  // doesn't count. Only Chillarr's pages inside Jellyfin have the guard.
+  if (/\/web\/chillarr-[^/]+\//.test(location.pathname)) {
+    const STALL = 20000, CAP = 120000;
+    let booted = false, broken = false, done = false;
+    let tick = Date.now(), spent = 0, lastNew = tick, count = -1, state = "";
+    const arrived = () => (performance.getEntriesByType ? performance.getEntriesByType("resource").length : 0);
+    const stuck = () => {
+      const now = Date.now(), dt = now - tick;
+      tick = now;
+      if (document.hidden) lastNew += dt;
+      else spent += dt;
+      const n = arrived();
+      if (n !== count || document.readyState !== state) { count = n; state = document.readyState; lastNew = now; }
+      return broken || now - lastNew >= STALL || spent >= CAP;
+    };
+    Object.defineProperty(window, "__CHILLARR_BOOTED__", {
+      configurable: true,
+      get: () => booted || !stuck(),
+      set: (v) => { booted = !!v; },
+    });
+    const giveUp = () => {
+      if (booted || done) return;
+      done = true;
+      clearInterval(timer);
+      // A moved copy reloads into the new one instead of giving up on it.
+      followMove().then((yes) => {
+        if (yes) return;
+        // loader.js keeps Jellyfin's pages for that one visit, then tries again.
+        try { sessionStorage.setItem("chillarr_fallback", "1"); } catch (e) { /* storage blocked */ }
+        location.replace("../index.html#/home");
+      });
+    };
+    const timer = setInterval(() => {
+      if (booted) clearInterval(timer);
+      else if (stuck()) giveUp();
+    }, 1000);
+    // Before index.html's own listener (this file runs first), so its check sees it.
+    window.addEventListener("error", (e) => {
+      const err = e && e.error, file = (e && e.filename) || "";
+      if (!booted && err && file.indexOf("/web/chillarr-") >= 0 && (err instanceof SyntaxError || err instanceof ReferenceError)) broken = true;
+    });
+    // A script that didn't load at all (its error doesn't reach the window's listeners above).
+    window.addEventListener("error", (e) => {
+      const t = e && e.target;
+      if (!booted && t && t !== window && t.tagName === "SCRIPT") giveUp();
+    }, true);
+  }
+
   /* ---------- Who's signed in ---------- */
   // The Jellyfin login this page came with, as jellyfin-web keeps it.
   const CREDS = "jellyfin_credentials";
@@ -300,7 +378,12 @@
     if (fresh) basePromise = null;
     if (!basePromise) {
       basePromise = fetch("bridge.json", { cache: "no-store" })
-        .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+        .then((r) => {
+          if (r.ok) return r.json();
+          // Gone with its whole folder: this copy may have been replaced.
+          if (r.status === 404) followMove();
+          return Promise.reject(new Error(String(r.status)));
+        })
         .then((j) => `${location.protocol}//${location.hostname}:${j.port}`)
         .catch((e) => { basePromise = null; throw e; });
     }

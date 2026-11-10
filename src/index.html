@@ -31,9 +31,6 @@
   <title>Chillarr</title>
   <link rel="icon" href="logo.svg">
   <link rel="stylesheet" href="styles.css">
-  <!-- Hover-card trailers: have the connection to YouTube ready before the first one -->
-  <link rel="preconnect" href="https://www.youtube-nocookie.com">
-  <link rel="preconnect" href="https://i.ytimg.com">
 </head>
 <body>
   <a class="skip" href="#view">Skip to content</a>
@@ -188,7 +185,7 @@
 
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
-  <script src="vendor/hls.min.js"></script>
+  <!-- hls.js (vendor/hls.min.js, 400 KB) is loaded by player.js once something plays. -->
   <script type="module" src="js/app.js"></script>
 </body>
 </html>

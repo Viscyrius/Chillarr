@@ -278,6 +278,8 @@ pub struct Update {
 /// `adult`: 18+ is on in this profile's movie filters, so R and NC-17 films
 /// the library doesn't have are found too.
 pub async fn live(app: AppHandle, term: String, seq: u64, adult: bool) {
+    // Read here, while the request's viewer is still known.
+    let adult = adult && !crate::profiles::viewer_kids(&app);
     let page = crate::viewer::current().map(|v| format!("{}/{}", v.session.user_id, v.page)).unwrap_or_default();
     newest(&page, seq, true);
     let term = term.trim().to_string();

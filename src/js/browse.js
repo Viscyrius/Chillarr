@@ -1,7 +1,7 @@
 // Home, Movies, Series, Anime and My downloads: a hero, genre chips and rows
 // of posters; hover previews; Top 10; and "Explore all" pages that keep loading.
 import { isHidden, markHidden } from "./hidden.js";
-import { $, ask, canDelete, choose, el, expandRow, genresAZ, getPref, icon, ICON, invoke, listen, metaBits, personKey, store, toast } from "./api.js";
+import { $, ask, canDelete, choose, el, expandRow, genresAZ, getPref, icon, ICON, invoke, listen, metaBits, personKey, picProps, store, toast } from "./api.js";
 import { openDetail, playShowNow } from "./detail.js";
 import { canWatchNow, confirmRemove, isWatchNow, movieLike, play, removeWatchNow, watchNow } from "./player.js";
 import { completedActions, confirmRedownload, listable, markWatched, onMyList, removeCompleted, removeContinue, resumable, setMyList } from "./mylist.js";
@@ -9,6 +9,7 @@ import { goBack, remember, restore } from "./place.js";
 import { inlinePicker, styleNow } from "./look.js";
 import { tabbed } from "./read.js";
 import { FILTER_KIND, inlineFilters } from "./filter.js";
+import { adultOf, adultShows } from "./filterpanel.js";
 import { selectable, stopSelecting } from "./select.js";
 
 const WIDE = new Set(["continue", "downloading"]);
@@ -56,7 +57,12 @@ function art(t, wide) {
   const src = wide ? (t.backdrop || t.poster || "").replace("fillWidth=1600", "fillWidth=640") : t.poster || t.backdrop;
   const box = el("div", { class: "art" });
   if (src) {
-    const img = el("img", { src, alt: "", loading: "lazy", decoding: "async" });
+    // The size the card is drawn at (styles.css: 112px / 228px on a phone), not the biggest there is.
+    // (A backdrop standing in for a poster is cropped to a sliver of it: kept as it is.)
+    const poster = src === t.poster;
+    const fit = wide ? picProps(src, [300, 480, 640], poster ? 1.5 : 0.5625, "(max-width: 600px) 228px, 300px")
+      : poster ? picProps(src, [185, 342, 500], 1.5, "(max-width: 600px) 112px, 200px") : { src };
+    const img = el("img", { ...fit, alt: "", loading: "lazy", decoding: "async" });
     img.addEventListener("load", () => img.classList.add("loaded"), { once: true });
     img.addEventListener("error", () => img.replaceWith(noArt(t)));
     box.append(img);
@@ -118,6 +124,12 @@ export function tile(t, wide = false, rank = 0) {
 }
 
 /* ---------- Hover preview card ---------- */
+// Hover-card trailers: the connection to YouTube is made ahead of the first
+// one, only where there are hover cards (a mouse). A phone on a weak line
+// doesn't spend its first second on two handshakes it never uses.
+if (matchMedia("(hover: hover) and (pointer: fine)").matches && !document.documentElement.classList.contains("tv")) {
+  for (const href of ["https://www.youtube-nocookie.com", "https://i.ytimg.com"]) document.head.append(el("link", { rel: "preconnect", href }));
+}
 // A poster opens like a door: the poster stays under the pointer, a little
 // larger, and the details swing out to the side with room to read, with the
 // trailer playing above them. Wide cards (Continue watching) already are the
@@ -593,7 +605,7 @@ const RANKS = [["top10", "Top 10"], ["trending", "Trending"], ["popular-series",
 function rankItem(t, i) {
   const b = el("button", { class: "rk", style: `--i:${i}`, onclick: () => { hidePreview(true); open(t); } },
     el("span", { class: "rk-n", text: String(i + 1).padStart(2, "0") }),
-    t.poster ? el("img", { class: "rk-img", src: t.poster, alt: "", loading: "lazy", decoding: "async" }) : el("span", { class: "rk-img" }),
+    t.poster ? el("img", { class: "rk-img", ...picProps(t.poster, [92, 154], 1.5, "46px"), alt: "", loading: "lazy", decoding: "async" }) : el("span", { class: "rk-img" }),
     el("span", { class: "rk-text" },
       el("strong", { text: t.title }),
       el("small", { text: [t.year, ...genresAZ(t.genres || [], 2)].filter(Boolean).join(" · ") })),
@@ -1228,8 +1240,9 @@ function yourWeek(tab, seq) {
     const card = (x, i) => {
       const t = x.tile;
       const src = (t.backdrop || t.poster || "").replace("fillWidth=1600", "fillWidth=640");
+      const fit = picProps(src, [300, 480, 640], src === t.poster ? 1.5 : 0.5625, "(max-width: 640px) 240px, 300px");
       const b = el("button", { class: "wk-card", style: `--i:${Math.min(i, 8)}`, "aria-label": `${t.title}${x.episode ? `, ${x.episode}` : ""}`, dataset: { key: t.key } },
-        el("div", { class: "wk-art" }, src ? el("img", { src, alt: "", loading: "lazy", decoding: "async" }) : noArt(t),
+        el("div", { class: "wk-art" }, src ? el("img", { ...fit, alt: "", loading: "lazy", decoding: "async" }) : noArt(t),
           isNew(x) ? el("span", { class: "wk-new", text: "NEW" }) : null),
         el("div", { class: "wk-text" },
           el("strong", { text: t.title }),
@@ -1453,7 +1466,7 @@ export async function renderExplore(view, category, title, mode = null, want = 0
 
 /** 18+ on in this profile's Movies or Anime filters: R films and ecchi anime show on a person's page. */
 function makerAdult() {
-  return ["filter-movie", "filter-anime"].some((k) => { try { const a = JSON.parse(getPref(k) || "{}").adult; return a === "include" || a === "only"; } catch (e) { return false; } });
+  return ["filter-movie", "filter-anime"].some((k) => { try { return adultShows(adultOf(JSON.parse(getPref(k) || "{}"))); } catch (e) { return false; } });
 }
 
 /** Everything one director, creator or anime staff member made (makers.rs). */
@@ -1544,7 +1557,7 @@ export function renderSearch(view, term) {
   // What's on screen stays, dimmed, until the new results are in.
   page.root.classList.add("stale");
   // R and NC-17 films only once 18+ is on in this profile's movie filters.
-  const adult = (() => { try { const a = JSON.parse(getPref("filter-movie") || "{}").adult; return a === "include" || a === "only"; } catch (e) { return false; } })();
+  const adult = (() => { try { return adultShows(adultOf(JSON.parse(getPref("filter-movie") || "{}"))); } catch (e) { return false; } })();
   invoke("media_search_live", { term, seq, adult })
     .catch(() => null)
     .then(() => setTimeout(() => {

@@ -305,8 +305,8 @@ fn profiles_list(app: AppHandle) -> Vec<profiles::View> {
 }
 
 #[tauri::command]
-async fn profiles_add(app: AppHandle, name: String, color: String, pin: Option<String>) -> Result<profiles::View, String> {
-    profiles::add(&app, &name, &color, pin).await
+async fn profiles_add(app: AppHandle, name: String, color: String, pin: Option<String>, kids: Option<bool>) -> Result<profiles::View, String> {
+    profiles::add(&app, &name, &color, pin, kids.unwrap_or(false)).await
 }
 
 #[tauri::command]
@@ -326,8 +326,8 @@ async fn profiles_check_pin(app: AppHandle, id: String, pin: String) -> Result<(
 }
 
 #[tauri::command]
-async fn profiles_update(app: AppHandle, id: String, name: Option<String>, color: Option<String>, pin: Option<String>, current_pin: Option<String>) -> Result<(), String> {
-    profiles::update(&app, &id, name, color, pin, current_pin).await
+async fn profiles_update(app: AppHandle, id: String, name: Option<String>, color: Option<String>, pin: Option<String>, current_pin: Option<String>, kids: Option<bool>) -> Result<(), String> {
+    profiles::update(&app, &id, name, color, pin, current_pin, kids).await
 }
 
 #[tauri::command]

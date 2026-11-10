@@ -10,7 +10,7 @@ import { ask, canDelete, choose, el, expandRow, getPref, icon, ICON, invoke, per
 import { selectable, stopSelecting } from "./select.js";
 import { openReader } from "./reader.js";
 import { openBook } from "./bookreader.js";
-import { adultFields, chipKit, pornOn, clearButton, filtersButton, moreButton, orderSelect } from "./filterpanel.js";
+import { adultDefault, adultFields, adultOf, adultShows, chipKit, pornOn, clearButton, filtersButton, moreButton, orderSelect } from "./filterpanel.js";
 import { notifyButton } from "./notify.js";
 import { applyLook, drawPickers, inlinePicker, onStyle, styleNow } from "./look.js";
 
@@ -848,14 +848,16 @@ let filterInfo = null;
 
 function filterCount(f) {
   return f.genres.length + f.not_genres.length + f.tags.length + f.not_tags.length + (f.status ? 1 : 0) + (f.min_score ? 1 : 0)
-    + (f.year_from || f.year_to ? 1 : 0) + (f.length ? 1 : 0) + (f.adult !== "hide" ? 1 : 0) + (pornOn(f) ? 1 : 0);
+    + (f.year_from || f.year_to ? 1 : 0) + (f.length ? 1 : 0) + (f.adult !== adultDefault() ? 1 : 0) + (pornOn(f) ? 1 : 0);
 }
 
 async function explorePage(view, tab, my) {
   clearInterval(heroTimer);
   const kind = tab.slice(2);
   const saved = (() => { try { return JSON.parse(getPref(`read-filter-${kind}`) || "{}"); } catch (e) { return {}; } })();
-  const f = { ...BLANK_FILTER, ...saved };
+  // Saved before 18+ started Included (no v): its "Not included" was only the old default.
+  if (!saved.v) { delete saved.adult; delete saved.porn; }
+  const f = { ...BLANK_FILTER, adult: adultDefault(), ...saved, v: 2 };
   const [genres, info] = await Promise.all([invoke("read_genres").catch(() => []), filterInfo || invoke("read_filter_info").catch(() => ({ tags: [], adult: false }))]);
   filterInfo = info;
   if (my !== seq) return;
@@ -898,7 +900,7 @@ async function explorePage(view, tab, my) {
         parts.push(...adultFields(f, kit, true));
       }
     }
-    if (n) parts.push(clearButton(() => change((x) => Object.assign(x, { ...BLANK_FILTER, sort: x.sort }))));
+    if (n) parts.push(clearButton(() => change((x) => Object.assign(x, { ...BLANK_FILTER, adult: info.adult ? adultDefault() : "hide", sort: x.sort }))));
     panel.replaceChildren(...parts);
   }
   drawPanel();
@@ -1123,7 +1125,7 @@ async function downloadsPage(view, my) {
     and, with `porn`, Porn too in that same tab. */
 function adultOn(porn) {
   return ["manga", "manhwa", "manhua", "novels"].some((k) => {
-    try { const f = JSON.parse(getPref(`read-filter-${k}`) || "{}"); return porn ? pornOn(f) : f.adult === "include" || f.adult === "only"; } catch (e) { return false; }
+    try { const f = JSON.parse(getPref(`read-filter-${k}`) || "{}"); if (!f.v) { delete f.adult; delete f.porn; } f.adult = adultOf(f); return porn ? adultShows(f.adult) && pornOn(f) : adultShows(f.adult); } catch (e) { return false; }
   });
 }
 
