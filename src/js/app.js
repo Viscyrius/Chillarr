@@ -12,7 +12,7 @@ import * as place from "./place.js";
 import "./nav.js";
 import { recentSearches } from "./recent.js";
 import { startNotes } from "./notify.js";
-import { applyTheme, syncIcons } from "./theme.js";
+import { applyTheme, setTabTint, syncIcons } from "./theme.js";
 import { applyLook, drawPickers, onStyle } from "./look.js";
 
 const view = $("#view");
@@ -75,6 +75,7 @@ function route(redraw = false) {
   const left = place.current();
   const { id, fresh } = place.entry();
   document.querySelectorAll("[data-tab]").forEach((a) => a.classList.toggle("on", a.dataset.tab === tab));
+  setTabTint(tab);
   if (tab === current && tab !== "settings" && tab !== "explore" && tab !== "filter" && tab !== "r-all" && tab !== "maker" && tab !== "r-author" && tab !== "r-maker") return;
   // Leaving a page: remember where you were on it. Search results aren't a
   // page of their own; the place from before the search stays.

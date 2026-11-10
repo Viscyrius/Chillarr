@@ -53,20 +53,24 @@ function noArt(t) {
 }
 
 let seenIO = null;
-/** Gives a deferred poster its picture once it's on screen or about to be. */
-function whenSeen(img) {
+/** Gives a deferred poster its picture once its card is on screen or about to
+    be. The card is watched, not the picture: a picture with no address yet has
+    no size, and WebKit (iPhones) never calls a zero-size element visible. */
+function whenSeen(img, box) {
   if (!seenIO) {
     seenIO = new IntersectionObserver((hits) => {
       for (const h of hits) {
         if (!h.isIntersecting) continue;
-        const i = h.target;
-        seenIO.unobserve(i);
+        seenIO.unobserve(h.target);
+        const i = h.target._img;
+        if (!i) continue;
         if (i.dataset.srcset) i.srcset = i.dataset.srcset;
         i.src = i.dataset.src;
       }
     }, { rootMargin: "400px 400px" });
   }
-  seenIO.observe(img);
+  box._img = img;
+  seenIO.observe(box);
 }
 
 function art(t, wide) {
@@ -84,7 +88,7 @@ function art(t, wide) {
     // for 300+ pictures at once, all queued ahead of what's on screen.
     const later = WEB && "IntersectionObserver" in window;
     const img = el("img", later ? { alt: "", decoding: "async", "data-src": fit.src, "data-srcset": fit.srcset, sizes: fit.sizes } : { ...fit, alt: "", loading: "lazy", decoding: "async" });
-    if (later) whenSeen(img);
+    if (later) whenSeen(img, box);
     img.addEventListener("load", () => img.classList.add("loaded"), { once: true });
     img.addEventListener("error", () => img.replaceWith(noArt(t)));
     box.append(img);

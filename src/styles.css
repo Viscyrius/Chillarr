@@ -50,6 +50,15 @@ body {
   -webkit-font-smoothing: antialiased;
   overflow-x: hidden;
 }
+/* Each tab's own glow at the top (theme.js setTabTint): one fixed, still
+   layer behind everything, so a tab switch only changes two colours. */
+body::before {
+  content: ""; position: fixed; left: 0; right: 0; top: 0; height: 75vh; z-index: -1; pointer-events: none;
+  background:
+    radial-gradient(85% 60% at 15% -5%, rgba(var(--tab-rgb, 0, 0, 0), var(--tab-a, 0)), transparent 70%),
+    radial-gradient(70% 55% at 92% 5%, rgba(var(--tab-rgb2, 0, 0, 0), var(--tab-a2, 0)), transparent 72%);
+}
+body[data-rshade="light"]::before { opacity: 0.6; }
 button, input, select { font: inherit; color: inherit; }
 a { color: inherit; text-decoration: none; }
 img { display: block; }

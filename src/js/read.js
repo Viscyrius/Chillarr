@@ -449,7 +449,33 @@ function freshSection(lib, cls = "") {
 /* ---------- the tabs ---------- */
 
 /** Draws one reading tab: r-home, r-manga, r-manhwa, r-manhua, r-novels, r-books, r-mylist, r-downloads. */
+/* ---------- Tabs kept between visits ----------
+   Like the watching tabs (browse.js): a reading tab's finished page is kept
+   when you leave it and put straight back when you return, instead of asking
+   AniList and Open Library for it all again (Books took seconds every time).
+   Home and Books show your progress and new chapters, so they're kept for a
+   few minutes, and anything that changes what you read (chillarr:refresh)
+   lets them go. The long grids (Manga, Manhwa...) keep loading as you scroll,
+   which a kept copy couldn't, so they're drawn again; My List and Downloads
+   too: they're quick, and always current. */
+const KEEP_MS = { "r-home": 3 * 60000, "r-books": 3 * 60000 };
+const kept = new Map(); // `${person}:${tab}` -> { nodes, at, tab }
+let shown = null; // the reading page on screen: { key, tab, view, done }
+const keepFor = (tab) => KEEP_MS[tab] || 0;
+
+/** The page on screen, kept if it finished drawing. */
+function stash() {
+  const s = shown;
+  shown = null;
+  // A page that didn't get its rows (a source wasn't answering) isn't kept.
+  if (!s || !s.done || !keepFor(s.tab) || !s.view.querySelector(".track")) return;
+  kept.set(s.key, { nodes: [...s.view.childNodes], at: Date.now(), tab: s.tab });
+  while (kept.size > 8) kept.delete(kept.keys().next().value);
+}
+window.addEventListener("chillarr:refresh", () => kept.clear());
+
 export async function renderRead(view, tab) {
+  stash();
   const my = ++seq;
   stopSelecting();
   currentView = view;
@@ -457,17 +483,31 @@ export async function renderRead(view, tab) {
   applyLook();
   pvHide(true);
   drawPickers(); // the top bar's Style picker, on every reading tab
-  if (TAB_TITLE[tab]) return explorePage(view, tab, my);
-  if (tab === "r-all") return allPage(view, my);
-  if (tab === "r-author") return authorPage(view, my);
-  if (tab === "r-maker") return makerPage(view, my);
-  if (tab === "r-books") return booksPage(view, my);
-  if (tab === "r-mylist") return listPage(view, my);
-  if (tab === "r-downloads") return downloadsPage(view, my);
-  return homePage(view, my);
+  const key = `${personKey()}:${tab}`;
+  const back = kept.get(key);
+  kept.delete(key);
+  if (back && Date.now() - back.at < keepFor(tab)) {
+    view.replaceChildren(...back.nodes);
+    view.querySelectorAll(".hero").forEach((h) => h.resume?.());
+    shown = { key, tab, view, done: true };
+    return;
+  }
+  const me = { key, tab, view, done: false };
+  shown = me;
+  const drawn = TAB_TITLE[tab] ? explorePage(view, tab, my)
+    : tab === "r-all" ? allPage(view, my)
+    : tab === "r-author" ? authorPage(view, my)
+    : tab === "r-maker" ? makerPage(view, my)
+    : tab === "r-books" ? booksPage(view, my)
+    : tab === "r-mylist" ? listPage(view, my)
+    : tab === "r-downloads" ? downloadsPage(view, my)
+    : homePage(view, my);
+  // Kept only once it's all in: a page left half drawn stops (its seq moved on).
+  Promise.resolve(drawn).then(() => { if (my === seq) me.done = true; }, () => {});
+  return drawn;
 }
 
-export const stopRead = () => { seq++; };
+export const stopRead = () => { stash(); seq++; };
 
 /** Reading tabs that are one long grid from AniList or Open Library: what's
  *  on them doesn't change when something happens elsewhere (a chapter read,
@@ -557,6 +597,7 @@ function readHero(picks) {
     }, 9000);
   }
   restart();
+  section.resume = restart;
   return section;
 }
 
