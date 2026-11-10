@@ -2,6 +2,8 @@
 
 ## 0.19.1 (2026-11-10)
 - Fixed: switching to another profile on a phone (most often in Jellyfin's iPhone app) could sign you out of Chillarr completely and leave you on Jellyfin's username and password page. The switch now finishes as the new profile.
+- Fixed: other profiles couldn't remove things they'd asked for. Stop on Downloading now and the waiting list said they had no permission, so their titles sat on My List > On the way for good. Every profile can now stop what it asked for itself (and still only that).
+- Other profiles can now delete a title from the library if they downloaded it themselves or it's on their My List. Delete shows on that title's page, on phones too. Everything else is still the main profile's to delete, in the Chillarr app on the PC.
 ## 0.19.0 (2026-11-10)
 - Fixed: picking another style (Cinema, Midnight or Classic) on a reading tab only changed the colours and kept the old layout. It now redraws the page in the new style, like the watching tabs always did.
 - New colour: Dusk, a warm peach over deep violet. Pick it under the Look button or Settings > Appearance.

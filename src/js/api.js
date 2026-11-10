@@ -16,11 +16,12 @@ export const { listen } = window.__TAURI__.event;
 export const WEB = !!window.__CHILLARR_WEB__;
 /** Who that is (web_viewer), filled in at start. On the desktop app the PC's owner can do everything. */
 export const viewer = { name: "", admin: !WEB, can_delete: !WEB };
-/** Deleting files, stopping downloads, removing Watch now titles. */
-/** Stopping a download: whoever Jellyfin lets delete. */
-export const canStop = () => viewer.admin || viewer.can_delete;
-/** Deleting from the library (and reading's downloads): the main profile in
-    the PC app only, never another profile or a phone (lib.rs main_profile_only). */
+/** Stopping a download: anyone. Each profile only sees, and may only stop,
+    what it asked for itself (waiting.rs may_stop_download / may_stop_waiting). */
+export const canStop = () => true;
+/** Deleting anything from the library (and reading's downloads, and several
+    at once): the main profile in the PC app. Anyone else gets Delete on a
+    title they downloaded or keep on My List (media_can_delete, waiting.rs may_delete). */
 let mainProfile = false;
 export function setMainProfile(on) { mainProfile = !!on; }
 export const canDelete = () => !WEB && mainProfile;

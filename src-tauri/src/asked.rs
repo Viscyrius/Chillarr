@@ -146,6 +146,12 @@ pub fn keep_waiting(app: &AppHandle, list: Vec<crate::waiting::Waiting>) -> Vec<
     }
 }
 
+/// Whether this request's profile asked for `t` itself. Always false for
+/// the owner, whose asks aren't kept (they see everything anyway).
+pub fn asked_by_me(app: &AppHandle, t: &Tile) -> bool {
+    mine(app).is_some_and(|m| shows(&m, t))
+}
+
 /// Whether this request may see everything (the owner).
 pub fn sees_all(app: &AppHandle) -> bool {
     mine(app).is_none()

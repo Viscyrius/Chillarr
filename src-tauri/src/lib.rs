@@ -672,23 +672,20 @@ async fn media_stop_download(app: AppHandle, which: String, download_id: String,
 
 #[tauri::command]
 async fn media_delete_episodes(app: AppHandle, tile: tiles::Tile, episodes: Vec<(i64, i64)>) -> Result<String, String> {
-    main_profile_only(&app)?;
+    waiting::may_delete(&app, &tile).await?;
     waiting::delete_episodes(&app, &tile, &episodes).await
-}
-
-/// Deleting from the library: only the main profile, only in this window
-/// (the user's rule, 2026-11-10). bridge.rs doesn't offer it to the web at all.
-fn main_profile_only(app: &AppHandle) -> Result<(), String> {
-    if app.state::<media::Media>().profile.lock().unwrap().is_some() {
-        return Err("Only the main profile can delete from the library.".into());
-    }
-    Ok(())
 }
 
 #[tauri::command]
 async fn media_delete(app: AppHandle, tile: tiles::Tile) -> Result<String, String> {
-    main_profile_only(&app)?;
+    waiting::may_delete(&app, &tile).await?;
     waiting::delete_title(&app, &tile).await
+}
+
+/// Whether this profile may delete `tile` (shows its Delete button).
+#[tauri::command]
+async fn media_can_delete(app: AppHandle, tile: tiles::Tile) -> bool {
+    waiting::can_delete(&app, &tile).await
 }
 
 #[tauri::command]
@@ -1491,6 +1488,7 @@ pub fn run() {
             subs_choice,
             subs_set,
             media_delete,
+            media_can_delete,
             media_downloads,
             media_stop_download,
             media_delete_episodes,

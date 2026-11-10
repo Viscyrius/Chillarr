@@ -943,7 +943,16 @@ export async function openDetail(t, opts = {}) {
   // Notify me: a film not here yet, or any show (its new episodes and seasons).
   if (!opts.episodes && !watching && t.kind !== "episode" && !(t.jf_id && movieLike(t))) actions.append(...notifyButton({ tile: t }));
   actions.append(hideButton(t.subtitle && t.kind === "episode" ? t.title : t.title, () => shut(), t));
-  if (t.jf_id && t.kind !== "episode" && !watching) actions.append(subtitlesControl(t).el, canDelete() ? deleteButton(t) : null);
+  if (t.jf_id && t.kind !== "episode" && !watching) {
+    actions.append(subtitlesControl(t).el);
+    if (canDelete()) actions.append(deleteButton(t));
+    // Another profile, or a phone: Delete on what they downloaded or keep on My List.
+    else {
+      const spot = el("span", { class: "del-spot" });
+      actions.append(spot);
+      invoke("media_can_delete", { tile: t }).then((ok) => { if (ok && seq === openSeq && spot.isConnected) spot.replaceWith(deleteButton(t)); }).catch(() => {});
+    }
+  }
   if (started && seq === openSeq) {
     const off = el("button", { class: "btn soft", onclick: async () => { off.disabled = true; if (await removeContinue(started)) off.remove(); else off.disabled = false; } }, "Remove from Continue watching");
     actions.append(off);

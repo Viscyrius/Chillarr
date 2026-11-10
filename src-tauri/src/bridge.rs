@@ -340,8 +340,12 @@ fn need(cmd: &str) -> Option<Need> {
         | "read_delete_plan" => Need::Viewer,
         // Deleting reading's files (read_storage.rs), like a film's Delete.
         "read_unfollow" | "read_book_remove" | "read_stop_chapters" | "read_storage" | "read_delete_chapters" | "read_book_delete_file" => Need::Delete,
-        // Deleting from the library is the PC window's, main profile only (lib.rs main_profile_only).
-        "media_stop_download" | "media_stop_waiting" => Need::Delete,
+        // Stopping a download, and deleting from the library: anyone, for
+        // what they asked for themselves or keep on their My List
+        // (waiting.rs may_stop_download / may_stop_waiting / may_delete).
+        // Not Jellyfin's allow-media-deletion switch: that left a friend's own
+        // titles stuck on their list with no way to remove them.
+        "media_stop_download" | "media_stop_waiting" | "media_delete" | "media_delete_episodes" | "media_can_delete" => Need::Viewer,
         "storage_overview" | "storage_set_cleanup" | "library_scan" | "library_stats" | "seeding" | "set_seeding" | "get_settings" | "shelf_status" | "meili_status" | "subs_status" => Need::Admin,
         _ => return None,
     })
@@ -523,8 +527,17 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
             let did = arg::<String>(a, "downloadId")?;
             res(async { waiting::may_stop_download(app, &did).await?; waiting::stop_download(app, &arg::<String>(a, "which")?, &did, arg::<Option<bool>>(a, "whole")?.unwrap_or(false)).await }.await)
         }
-        "media_delete" => res(waiting::delete_title(app, &arg::<Tile>(a, "tile")?).await),
-        "media_delete_episodes" => res(waiting::delete_episodes(app, &arg::<Tile>(a, "tile")?, &arg::<Vec<(i64, i64)>>(a, "episodes")?).await),
+        "media_delete" => {
+            let t = arg::<Tile>(a, "tile")?;
+            waiting::may_delete(app, &t).await?;
+            res(waiting::delete_title(app, &t).await)
+        }
+        "media_delete_episodes" => {
+            let t = arg::<Tile>(a, "tile")?;
+            waiting::may_delete(app, &t).await?;
+            res(waiting::delete_episodes(app, &t, &arg::<Vec<(i64, i64)>>(a, "episodes")?).await)
+        }
+        "media_can_delete" => ok(waiting::can_delete(app, &arg::<Tile>(a, "tile")?).await),
         "watchnow_start" => res(watchnow::start(app, arg(a, "tile")?, arg(a, "season")?, arg(a, "episode")?).await),
         // Positions are kept per Jellyfin user: always the viewer's own,
         // whatever user id the page sent.
@@ -1087,7 +1100,9 @@ mod tests {
         assert_eq!(need("watchnow_ready"), Some(Need::Viewer));
         assert_eq!(need("night_prepare"), Some(Need::Viewer));
         assert_eq!(need("comments_add"), Some(Need::Viewer));
-        assert_eq!(need("media_delete"), None, "deleting is the PC window's only");
+        // Anyone may ask; may_delete then allows only their own titles.
+        assert_eq!(need("media_delete"), Some(Need::Viewer));
+        assert_eq!(need("media_stop_waiting"), Some(Need::Viewer));
         assert_eq!(need("storage_set_cleanup"), Some(Need::Admin));
     }
 
