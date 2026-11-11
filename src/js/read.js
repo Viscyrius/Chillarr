@@ -27,6 +27,10 @@ let seq = 0;
 let alias = -1;
 const alive = (m) => m === seq || m === alias;
 let followedByAnilist = new Map();
+// Series followed from a MangaUpdates card (no AniList id), by title.
+let followedByTitle = new Map();
+// The key of the series this card is, when it's followed.
+const followedOf = (c) => (c.anilist ? followedByAnilist.get(c.anilist) : c.mu ? followedByTitle.get(String(c.title || "").toLowerCase()) : undefined);
 let followedLang = new Map();
 let listKeys = new Set();
 let myBooks = [];
@@ -44,7 +48,7 @@ function cover(src, title) {
   return box;
 }
 
-const cardKey = (c) => (c.anilist ? `al:${c.anilist}` : c.olid ? `ol:${c.olid}` : "");
+const cardKey = (c) => (c.anilist ? `al:${c.anilist}` : c.olid ? `ol:${c.olid}` : c.mu ? `mu:${c.mu}` : "");
 
 /* ---------- hover cards, like Movies' ----------
    Resting on a cover opens it like a door: the cover stays where it is, a little
@@ -94,7 +98,7 @@ function pvCard(c, shelf, door) {
   const act = (fn) => (e) => { e.stopPropagation(); fn(); };
   const round = (label, path, onclick) => el("button", { class: "pv-btn", "aria-label": label, title: label, onclick: act(onclick) }, icon(path));
   const pill = (label, path, onclick) => el("button", { class: "pv-pill", onclick: act(onclick) }, icon(path), label);
-  const key = shelf ? shelf.key : c.anilist && followedByAnilist.get(c.anilist);
+  const key = shelf ? shelf.key : followedOf(c);
   const actions = el("div", { class: "pv-actions" });
   if (key && !isBook(c)) actions.append(pill(shelf && shelf.resume_label ? `Read ${shelf.resume_label}` : "Read", ICON.play, () => { pvHide(true); openSeries({ key, card: c }); }));
   else actions.append(pill(isBook(c) ? "Get it" : "See chapters", isBook(c) ? ICON.download : ICON.info, () => pvOpen(c, shelf)));
@@ -400,6 +404,7 @@ const note = (text) => el("p", { class: "note", text });
 async function know() {
   const [lib, list] = await Promise.all([invoke("read_library").catch(() => []), invoke("read_list").catch(() => [])]);
   followedByAnilist = new Map(lib.filter((s) => s.anilist).map((s) => [s.anilist, s.key]));
+  followedByTitle = new Map(lib.filter((s) => !s.anilist).map((s) => [String(s.title || "").toLowerCase(), s.key]));
   followedLang = new Map(lib.filter((s) => s.anilist && s.lang).map((s) => [s.anilist, s.lang]));
   listKeys = new Set(list.map(cardKey));
   freshBadge(lib);
@@ -1234,6 +1239,11 @@ function adultOn(porn) {
 }
 
 export async function renderReadSearch(view, term) {
+  // The tab under the search is kept now, while it's still on screen. Kept
+  // later (when the box is cleared), the search results were kept in its
+  // place and came straight back instead of the tab.
+  stash();
+  alias = -1;
   const my = ++seq;
   const body = el("div", {}, ...skel());
   view.replaceChildren(page(head(`"${term}"`), body));
@@ -1454,7 +1464,7 @@ function pickers(options, state) {
 export async function openSeries({ key = null, card: c = null }) {
   const mine = ++panelSeq;
   clearTimeout(poll);
-  if (!key && c && c.anilist && followedByAnilist.has(c.anilist)) key = followedByAnilist.get(c.anilist);
+  if (!key && c && followedOf(c)) key = followedOf(c);
   if (key) return showFollowed(key, mine, c);
   const { actions, body, options, hideOn, about } = shell(c);
   // The chapters show by themselves: the copies are looked up as the panel opens,

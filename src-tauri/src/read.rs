@@ -12,7 +12,7 @@ use crate::read_core;
 use crate::zipread::{self, Entry};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -1599,7 +1599,7 @@ pub fn card(m: &Value) -> Value {
 }
 
 /// AniList descriptions carry <br> and <i>: plain text for the page.
-fn clean_text(s: &str) -> String {
+pub(crate) fn clean_text(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut tag = false;
     for c in s.replace("<br>", "\n").replace("<br/>", "\n").replace("<br />", "\n").chars() {
@@ -2151,10 +2151,60 @@ pub async fn search(app: &AppHandle, term: &str, adult: bool, porn: bool) -> Res
     if term.is_empty() {
         return Ok(vec![]);
     }
-    let only_safe = search_args(adult && adult_ok(app), porn);
+    let adult = adult && adult_ok(app);
+    let only_safe = search_args(adult, porn);
     let q = format!("query($s:String){{Page(perPage:30){{media(type:MANGA,{only_safe}search:$s,sort:SEARCH_MATCH){{{MEDIA_FIELDS}}}}}}}");
-    let v = crate::media::anilist(&json!({ "query": q, "variables": { "s": term } })).await?;
-    Ok(v["data"]["Page"]["media"].as_array().map(|a| a.iter().map(card).collect()).unwrap_or_default())
+    // MangaUpdates at the same time: the names AniList doesn't have (read_mu.rs).
+    let ask = json!({ "query": q, "variables": { "s": term } });
+    let (v, mu) = tokio::join!(crate::media::anilist(&ask), crate::read_mu::search(term));
+    let mut cards: Vec<Value> = v?["data"]["Page"]["media"].as_array().map(|a| a.iter().map(card).collect()).unwrap_or_default();
+    // Its series go first: each matched the very name typed.
+    let mut first: Vec<Value> = Vec::new();
+    for hit in mu {
+        if (crate::read_mu::porn(&hit) && !(adult && porn)) || (crate::read_mu::ecchi(&hit) && !adult) {
+            continue;
+        }
+        let known: HashSet<String> = hit.names.iter().map(|n| crate::read_mu::norm(n)).collect();
+        let same = |c: &Value| card_names(c).iter().any(|n| known.contains(&crate::read_mu::norm(n)));
+        if let Some(i) = cards.iter().position(|c| same(c)) {
+            first.push(cards.remove(i));
+            continue;
+        }
+        if first.iter().any(|c| same(c)) {
+            continue;
+        }
+        // AniList again, by the names it goes by there (Chronicle of Runes is Emblem Wars).
+        match by_names(&hit.names, only_safe).await.into_iter().find(|c| same(c)) {
+            Some(c) => first.push(c),
+            None => first.push(crate::read_mu::card(&hit)),
+        }
+    }
+    first.extend(cards);
+    Ok(first)
+}
+
+/// A card's title and every other name.
+fn card_names(c: &Value) -> Vec<String> {
+    let mut v: Vec<String> = c["title"].as_str().map(String::from).into_iter().collect();
+    v.extend(c["names"].as_array().into_iter().flatten().filter_map(|n| n.as_str().map(String::from)));
+    v
+}
+
+/// AniList searched by several names in one ask (its limit is 30 a minute).
+async fn by_names(names: &[String], only_safe: &str) -> Vec<Value> {
+    let names: Vec<&String> = names.iter().take(6).collect();
+    if names.is_empty() {
+        return vec![];
+    }
+    let vars: Vec<String> = (0..names.len()).map(|i| format!("$n{i}:String")).collect();
+    let mut q = format!("query({}){{", vars.join(","));
+    for i in 0..names.len() {
+        q.push_str(&format!("p{i}:Page(perPage:5){{media(type:MANGA,{only_safe}search:$n{i}){{{MEDIA_FIELDS}}}}} "));
+    }
+    q.push('}');
+    let variables: serde_json::Map<String, Value> = names.iter().enumerate().map(|(i, n)| (format!("n{i}"), json!(n))).collect();
+    let Ok(v) = crate::media::anilist(&json!({ "query": q, "variables": variables })).await else { return vec![] };
+    (0..names.len()).flat_map(|i| v["data"][format!("p{i}")]["media"].as_array().cloned().unwrap_or_default()).map(|m| card(&m)).collect()
 }
 
 /// The 18+ part of a search: Ecchi only with 18+ on, isAdult only with porn on too.

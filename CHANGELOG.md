@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.19.2 (2026-11-11)
+- Reading search finds series AniList doesn't have, and series you know by another name. It now asks MangaUpdates too: Sword God High School: The Talentless Underachiever Becomes the Strongest shows up (AniList doesn't list it at all), and Chronicle of Runes finds Emblem Wars, which is the same manhwa. A series only MangaUpdates knows can be followed and read like any other.
+- Fixed: in reading, clearing the search box sometimes left the search results on screen instead of going back to the tab you were on, so you had to search something else and clear it again.
+
 ## 0.19.1 (2026-11-10)
 - Fixed: switching to another profile on a phone (most often an iPhone) could sign you out of Chillarr completely and leave you on Jellyfin's username and password page. The iPhone keyboard sent the PIN twice, Chillarr started two switches, and Jellyfin's second sign-in ended the first one, which was the one the phone kept. A PIN is now sent once, a switch never runs twice at once, and the switch keeps trying through a bad connection instead of giving up. If a phone ever does end up holding an ended sign-in after a switch, Chillarr puts the right one back by itself.
 - Fixed: on phones and in the browser there was no way to see your hidden things again, because the Hidden settings were only in the Chillarr app on the PC. They're now in Settings > Account on every device: Show hidden (with your hidden password), Lock, and the list of what's hidden.
