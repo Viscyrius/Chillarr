@@ -668,12 +668,12 @@ function ago(ms) {
 }
 
 /** Each followed series with its chapters (for updates and the week), newest first. */
-async function followedWithChapters(series) {
+async function followedWithChapters(series, most = 16) {
   // Hidden from the week by this profile: left out here (Your week, Latest updates).
   // The 16 that updated most lately: the list comes sorted by last read, so a
   // series you haven't opened in a while but that updated today still makes it.
   series = series.filter((s) => !s.hide_week).slice().sort((a, b) => (b.latest_at || 0) - (a.latest_at || 0));
-  const got = await Promise.all(series.slice(0, 16).map((s) => invoke("read_detail", { key: s.key }).then((d) => ({ s, d })).catch(() => null)));
+  const got = await Promise.all(series.slice(0, most).map((s) => invoke("read_detail", { key: s.key }).then((d) => ({ s, d })).catch(() => null)));
   return got.filter(Boolean).map(({ s, d }) => {
     const chs = d.chapters.filter((c) => c.downloaded || c.uploaded).slice().sort((a, b) => (b.number ?? 0) - (a.number ?? 0));
     const newest = Math.max(0, ...d.chapters.map((c) => Number(c.uploaded) || 0));
@@ -762,18 +762,30 @@ async function midnightHome(view, my) {
   if (freshMn) updates.before(freshMn);
   if (series.length) {
     updates.append(el("h2", { class: "mn-h", text: "Latest updates" }), el("div", { class: "skel skel-row" }));
-    const list = await followedWithChapters(series);
+    // Two rows at most, newest first: a newer chapter pushes the oldest out.
+    const fit = () => Math.max(1, Math.floor(((updates.clientWidth || innerWidth) + 12) / (320 + 12))) * 2;
+    const list = (await followedWithChapters(series.filter((s) => !isHidden(asCard(s), s)), fit() + 2)).filter((x) => !isHidden(x.card, x.s));
     if (!alive(my)) return;
-    updates.replaceChildren(el("h2", { class: "mn-h", text: "Latest updates" }), el("div", { class: "mn-updates" }, list.map((x, i) =>
-      markHidden(el("div", { class: "mn-up", style: `--i:${i}` },
+    const grid = el("div", { class: "mn-updates" }, list.map((x, i) => {
+      const n = markHidden(el("div", { class: "mn-up" + (lastUpdates.size && !lastUpdates.has(x.s.key) ? " mn-new" : ""), style: `--i:${i}` },
         el("button", { class: "mn-up-cover", "aria-label": x.s.title, onclick: () => openSeries({ key: x.s.key, card: x.card }) }, x.s.cover ? el("img", { src: x.s.cover, alt: "", loading: "lazy" }) : null),
         el("div", { class: "mn-up-text" },
           el("button", { class: "mn-up-title", onclick: () => openSeries({ key: x.s.key, card: x.card }), text: x.s.title }),
           ...x.chs.slice(0, 3).map((c) => el("button", { class: "mn-ch" + (c.read ? " read" : ""), disabled: !c.downloaded, onclick: () => read(x.s.key, c.id, x.card) },
-            el("span", {}, chLabel(c), c.fresh ? el("b", { class: "read-new-pill", text: "NEW" }) : ""), el("small", { text: c.downloaded ? ago(c.uploaded) : "Not here yet" }))))), x.s, x.card))));
+            el("span", {}, chLabel(c), c.fresh ? el("b", { class: "read-new-pill", text: "NEW" }) : ""), el("small", { text: c.downloaded ? ago(c.uploaded) : "Not here yet" }))))), x.s, x.card);
+      n.dataset.key = x.s.key;
+      return n;
+    }));
+    const cap = () => { const n = fit(); [...grid.children].forEach((c, i) => { c.hidden = i >= n; }); };
+    cap();
+    lastUpdates = new Set([...grid.children].filter((c) => !c.hidden).map((c) => c.dataset.key));
+    if (window.ResizeObserver) new ResizeObserver(cap).observe(updates);
+    updates.replaceChildren(el("h2", { class: "mn-h", text: "Latest updates" }), grid);
   }
   return true;
 }
+// What Latest updates showed last, so a series newly in it slides in.
+let lastUpdates = new Set();
 
 const WEEK = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 

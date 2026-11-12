@@ -2410,6 +2410,11 @@ body[data-mode="read"] .hero.read-hero-top.compact .read-hero-art { width: clamp
 .mn-block { margin-bottom: 30px; }
 .mn-updates { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
 .mn-up { display: flex; gap: 12px; padding: 10px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line); animation: rise 0.5s var(--out) both; animation-delay: calc(var(--i, 0) * 50ms); transition: border-color 0.25s, transform 0.3s var(--spring); }
+.mn-up[hidden] { display: none; }
+/* A series new to Latest updates slides in and glows once; the oldest has dropped off the end. */
+.mn-up.mn-new { animation: mn-in 0.7s var(--spring) both; box-shadow: 0 0 0 1px rgba(var(--accent-rgb), 0.55), 0 10px 30px rgba(var(--accent-rgb), 0.18); }
+@keyframes mn-in { from { opacity: 0; transform: translateX(-24px) scale(0.97); } }
+@media (prefers-reduced-motion: reduce) { .mn-up.mn-new { animation: none; } }
 .mn-up:hover { border-color: rgba(var(--accent-rgb), 0.5); transform: translateY(-2px); }
 .mn-up-cover { width: 76px; height: 106px; flex: none; padding: 0; border: 0; border-radius: 8px; overflow: hidden; background: var(--raised); cursor: pointer; }
 .mn-up-cover img { width: 100%; height: 100%; object-fit: cover; transition: transform 0.5s var(--out); }
