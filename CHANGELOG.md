@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.20.2 (2026-11-12)
+- Fixed for good: picking Dubbed, or English in the player's audio menu, really plays English now. Jellyfin was ignoring the choice and played the file's first track (Japanese), and Chillarr never told it which copy of the file it meant. VLC never had this problem because it picks the track itself.
+- Much less CPU while watching. When your PC (or phone) can play the file's own picture format, AV1 included, Chillarr now has Jellyfin only repackage it instead of converting the picture. Mushoku Tensei season 3 went from about 40% CPU to almost nothing. Subtitles are no longer drawn into the picture either; Chillarr shows them itself.
+- With "Use graphics card for video" on, the card now also decodes AV1 and VP9 where it can (RTX 30 and newer, Intel Arc, Radeon RX 6000 and newer), for the files that still need converting.
+- Chillarr rests when nobody is using it. With no one watching, reading or tapping for 15 minutes, it only looks for new films, episodes and chapters and finishes downloads; everything else waits, and wakes the moment someone starts. Jellyfin is no longer asked about every profile's library every 30 seconds, and the window hidden in the tray stops redrawing itself.
+- Velvet: the arrows and dots under the featured title work again (the rows were covering them).
+
 ## 0.20.1 (2026-11-12)
 - Velvet is its own style now, not Cinema in other colours. Watching is a stage: the featured title stands in the middle between velvet curtains, its poster in a brass frame, rows read like a printed programme, and every card is a ticket with a torn stub. Reading is a reading room: what you're reading lies open on a desk with a ribbon marking how far you are, and everything else stands on shelves.
 - The filters' adult-only choice is now called 18+ R.
