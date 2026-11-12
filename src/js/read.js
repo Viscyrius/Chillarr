@@ -1768,16 +1768,30 @@ function markBar(key, chs, c0) {
       refreshIfOpen(key, c0);
     } catch (e) { toast(String(e), true); btn.disabled = false; }
   };
-  const go = el("button", { class: "btn soft", onclick: (e) => {
+  // The chapters between the two boxes (either way round; empty means from the start or to the end).
+  const pick = () => {
     const a = from.value === "" ? -Infinity : Number(from.value);
     const b = to.value === "" ? Infinity : Number(to.value);
     const [x, y] = a <= b ? [a, b] : [b, a];
-    send(chs.filter((r) => r.number != null && r.number >= x && r.number <= y && !r.read).map((r) => r.id), true, e.currentTarget);
-  } }, "Mark read");
+    return chs.filter((r) => r.number != null && r.number >= x && r.number <= y);
+  };
+  const go = el("button", { class: "btn soft", onclick: (e) => send(pick().filter((r) => !r.read).map((r) => r.id), true, e.currentTarget) }, "Mark read");
+  const get = el("button", { class: "btn soft", onclick: async (e) => {
+    const ids = pick().filter((r) => !r.downloaded && r.queued == null).map((r) => r.id);
+    if (!ids.length) { toast("Those are all downloaded already."); return; }
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    try { toast(await invoke("read_get_chapters", { key, ids })); refreshIfOpen(key, c0); } catch (err) { toast(String(err), true); btn.disabled = false; }
+  } }, icon(ICON.download), "Download");
+  const del = delOk.get(key) ? el("button", { class: "btn soft", onclick: async () => {
+    const ids = pick().filter((r) => r.downloaded).map((r) => r.id);
+    if (!ids.length) { toast("None of those are downloaded."); return; }
+    if (await deleteChapters(key, ids)) refreshIfOpen(key, c0);
+  } }, icon(TRASH), "Delete") : null;
   const whole = el("button", { class: "btn soft", onclick: (e) => send(all ? chs.map((r) => r.id) : chs.filter((r) => !r.read).map((r) => r.id), !all, e.currentTarget) },
     all ? "Mark all unread" : "Mark all read");
   return el("div", { class: "read-markbar" },
-    el("span", { text: "Chapters" }), from, el("span", { text: "to" }), to, go, el("span", { class: "read-markbar-gap" }), whole);
+    el("span", { text: "Chapters" }), from, el("span", { text: "to" }), to, go, get, del, el("span", { class: "read-markbar-gap" }), whole);
 }
 
 function chapterRow(key, r, c0) {
