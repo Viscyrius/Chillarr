@@ -227,6 +227,48 @@ fn tell(app: &AppHandle, code: &str, people: &[String], what: &str) {
     let _ = app.emit("readparty-update", ev);
 }
 
+/// One chat message, as every member's pages get it ("readparty-chat").
+#[derive(Serialize, Clone, Debug)]
+pub struct Said {
+    pub code: String,
+    pub id: String,
+    pub from: String,
+    /// The sender's profile id, so each page knows its own messages.
+    pub from_id: String,
+    pub text: String,
+    /// Unix milliseconds.
+    pub at: i64,
+}
+
+/// Sends `text` to everyone in the reading party, the sender included (#76).
+/// Same length and rate limit as Watch together's chat; only a member can talk.
+pub fn say(app: &AppHandle, code: &str, text: &str) -> Result<(), String> {
+    let text = crate::syncplay::say_text(text)?;
+    let me = uid(app)?;
+    let code = clean_code(code);
+    let (from, people) = {
+        let mut g = PARTIES.lock().unwrap_or_else(|e| e.into_inner());
+        let all = g.get_or_insert_with(HashMap::new);
+        let p = member(all, &code, &me)?;
+        let from = p.order.iter().find(|(id, _)| *id == me).map(|(_, n)| n.clone()).unwrap_or_default();
+        (from, p.seen.keys().cloned().collect::<Vec<String>>())
+    };
+    {
+        let mut t = crate::syncplay::turns().lock().unwrap_or_else(|e| e.into_inner());
+        crate::syncplay::take_turn(&mut t, &me, std::time::Instant::now()).map_err(|s| format!("Slow down a little. Try again in {s} seconds."))?;
+    }
+    let mut raw = [0u8; 8];
+    getrandom::getrandom(&mut raw).map_err(|_| "Couldn't send that right now.".to_string())?;
+    let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0);
+    let said = Said { code, id: raw.iter().map(|b| format!("{b:02x}")).collect(), from, from_id: me, text, at };
+    for id in &people {
+        crate::bridge::emit_to_user(id, "readparty-chat", &said);
+    }
+    // The window checks the code is its own party's.
+    let _ = app.emit("readparty-chat", said);
+    Ok(())
+}
+
 /// Starts a party on the series and chapter open in the reader.
 pub fn start(app: &AppHandle, key: &str, chapter: i64, page: u32) -> Result<State, String> {
     let me = uid(app)?;

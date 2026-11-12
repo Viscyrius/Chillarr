@@ -1021,6 +1021,11 @@ fn readparty_leave(app: AppHandle, code: String) -> Result<(), String> {
     readparty::leave(&app, &code)
 }
 
+#[tauri::command]
+fn readparty_say(app: AppHandle, code: String, text: String) -> Result<(), String> {
+    readparty::say(&app, &code, &text)
+}
+
 /// One page of a book row's See all.
 #[tauri::command]
 async fn read_book_more(id: String, page: u32) -> Result<serde_json::Value, String> {
@@ -1411,6 +1416,7 @@ pub fn run() {
             readparty_state,
             readparty_move,
             readparty_leave,
+            readparty_say,
             readparty_set,
             readparty_kick,
             readparty_allow,

@@ -177,7 +177,7 @@ fn members(list: &Value, group: &str, me: &str) -> Option<Vec<String>> {
 }
 
 /// The text to send, trimmed and on one line, or why not.
-fn say_text(text: &str) -> Result<String, String> {
+pub(crate) fn say_text(text: &str) -> Result<String, String> {
     let t = text.split_whitespace().collect::<Vec<_>>().join(" ");
     if t.is_empty() {
         return Err("Type a message first.".into());
@@ -189,7 +189,7 @@ fn say_text(text: &str) -> Result<String, String> {
 }
 
 /// Counts one message from `who`. Err: seconds to wait.
-fn take_turn(sent: &mut HashMap<String, VecDeque<Instant>>, who: &str, now: Instant) -> Result<(), u64> {
+pub(crate) fn take_turn(sent: &mut HashMap<String, VecDeque<Instant>>, who: &str, now: Instant) -> Result<(), u64> {
     let q = sent.entry(who.to_lowercase()).or_default();
     while q.front().is_some_and(|t| now.duration_since(*t) >= SAY_WINDOW) {
         q.pop_front();
@@ -201,7 +201,7 @@ fn take_turn(sent: &mut HashMap<String, VecDeque<Instant>>, who: &str, now: Inst
     Ok(())
 }
 
-fn turns() -> &'static Mutex<HashMap<String, VecDeque<Instant>>> {
+pub(crate) fn turns() -> &'static Mutex<HashMap<String, VecDeque<Instant>>> {
     static T: OnceLock<Mutex<HashMap<String, VecDeque<Instant>>>> = OnceLock::new();
     T.get_or_init(|| Mutex::new(HashMap::new()))
 }

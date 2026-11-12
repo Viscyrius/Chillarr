@@ -219,6 +219,8 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.7); }
 .close { position: absolute; top: 16px; right: 16px; z-index: 1; width: 38px; height: 38px; border-radius: 50%; border: 0; background: rgba(var(--bg-rgb), 0.7); color: var(--text); display: grid; place-items: center; cursor: pointer; }
 .close:hover { background: rgba(var(--bg-rgb), 0.95); }
 .detail-body { padding: 8px 40px 36px; }
+/* A reading panel's comments sit after its body, with the same sides. */
+.read-detail > .comments { margin: 0; padding: 0 40px 36px; }
 .detail-body .overview { color: #d4d5da; max-width: 68ch; margin: 0 0 24px; }
 .episodes-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .episodes-head h3 { font: 600 1.25rem var(--display); margin: 0; }
@@ -1475,6 +1477,7 @@ body.app-full #fs-btn .fs-out { display: inline; }
   .detail-head .actions .btn { min-height: 44px; }
   .close { top: calc(12px + env(safe-area-inset-top)); right: max(12px, env(safe-area-inset-right)); width: 44px; height: 44px; }
   .detail-body { padding: 6px var(--gutter) calc(30px + env(safe-area-inset-bottom)); }
+  .read-detail > .comments { padding: 0 var(--gutter) calc(30px + env(safe-area-inset-bottom)); }
   .ask { width: calc(100vw - 24px); max-width: none; }
 
   /* Settings: one column, the sections a row of chips. */
@@ -2769,6 +2772,21 @@ body[data-rshade="light"] .rp-dialog { box-shadow: 0 30px 80px rgba(20, 30, 50, 
 .rp-lock svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; }
 .rp-note { position: fixed; left: 50%; bottom: 72px; transform: translateX(-50%); z-index: var(--z-overlay); z-index: calc(var(--z-player) + 1); padding: 8px 16px; border-radius: 999px; background: rgba(0, 0, 0, 0.72); color: #fff; font: 600 14px var(--display); pointer-events: none; }
 .rp-note[hidden] { display: none; }
+/* Read Party chat (readparty.js): on the right of the page on a wide screen,
+   the reader made narrower so nothing is covered; a small bottom sheet on phones. */
+.rp-chat-btn { position: fixed; right: 18px; bottom: 18px; z-index: calc(var(--z-player) + 2); width: 46px; height: 46px; border: 0; border-radius: 50%; display: grid; place-items: center; background: var(--accent); color: var(--accent-ink); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45); cursor: pointer; }
+.rp-chat-btn svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linejoin: round; }
+.rp-chat-btn .chat-badge { position: absolute; top: -4px; right: -4px; background: #fff; color: #111; }
+.rp-chat-btn[hidden], .rp-chat[hidden], .rp-float[hidden] { display: none; }
+.rp-chat { position: fixed; top: 0; right: 0; bottom: 0; z-index: calc(var(--z-player) + 2); width: 320px; display: flex; flex-direction: column; background: #121216; color: #eee; border-left: 1px solid rgba(255, 255, 255, 0.08); }
+.rp-chat .chat-list { flex: 1; overflow-y: auto; margin: 0; padding: 8px 14px; list-style: none; }
+body.rp-chat-open .reader { right: 320px; }
+.rp-float { position: fixed; right: 18px; bottom: 76px; z-index: calc(var(--z-player) + 2); width: 300px; max-width: calc(100vw - 36px); }
+@media (max-width: 760px) {
+  .rp-chat { top: auto; left: 0; width: auto; height: 42vh; max-height: 340px; border-left: 0; border-top: 1px solid rgba(255, 255, 255, 0.1); border-radius: 14px 14px 0 0; padding-bottom: env(safe-area-inset-bottom); }
+  body.rp-chat-open .reader { right: 0; }
+  .rp-float { bottom: 72px; width: auto; left: 18px; }
+}
 .rp-note { display: flex; align-items: center; pointer-events: auto; }
 .rp-note-x { margin-left: 10px; width: 24px; height: 24px; border: 0; border-radius: 50%; background: rgba(255, 255, 255, 0.16); color: #fff; font: 600 16px/1 var(--display); cursor: pointer; }
 .rp-note-x:hover, .rp-note-x:focus-visible { background: rgba(255, 255, 255, 0.3); outline: none; }

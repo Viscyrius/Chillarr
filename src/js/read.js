@@ -12,6 +12,7 @@ import { openReader } from "./reader.js";
 import { openBook } from "./bookreader.js";
 import { adultDefault, adultFields, adultOf, adultShows, chipKit, pornOn, clearButton, filtersButton, moreButton, orderSelect } from "./filterpanel.js";
 import { notifyButton } from "./notify.js";
+import { readingComments } from "./comments.js";
 import { applyLook, drawPickers, inlinePicker, onStyle, styleNow } from "./look.js";
 
 const KIND = { KR: "Manhwa", CN: "Manhua", TW: "Manhua", JP: "Manga" };
@@ -1326,6 +1327,8 @@ function panel() {
   return dlg;
 }
 
+const panelComments = readingComments();
+
 function shell(c) {
   const d = panel();
   const css = (u) => `url("${String(u).replace(/"/g, "%22")}")`;
@@ -1344,7 +1347,10 @@ function shell(c) {
   const about = aboutBox(c);
   if (c.anilist && !isBook(c)) meta.parentNode.insertBefore(makersLine(c), meta.nextSibling);
   const body = el("div", { class: "detail-body" }, c.description ? el("p", { class: "overview read-overview", text: c.description }) : null, about);
-  d.replaceChildren(hero, body);
+  // Comments under everything on the panel, for every reading title (#76).
+  // One list per title, whichever copy or source it was opened from.
+  panelComments.show(c);
+  d.replaceChildren(hero, body, panelComments.box);
   if (!d.open) {
     // The entrance plays when it opens, not on every refresh while chapters come in.
     d.classList.add("fresh");

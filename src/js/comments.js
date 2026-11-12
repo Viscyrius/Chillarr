@@ -2,15 +2,12 @@
 // Chillarr sees the same ones (comments.rs); you can edit and delete your own.
 // Comments are people's own words: they only ever go in as text (el's
 // "text"), never as HTML.
+//
+// One section per page that shows them: a film's or show's panel (detail.js)
+// and a reading title's panel (read.js), each with its own state.
 import { ask, el, invoke, toast } from "./api.js";
 
 const MAX = 2000;
-
-/** The section; detail.js puts it in the panel. */
-export const commentsBox = el("section", { class: "comments", id: "detail-comments", "aria-label": "Comments", hidden: true });
-
-let seq = 0;
-let key = null;
 
 const initial = (name) => (name.trim()[0] || "?").toUpperCase();
 
@@ -48,102 +45,144 @@ function writer(value, placeholder) {
   return { box, left, fit };
 }
 
-function item(c) {
-  const text = el("p", { class: "cm-text", text: c.text });
-  const when = el("time", { class: "cm-when", datetime: new Date(c.at * 1000).toISOString(), title: new Date(c.at * 1000).toLocaleString(), text: ago(c.at) });
-  const head = el("div", { class: "cm-head" }, el("b", { text: c.name }), when, c.edited ? el("small", { class: "cm-edited", text: "edited" }) : null);
-  const body = el("div", { class: "cm-body" }, head, text);
-  const row = el("li", { class: "cm-item", dataset: { id: c.id } }, el("span", { class: "cm-avatar", "aria-hidden": "true" }, initial(c.name)), body);
-  if (!c.mine) return row;
-  const tools = el("div", { class: "cm-tools" },
-    el("button", { class: "link-btn", onclick: () => editIn(c, row, body) }, "Edit"),
-    el("button", { class: "link-btn", onclick: () => remove(c, row) }, "Delete"));
-  body.append(tools);
-  return row;
-}
+/** A comments section of its own: `box` goes in the page, `load` fills it. */
+export function makeComments(id) {
+  const box = el("section", { class: "comments", id, "aria-label": "Comments", hidden: true });
+  let seq = 0;
+  let key = null;
+  let total = 0;
 
-function editIn(c, row, body) {
-  const k = key;
-  const w = writer(c.text, "Edit your comment");
-  const err = el("p", { class: "err cm-err" });
-  const save = el("button", { class: "btn small primary" }, "Save");
-  const cancel = el("button", { class: "btn small ghost", onclick: () => row.replaceWith(item(c)) }, "Cancel");
-  save.addEventListener("click", async () => {
-    err.textContent = "";
-    save.disabled = true;
+  function count(by) {
+    total += by;
+    const h = box.querySelector(".cm-count");
+    if (h) h.textContent = total ? String(total) : "";
+    const empty = box.querySelector(".cm-empty");
+    if (empty) empty.hidden = total > 0;
+  }
+
+  function item(c) {
+    const text = el("p", { class: "cm-text", text: c.text });
+    const when = el("time", { class: "cm-when", datetime: new Date(c.at * 1000).toISOString(), title: new Date(c.at * 1000).toLocaleString(), text: ago(c.at) });
+    const head = el("div", { class: "cm-head" }, el("b", { text: c.name }), when, c.edited ? el("small", { class: "cm-edited", text: "edited" }) : null);
+    const body = el("div", { class: "cm-body" }, head, text);
+    const row = el("li", { class: "cm-item", dataset: { id: c.id } }, el("span", { class: "cm-avatar", "aria-hidden": "true" }, initial(c.name)), body);
+    if (!c.mine) return row;
+    const tools = el("div", { class: "cm-tools" },
+      el("button", { class: "link-btn", onclick: () => editIn(c, row, body) }, "Edit"),
+      el("button", { class: "link-btn", onclick: () => remove(c, row) }, "Delete"));
+    body.append(tools);
+    return row;
+  }
+
+  function editIn(c, row, body) {
+    const k = key;
+    const w = writer(c.text, "Edit your comment");
+    const err = el("p", { class: "err cm-err" });
+    const save = el("button", { class: "btn small primary" }, "Save");
+    const cancel = el("button", { class: "btn small ghost", onclick: () => row.replaceWith(item(c)) }, "Cancel");
+    save.addEventListener("click", async () => {
+      err.textContent = "";
+      save.disabled = true;
+      try {
+        const done = await invoke("comments_edit", { key: k, commentId: c.id, text: w.box.value });
+        if (k === key) row.replaceWith(item(done));
+      } catch (e) { err.textContent = String(e); save.disabled = false; }
+    });
+    body.replaceChildren(body.firstChild, w.box, el("div", { class: "cm-actions" }, save, cancel, w.left), err);
+    w.box.focus();
+  }
+
+  async function remove(c, row) {
+    const k = key;
+    if (!(await ask("Delete this comment?", "It goes for everyone. This can't be undone.", [], "Delete", "Keep it"))) return;
     try {
-      const done = await invoke("comments_edit", { key: k, commentId: c.id, text: w.box.value });
-      if (k === key) row.replaceWith(item(done));
-    } catch (e) { err.textContent = String(e); save.disabled = false; }
-  });
-  body.replaceChildren(body.firstChild, w.box, el("div", { class: "cm-actions" }, save, cancel, w.left), err);
-  w.box.focus();
+      await invoke("comments_delete", { key: k, commentId: c.id });
+      row.remove();
+      count(-1);
+    } catch (e) { toast(String(e), true); }
+  }
+
+  function draw(list) {
+    total = list.length;
+    const ul = el("ul", { class: "cm-list" }, list.map(item));
+    const w = writer("", "Add a comment");
+    const err = el("p", { class: "err cm-err" });
+    const post = el("button", { class: "btn small primary" }, "Post");
+    post.addEventListener("click", async () => {
+      err.textContent = "";
+      if (!w.box.value.trim()) { err.textContent = "Write something first."; return; }
+      const k = key;
+      post.disabled = true;
+      try {
+        const c = await invoke("comments_add", { key: k, text: w.box.value });
+        if (k !== key) return;
+        w.box.value = "";
+        w.fit();
+        ul.prepend(item(c));
+        count(1);
+      } catch (e) { err.textContent = String(e); }
+      post.disabled = false;
+    });
+    // Ctrl+Enter posts.
+    w.box.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); post.click(); } });
+    box.replaceChildren(
+      el("h3", {}, "Comments ", el("span", { class: "cm-count", text: total ? String(total) : "" })),
+      el("div", { class: "cm-new" }, w.box, el("div", { class: "cm-actions" }, post, w.left), err),
+      el("p", { class: "note cm-empty", text: "No comments yet. Be the first.", hidden: total > 0 }),
+      ul);
+    box.hidden = false;
+  }
+
+  /** Shows the comments kept under `getKey()` (a promise of the key, or null), once the panel has opened. */
+  function load(getKey) {
+    const my = ++seq;
+    key = null;
+    box.hidden = true;
+    box.replaceChildren();
+    setTimeout(async () => {
+      if (my !== seq) return;
+      const k = await Promise.resolve(getKey()).catch(() => null);
+      if (my !== seq || !k) return;
+      let list;
+      try { list = await invoke("comments_list", { key: k }); } catch (e) { return; }
+      if (my !== seq) return;
+      key = k;
+      draw(list);
+    }, 250);
+  }
+
+  return { box, load };
 }
 
-async function remove(c, row) {
-  const k = key;
-  if (!(await ask("Delete this comment?", "It goes for everyone. This can't be undone.", [], "Delete", "Keep it"))) return;
-  try {
-    await invoke("comments_delete", { key: k, commentId: c.id });
-    row.remove();
-    count(-1);
-  } catch (e) { toast(String(e), true); }
-}
-
-let total = 0;
-function count(by) {
-  total += by;
-  const h = commentsBox.querySelector(".cm-count");
-  if (h) h.textContent = total ? String(total) : "";
-  const empty = commentsBox.querySelector(".cm-empty");
-  if (empty) empty.hidden = total > 0;
-}
-
+/* ---------- a film's or show's panel (detail.js) ---------- */
+const watching = makeComments("detail-comments");
+export const commentsBox = watching.box;
 /** Shows the comments for `t`, once the panel has opened. */
 export function loadComments(t) {
-  const my = ++seq;
-  key = null;
-  commentsBox.hidden = true;
-  commentsBox.replaceChildren();
-  setTimeout(async () => {
-    if (my !== seq) return;
-    const k = await invoke("comments_key", { tile: t }).catch(() => null);
-    if (my !== seq || !k) return;
-    let list;
-    try { list = await invoke("comments_list", { key: k }); } catch (e) { return; }
-    if (my !== seq) return;
-    key = k;
-    draw(list);
-  }, 250);
+  watching.load(() => invoke("comments_key", { tile: t }));
 }
 
-function draw(list) {
-  total = list.length;
-  const ul = el("ul", { class: "cm-list" }, list.map(item));
-  const w = writer("", "Add a comment");
-  const err = el("p", { class: "err cm-err" });
-  const post = el("button", { class: "btn small primary" }, "Post");
-  post.addEventListener("click", async () => {
-    err.textContent = "";
-    if (!w.box.value.trim()) { err.textContent = "Write something first."; return; }
-    const k = key;
-    post.disabled = true;
-    try {
-      const c = await invoke("comments_add", { key: k, text: w.box.value });
-      if (k !== key) return;
-      w.box.value = "";
-      w.fit();
-      ul.prepend(item(c));
-      count(1);
-    } catch (e) { err.textContent = String(e); }
-    post.disabled = false;
-  });
-  // Ctrl+Enter posts.
-  w.box.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); post.click(); } });
-  commentsBox.replaceChildren(
-    el("h3", {}, "Comments ", el("span", { class: "cm-count", text: total ? String(total) : "" })),
-    el("div", { class: "cm-new" }, w.box, el("div", { class: "cm-actions" }, post, w.left), err),
-    el("p", { class: "note cm-empty", text: "No comments yet. Be the first.", hidden: total > 0 }),
-    ul);
-  commentsBox.hidden = false;
+/* ---------- a reading title's panel (read.js) ---------- */
+
+/** The key a reading title's comments are kept under: the same for every
+    copy and source of it (#76). AniList for manga, manhwa, manhua and novels
+    when known, Open Library for books, else the followed series or book. */
+export function readingKey(c) {
+  if (!c) return null;
+  if (c.anilist) return `anilist:${c.anilist}`;
+  const k = typeof c.key === "string" ? c.key : "";
+  if (/^anilist:\d+$/.test(k)) return k;
+  const ol = c.olid || (/^ol:([A-Za-z0-9_-]+)$/.exec(k) || [])[1];
+  if (ol) return `ol:${ol}`;
+  if (/^[mb][0-9a-f]+$/.test(k)) return `read:${k}`;
+  return null;
+}
+
+/** A comments section for a reading panel: `box` goes in, `show(card)` fills it. */
+export function readingComments() {
+  const c = makeComments(null);
+  let last = null;
+  // The panel is drawn again after a change (a chapter marked, a follow):
+  // the same title keeps its comments, and what's being typed, as they are.
+  return { box: c.box, show: (card) => { const k = readingKey(card); if (k && k === last && c.box.childElementCount) return; last = k; c.load(() => k); } };
 }

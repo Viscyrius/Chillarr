@@ -333,7 +333,7 @@ fn need(cmd: &str) -> Option<Need> {
         // Each profile's own Notify me list and notes (notify.rs).
         | "notify_state" | "notify_set" | "notify_list" | "notify_unseen"
         // Host-only ones check the viewer is the party's host (readparty.rs).
-        | "readparty_start" | "readparty_join" | "readparty_state" | "readparty_move" | "readparty_leave" | "readparty_set" | "readparty_kick" | "readparty_allow" | "readparty_host"
+        | "readparty_start" | "readparty_join" | "readparty_state" | "readparty_move" | "readparty_leave" | "readparty_say" | "readparty_set" | "readparty_kick" | "readparty_allow" | "readparty_host"
         | "read_book_rows" | "read_book_more" | "read_book_search" | "read_book_author" | "read_comic_rows" | "read_comic_search" | "read_book_copies" | "read_book_get" | "read_books" | "read_book_open"
         | "read_languages" | "read_copy_chapters" | "read_get_chapters" | "read_keep_up" | "read_list" | "read_list_set" | "read_explore" | "read_genres" | "read_filter_info" | "read_similar" | "read_about" | "read_downloads"
         | "read_makers" | "read_maker_works" | "read_for_you" | "read_kind_rows"
@@ -435,6 +435,7 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
         "readparty_allow" => res(crate::readparty::allow(app, &arg::<String>(a, "code")?, &arg::<String>(a, "who")?)),
         "readparty_host" => res(crate::readparty::make_host(app, &arg::<String>(a, "code")?, &arg::<String>(a, "who")?)),
         "readparty_leave" => res(crate::readparty::leave(app, &arg::<String>(a, "code")?)),
+        "readparty_say" => res(crate::readparty::say(app, &arg::<String>(a, "code")?, &arg::<String>(a, "text")?)),
         "read_book_more" => res(crate::books::more(&arg::<String>(a, "id")?, arg::<u32>(a, "page")?).await),
         "read_book_author" => res(crate::books::by_author(&arg::<String>(a, "name")?).await),
         "read_comic_rows" => ok(crate::books::comic_rows_now().await),
