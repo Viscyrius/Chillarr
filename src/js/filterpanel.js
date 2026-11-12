@@ -92,7 +92,7 @@ export function adultFields(f, kit, porn, hint) {
   const out = [kit.field("18+", kit.oneOf(ADULT_CHOICES, (o) => f.adult === o[0], (x, o) => (x.adult = o[0])),
     el("small", { class: "read-fl-hint", text: hint || "Off until you pick Included or Only 18+." }))];
   if (porn && f.adult !== "hide") {
-    out.push(kit.field("Porn", kit.oneOf(PORN_CHOICES, (o) => (f.porn || "hide") === o[0], (x, o) => (x.porn = o[0])),
+    out.push(kit.field("18+ R", kit.oneOf(PORN_CHOICES, (o) => (f.porn || "hide") === o[0], (x, o) => (x.porn = o[0])),
       el("small", { class: "read-fl-hint", text: "Off until you pick Included." })));
   }
   return out;
