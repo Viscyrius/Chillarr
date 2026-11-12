@@ -157,6 +157,14 @@ mod tests {
     }
 
     #[test]
+    fn one_week_is_a_week() {
+        assert_eq!(ago(0, 7 * DAY), "7 days ago");
+        assert_eq!(ago(0, 15 * DAY), "2 weeks ago");
+        assert_eq!(ago(0, 14 * DAY), "2 weeks ago");
+        assert_eq!(ago(0, 13 * DAY), "13 days ago");
+    }
+
+    #[test]
     fn nothing_new_when_caught_up() {
         let eps = vec![ep(1, 1, 10), ep(1, 2, 17)];
         let mut watched = BTreeMap::new();

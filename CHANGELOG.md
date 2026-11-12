@@ -15,6 +15,11 @@
 - The chapter range in a series ("Chapters 1 to 20") now has Download and Delete next to Mark read.
 - Chapter downloads move live, without the page redrawing itself. Before, the series panel was rebuilt every 5 seconds, and the Downloads tab every 4, which made pictures blink, moved the scroll and cleared what you were typing. A finished movie download no longer redraws the reading pages either. When the manga downloader can't be reached, the Downloads tab says so instead of "Nothing is downloading".
 - Midnight's Latest updates shows two rows, newest first. A series with a new chapter slides in and the oldest drops off the end.
+- New episodes at the top of Home, Series and Anime: every show you watch that has episodes out since you last watched it, with the newest one, how many are new and how long ago. Home shows the count on its tab.
+- My List has a New for you section at the top: shows on your list with new episodes, films on your list that are ready to watch, and in reading, the series you follow with new chapters.
+- Comments on every reading title (manga, manhwa, manhua, novels, books and comics), like a film's. A series has one list, whichever site you opened it from.
+- Read Party has a chat, like Watch together's. On a computer it sits to the right of the page and the page makes room for it, so it never covers what you're reading. On a phone it's a small sheet at the bottom that shrinks to a button with one tap. Messages popping up while you read can be turned off.
+- Reading clean-up, When finished: the clock starts once every downloaded chapter is marked read. Chapters you never downloaded don't hold it back any more. Both choices now say exactly what they do, with your number of days.
 - New style: Velvet. Burgundy velvet with brass when dark, claret on rose paper when light, with serif titles. Pick it under the Look button, for watching and reading.
 - Custom colours: next to Dark and Light, Custom lets you pick the page, card, text and accent colours for any style. The page changes as you drag.
 - Fixed: opening another title while a show was still loading could put the show's buttons, Delete included, on the other title's page.
