@@ -477,7 +477,6 @@ function rowEl(r, i = 0) {
     r.explore ? el("a", { class: "explore", href: exploreHref(r) }, "Explore all", icon(ICON.right)) : el("span", { class: "count", text: String(r.tiles.length) }));
   // New episodes and New for you stand out (#72); New episodes counts on the Home tab.
   const fresh = r.id === "new-episodes" || r.id === "new-for-you";
-  if (r.id === "new-episodes") homeBubble(r.tiles.length);
   if (fresh) head.prepend(el("span", { class: "fresh-dot", "aria-hidden": "true" }));
   return el("section", { class: `row${fresh ? " row-fresh" : ""}`, dataset: { row: r.id }, id: `row-${r.id}`, style: `--i:${Math.min(i, 6)}` }, head, el("div", { class: "track-wrap" }, prev, track, next));
 }
@@ -1351,6 +1350,8 @@ async function draw(view, tab, rows, mode, seq) {
   const chips = chipBar(rows, tab);
   const filters = inlineFilters(tab, box, chips);
   box.append(...[side, inlinePicker(), filters, filters ? null : chips, banner, yourWeek(tab, seq), ...rows.map((r, i) => rowEl(r, i))].filter(Boolean));
+  // Home's count of shows with new episodes (none: the bubble goes).
+  if (tab === "home") homeBubble((rows.find((r) => r.id === "new-episodes") || { tiles: [] }).tiles.length);
   swapIn(view, [h, box], mode);
   const entry = keep(tab, "rows", [h, box], rows);
   watchLazyRows(view, rows, seq);

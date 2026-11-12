@@ -2791,7 +2791,8 @@ body.rp-chat-open .reader { right: 320px; }
 .rp-float { position: fixed; right: 18px; bottom: 76px; z-index: calc(var(--z-player) + 2); width: 300px; max-width: calc(100vw - 36px); }
 @media (max-width: 760px) {
   .rp-chat { top: auto; left: 0; width: auto; height: 42vh; max-height: 340px; border-left: 0; border-top: 1px solid rgba(255, 255, 255, 0.1); border-radius: 14px 14px 0 0; padding-bottom: env(safe-area-inset-bottom); }
-  body.rp-chat-open .reader { right: 0; }
+  body.rp-chat-open .reader { right: 0; bottom: min(42vh, 340px); }
+  .rp-chat-btn { bottom: auto; top: 50%; right: 10px; width: 42px; height: 42px; opacity: 0.9; }
   .rp-float { bottom: 72px; width: auto; left: 18px; }
 }
 .rp-note { display: flex; align-items: center; pointer-events: auto; }

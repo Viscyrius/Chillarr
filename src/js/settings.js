@@ -365,7 +365,7 @@ function readingBox() {
     const n = +days.value || 0;
     const d = `${n} day${n === 1 ? "" : "s"}`;
     whenText.textContent = whole
-      ? `When finished: nothing is deleted until every downloaded chapter is marked read. Then the whole series goes ${d} after the last one was marked. Marked read means you reached its last page, or marked it read yourself (one, a range or all).`
+      ? `When finished: nothing is deleted until everyone reading it has marked every downloaded chapter read. Then the whole series goes ${d} after the last one was marked. Marked read means you reached its last page, or marked it read yourself (one, a range or all).`
       : `As you read: each chapter is deleted ${d} after it was marked read. Marked read means you reached its last page, or marked it read yourself (one, a range or all).`;
   };
   const whenRow = el("div", { class: "opt" }, el("span", {}, el("b", { text: "Delete" }), whenText), when);

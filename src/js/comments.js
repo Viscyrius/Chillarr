@@ -172,7 +172,8 @@ export function readingKey(c) {
   if (c.anilist) return `anilist:${c.anilist}`;
   const k = typeof c.key === "string" ? c.key : "";
   if (/^anilist:\d+$/.test(k)) return k;
-  const ol = c.olid || (/^ol:([A-Za-z0-9_-]+)$/.exec(k) || [])[1];
+  // Open Library ids come as "/works/OL123W": the last part is the id.
+  const ol = (/(OL\w+)$/.exec(String(c.olid || "")) || [])[1] || (/^ol:([A-Za-z0-9_-]+)$/.exec(k) || [])[1];
   if (ol) return `ol:${ol}`;
   if (/^[mb][0-9a-f]+$/.test(k)) return `read:${k}`;
   return null;
@@ -184,5 +185,10 @@ export function readingComments() {
   let last = null;
   // The panel is drawn again after a change (a chapter marked, a follow):
   // the same title keeps its comments, and what's being typed, as they are.
-  return { box: c.box, show: (card) => { const k = readingKey(card); if (k && k === last && c.box.childElementCount) return; last = k; c.load(() => k); } };
+  return {
+    box: c.box,
+    show: (card) => { const k = readingKey(card); if (k && k === last && c.box.childElementCount) return; last = k; c.load(() => k); },
+    /** The panel shut: opening the title again asks for the latest comments. */
+    reset: () => { last = null; },
+  };
 }

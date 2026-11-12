@@ -181,6 +181,7 @@ async function leave() {
   party = null;
   target = null;
   clearTimeout(pollT);
+  chatReset();
   paint();
   paintNote();
   close();
@@ -411,6 +412,8 @@ export function toggleReadChat(on = !chatOpen) {
     rpFloat.replaceChildren();
   } else if (rpPanel.contains(document.activeElement)) document.activeElement.blur();
   paintChat();
+  // The reader got narrower or wider: it lays its pages out again.
+  requestAnimationFrame(() => window.dispatchEvent(new Event("resize")));
   if (chatOpen) { rpList.scrollTop = rpList.scrollHeight; if (matchMedia("(min-width: 761px)").matches) rpInput.focus(); }
 }
 

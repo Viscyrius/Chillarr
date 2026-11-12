@@ -667,7 +667,9 @@ function onStageClick(e) {
   if (dragged) { dragged = false; return; }
   flashWhere();
   if (r.mode === "webtoon") { toggleBars(); return; }
-  const x = e.clientX / window.innerWidth;
+  // The reader's own width: the Read Party chat can take the right side.
+  const box = r.stage.getBoundingClientRect();
+  const x = (e.clientX - box.left) / (box.width || window.innerWidth);
   // Manga reads right to left: the left side goes on.
   const onward = r.mode === "manga" ? x < 0.33 : x > 0.67;
   const back = r.mode === "manga" ? x > 0.67 : x < 0.33;

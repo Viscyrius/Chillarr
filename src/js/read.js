@@ -1323,6 +1323,7 @@ function panel() {
   dlg.addEventListener("close", () => {
     clearTimeout(poll);
     panelSeq++;
+    panelComments.reset();
     if (staleBehind) { staleBehind = false; window.dispatchEvent(new Event("chillarr:refresh")); }
   });
   dlg.addEventListener("click", (e) => { if (e.target === dlg) dlg.close(); });
@@ -1353,7 +1354,12 @@ function shell(c) {
   // Comments under everything on the panel, for every reading title (#76).
   // One list per title, whichever copy or source it was opened from.
   panelComments.show(c);
-  d.replaceChildren(hero, body, panelComments.box);
+  // Redrawn in place: the comments box isn't taken out and put back, so a
+  // comment being typed keeps its cursor while the panel updates.
+  if (panelComments.box.parentNode === d) {
+    for (const n of [...d.childNodes]) if (n !== panelComments.box) n.remove();
+    d.prepend(hero, body);
+  } else d.replaceChildren(hero, body, panelComments.box);
   if (!d.open) {
     // The entrance plays when it opens, not on every refresh while chapters come in.
     d.classList.add("fresh");

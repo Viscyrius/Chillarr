@@ -19,6 +19,11 @@ use tauri::{AppHandle, Manager};
 const LIFE: Duration = Duration::from_secs(10 * 60);
 /// Shows looked at, the most recently watched first.
 const MAX_SHOWS: usize = 40;
+/// Sonarr asks at once.
+const AT_ONCE: usize = 6;
+/// A show last watched longer ago than this was dropped, not followed: it
+/// would show "S5 E7 · 30 new" forever.
+const FOLLOWED_WITHIN: i64 = 180 * 86_400;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Fresh {
@@ -101,8 +106,11 @@ async fn shows_now(app: &AppHandle) -> Vec<(Tile, bool)> {
             None => mine.push((tvdb, last, s.episodes.clone(), s.anime)),
         }
     }
+    let cutoff = chrono::Utc::now().timestamp() - FOLLOWED_WITHIN;
+    mine.retain(|m| m.1 >= cutoff);
     mine.sort_by_key(|m| std::cmp::Reverse(m.1));
     mine.truncate(MAX_SHOWS);
+    let gate = std::sync::Arc::new(tokio::sync::Semaphore::new(AT_ONCE));
     let series = a.list("series").await.unwrap_or_default();
     let now_ms = chrono::Utc::now().timestamp_millis();
     let mut asks = tokio::task::JoinSet::new();
@@ -110,7 +118,9 @@ async fn shows_now(app: &AppHandle) -> Vec<(Tile, bool)> {
         let Some(s) = series.iter().find(|s| s["tvdbId"].as_i64() == Some(tvdb)).cloned() else { continue };
         let Some(sid) = s["id"].as_i64() else { continue };
         let a = a.clone();
+        let gate = gate.clone();
         asks.spawn(async move {
+            let _turn = gate.acquire_owned().await.ok()?;
             let eps = a.list(&format!("episode?seriesId={sid}")).await.unwrap_or_default();
             let f = fresh(&eps, &watched, last, now_ms)?;
             let mut t = tiles::from_sonarr(&s);
@@ -128,9 +138,9 @@ async fn shows_now(app: &AppHandle) -> Vec<(Tile, bool)> {
     out.into_iter().map(|(t, a, _)| (t, a)).collect()
 }
 
-/// A watch changed what's new: asked again next time.
-pub fn forget(app: &AppHandle) {
-    app.state::<Cache>().0.lock().unwrap().clear();
+/// A profile watched something: what's new for it is asked again next time.
+pub fn forget_user(app: &AppHandle, uid: &str) {
+    app.state::<Cache>().0.lock().unwrap().remove(uid);
 }
 
 #[cfg(test)]

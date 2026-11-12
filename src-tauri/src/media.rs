@@ -1197,14 +1197,15 @@ async fn rows_all(app: &AppHandle, tab: &str) -> Result<Vec<Row>, String> {
     let kind_is = |t: &Tile, k: &[&str]| k.contains(&t.kind.as_str());
     // Home and My downloads wait on these together.
     let lists = home || tab == "downloads";
-    let (on_the_way, saved, anime_top) = tokio::join!(
+    let (on_the_way, saved, anime_top, new_eps) = tokio::join!(
         async { if lists { my_list(app).await } else { vec![] } },
         async { if lists { my_list_row(app, j.as_ref(), &own).await } else { vec![] } },
         async { if home { anime_row(app, "trending", 1).await } else { vec![] } },
+        async { if home || matches!(tab, "series" | "anime") { crate::newep::shows(app).await } else { vec![] } },
     );
     // New episodes (#72): at the top of Home (all), Series and Anime.
     if home || matches!(tab, "series" | "anime") {
-        let fresh: Vec<Tile> = crate::newep::shows(app).await.into_iter().filter(|(_, anime)| match tab { "series" => !*anime, "anime" => *anime, _ => true }).map(|(t, _)| t).collect();
+        let fresh: Vec<Tile> = new_eps.into_iter().filter(|(_, anime)| match tab { "series" => !*anime, "anime" => *anime, _ => true }).map(|(t, _)| t).collect();
         out.push(row("new-episodes", "New episodes", keep_lines(own(fresh.clone()), &fresh)));
     }
     match tab {

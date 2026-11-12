@@ -246,13 +246,11 @@ pub fn say(app: &AppHandle, code: &str, text: &str) -> Result<(), String> {
     let text = crate::syncplay::say_text(text)?;
     let me = uid(app)?;
     let code = clean_code(code);
-    let (from, people) = {
-        let mut g = PARTIES.lock().unwrap_or_else(|e| e.into_inner());
-        let all = g.get_or_insert_with(HashMap::new);
+    let (from, people) = with(|all| {
         let p = member(all, &code, &me)?;
         let from = p.order.iter().find(|(id, _)| *id == me).map(|(_, n)| n.clone()).unwrap_or_default();
-        (from, p.seen.keys().cloned().collect::<Vec<String>>())
-    };
+        Ok::<_, String>((from, p.seen.keys().cloned().collect::<Vec<String>>()))
+    })?;
     {
         let mut t = crate::syncplay::turns().lock().unwrap_or_else(|e| e.into_inner());
         crate::syncplay::take_turn(&mut t, &me, std::time::Instant::now()).map_err(|s| format!("Slow down a little. Try again in {s} seconds."))?;
