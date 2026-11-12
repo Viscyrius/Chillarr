@@ -246,7 +246,7 @@ impl Media {
         self.edit_saved(false, |list| list.iter().map(|t| t.key.clone()).collect())
     }
 
-    fn saved_list(&self) -> Vec<Tile> {
+    pub(crate) fn saved_list(&self) -> Vec<Tile> {
         self.edit_saved(false, |list| list.clone())
     }
 
@@ -992,7 +992,93 @@ pub fn continue_first(watch: Vec<Tile>, cont: Vec<Tile>) -> Vec<Tile> {
 /// starting, which takes it ~20-30 s, or too busy to answer). That page is the
 /// library, so an empty one would say "Nothing downloaded yet" about a full
 /// library. Other tabs just go without the library rows.
+/// A web viewer's rows, per (user, tab): building Home takes the PC about
+/// 2.5 s every time (measured 2026-11-10), which a phone waited through on
+/// every visit. Fresh for `ROWS_FRESH`; up to `ROWS_STALE` old they're
+/// answered at once and built again behind it. The window builds its own.
+const ROWS_FRESH: Duration = Duration::from_secs(20);
+const ROWS_STALE: Duration = Duration::from_secs(180);
+
+struct RowsEntry {
+    at: Instant,
+    rows: Vec<Row>,
+    refreshing: bool,
+}
+
+fn rows_cache() -> &'static Mutex<HashMap<(String, String), RowsEntry>> {
+    static C: std::sync::OnceLock<Mutex<HashMap<(String, String), RowsEntry>>> = std::sync::OnceLock::new();
+    C.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
 pub async fn rows(app: &AppHandle, tab: &str) -> Result<Vec<Row>, String> {
+    let Some(v) = crate::viewer::current() else { return rows_now(app, tab).await };
+    let key = (v.session.user_id.clone(), tab.to_string());
+    let stale = {
+        let mut c = rows_cache().lock().unwrap();
+        match c.get_mut(&key) {
+            Some(e) if e.at.elapsed() < ROWS_FRESH => return Ok(e.rows.clone()),
+            Some(e) if e.at.elapsed() < ROWS_STALE => {
+                let start = !e.refreshing;
+                e.refreshing = true;
+                Some((e.rows.clone(), start))
+            }
+            _ => None,
+        }
+    };
+    if let Some((rows, start)) = stale {
+        if start {
+            let (app, tab, key) = (app.clone(), tab.to_string(), key.clone());
+            tauri::async_runtime::spawn(crate::viewer::carry(async move {
+                let fresh = rows_now(&app, &tab).await;
+                let mut c = rows_cache().lock().unwrap();
+                match fresh {
+                    Ok(r) => { c.insert(key, RowsEntry { at: Instant::now(), rows: r, refreshing: false }); }
+                    Err(_) => { if let Some(e) = c.get_mut(&key) { e.refreshing = false; } }
+                }
+            }));
+        }
+        return Ok(rows);
+    }
+    let fresh = rows_now(app, tab).await?;
+    let mut c = rows_cache().lock().unwrap();
+    if c.len() > 200 {
+        c.retain(|_, e| e.at.elapsed() < ROWS_STALE);
+    }
+    c.insert(key, RowsEntry { at: Instant::now(), rows: fresh.clone(), refreshing: false });
+    Ok(fresh)
+}
+
+/// Something this user did may change their rows (My List, a watch, a
+/// download): the next ask builds them again.
+pub fn forget_rows(user_id: &str) {
+    rows_cache().lock().unwrap().retain(|(u, _), _| u != user_id);
+}
+
+async fn rows_now(app: &AppHandle, tab: &str) -> Result<Vec<Row>, String> {
+    let mut rows = rows_all(app, tab).await?;
+    if crate::profiles::viewer_kids(app) {
+        for r in &mut rows {
+            kids_only(app, &mut r.tiles);
+        }
+        rows.retain(|r| !r.tiles.is_empty());
+    }
+    Ok(rows)
+}
+
+/// A title a kids' profile never gets offered: an R, NC-17 or 18 film by the
+/// catalog's rating, or Ecchi and Hentai anime. Jellyfin's own PG cap covers
+/// the library; this covers what Chillarr lists from outside it.
+pub fn not_for_kids(app: &AppHandle, t: &Tile) -> bool {
+    let adult_genre = t.genres.iter().any(|g| g.eq_ignore_ascii_case("Ecchi") || g.eq_ignore_ascii_case("Hentai"));
+    let adult_film = t.kind == "movie" && t.tmdb.is_some_and(|id| crate::catalog::adult_cert(app.state::<Media>().catalog.lock().unwrap().cert(id)));
+    adult_genre || adult_film
+}
+
+pub fn kids_only(app: &AppHandle, tiles: &mut Vec<Tile>) {
+    tiles.retain(|t| !not_for_kids(app, t));
+}
+
+async fn rows_all(app: &AppHandle, tab: &str) -> Result<Vec<Row>, String> {
     let j = jf(app).filter(|j| j.user_id.is_some());
     if tab == "mylist" {
         return Ok(my_list_page(app, j.as_ref()).await);
@@ -1036,6 +1122,8 @@ pub async fn rows(app: &AppHandle, tab: &str) -> Result<Vec<Row>, String> {
         }
     }
     let (downloading, tracked) = tokio::join!(queue(app), tracked(app));
+    // Other profiles see only what they asked for on its way (asked.rs).
+    let downloading = crate::asked::keep(app, downloading);
     let library: Vec<Tile> = lib_movies.iter().chain(lib_series.iter()).chain(lib_anime.iter()).cloned().collect();
     let own = |v: Vec<Tile>| mark_tracked(crate::catalog::merge_owned(v, &library), &tracked);
     let year = { use chrono::Datelike; chrono::Local::now().year() as i64 };
@@ -1109,11 +1197,17 @@ pub async fn rows(app: &AppHandle, tab: &str) -> Result<Vec<Row>, String> {
     let kind_is = |t: &Tile, k: &[&str]| k.contains(&t.kind.as_str());
     // Home and My downloads wait on these together.
     let lists = home || tab == "downloads";
-    let (on_the_way, saved, anime_top) = tokio::join!(
+    let (on_the_way, saved, anime_top, new_eps) = tokio::join!(
         async { if lists { my_list(app).await } else { vec![] } },
         async { if lists { my_list_row(app, j.as_ref(), &own).await } else { vec![] } },
         async { if home { anime_row(app, "trending", 1).await } else { vec![] } },
+        async { if home || matches!(tab, "series" | "anime") { crate::newep::shows(app).await } else { vec![] } },
     );
+    // New episodes (#72): at the top of Home (all), Series and Anime.
+    if home || matches!(tab, "series" | "anime") {
+        let fresh: Vec<Tile> = new_eps.into_iter().filter(|(_, anime)| match tab { "series" => !*anime, "anime" => *anime, _ => true }).map(|(t, _)| t).collect();
+        out.push(row("new-episodes", "New episodes", keep_lines(own(fresh.clone()), &fresh)));
+    }
     match tab {
         "movies" => {
             out.push(row("continue", "Continue watching", cont.iter().filter(|t| kind_is(t, &["movie"])).cloned().collect()));
@@ -1263,7 +1357,13 @@ async fn owned_matching(app: &AppHandle, f: &crate::catalog::Filter) -> Vec<Tile
 
 /// One page (40) of what a filter finds. "Only what I have" asks Jellyfin;
 /// otherwise movies and series come from the saved catalogs and anime from AniList.
-pub async fn filter(app: &AppHandle, f: crate::catalog::Filter, page: usize) -> Vec<Tile> {
+pub async fn filter(app: &AppHandle, mut f: crate::catalog::Filter, page: usize) -> Vec<Tile> {
+    // A kids' profile: no 18+, and picking R under Age rating doesn't ask for it either.
+    if crate::profiles::viewer_kids(app) {
+        f.adult = None;
+        f.porn = None;
+        f.certs.retain(|c| !crate::catalog::adult_cert(c));
+    }
     if f.owned {
         // Scrolling asks for page after page of the same filter: the library is read once.
         static OWNED: std::sync::Mutex<Option<(String, Instant, Vec<Tile>)>> = std::sync::Mutex::new(None);
@@ -1363,16 +1463,26 @@ pub async fn search(app: &AppHandle, term: &str) -> Found {
 pub async fn play(app: &AppHandle, jf_id: &str, start: f64, audio_index: Option<i64>, subtitle_index: Option<i64>) -> Result<Value, String> {
     let j = jf(app).filter(|j| j.user_id.is_some()).ok_or("Sign in to Jellyfin first (Settings > Account & devices)")?;
     let token = j.token().ok_or("Sign in to Jellyfin first")?.to_string();
-    let direct = !crate::watchnow::is_placeholder(app, jf_id);
+    let placeholder = crate::watchnow::is_placeholder(app, jf_id);
+    // A Watch now placeholder whose real file is in the library now: that file plays.
+    let real = if placeholder { crate::watchnow::library_copy_of(app, jf_id).await } else { None };
+    let jf_id = real.as_deref().unwrap_or(jf_id);
+    let direct = !placeholder || real.is_some();
     let within = (!direct).then_some(crate::jellyfin::PLACEHOLDER_ASK);
+    // One look at the item: its bitrate caps the stream, its trickplay is for the progress bar.
+    let item = match j.user_id.as_deref() {
+        Some(uid) => j.get_json(&format!("/Items?userId={uid}&ids={jf_id}&fields=Trickplay,MediaSources")).await.ok().map(|v| v["Items"][0].clone()),
+        None => None,
+    };
+    let cap = Some(crate::jellyfin::stream_cap(item.as_ref().and_then(crate::jellyfin::source_bitrate)));
     // A title just added can be listed a moment before it opens.
-    let mut asked = j.playback(jf_id, start, audio_index, subtitle_index, direct, within).await;
+    let mut asked = j.playback(jf_id, start, audio_index, subtitle_index, direct, within, cap).await;
     for _ in 0..3 {
         if !asked.as_ref().is_err_and(|e| e.to_string().contains("404")) {
             break;
         }
         tokio::time::sleep(Duration::from_millis(1500)).await;
-        asked = j.playback(jf_id, start, audio_index, subtitle_index, direct, within).await;
+        asked = j.playback(jf_id, start, audio_index, subtitle_index, direct, within, cap).await;
     }
     let info = asked.map_err(|e| {
         log(app, Level::Red, format!("Couldn't play {jf_id}: {e}"));
@@ -1425,14 +1535,13 @@ pub async fn play(app: &AppHandle, jf_id: &str, start: f64, audio_index: Option<
         .collect();
     let night: Vec<Value> = streams.iter().filter(|s| s["Type"] == "Audio").filter_map(|s| night_of(s).map(|track| json!({ "index": s["Index"], "track": track }))).collect();
     // Preview pictures for the progress bar, when Jellyfin has made them (trickplay.rs).
-    let trickplay = match j.user_id.as_deref() {
-        Some(uid) => j.get_json(&format!("/Items?userId={uid}&ids={jf_id}&fields=Trickplay")).await.ok().and_then(|v| crate::trickplay::info(&v["Items"][0], &source_id)).map(|mut t| {
-            t["url"] = json!(format!("{}/Videos/{jf_id}/Trickplay/{}/{{n}}.jpg?mediaSourceId={source_id}&api_key={token}", j.base, t["width"]));
-            t
-        }),
-        None => None,
-    };
+    let trickplay = item.as_ref().and_then(|it| crate::trickplay::info(it, &source_id)).map(|mut t| {
+        t["url"] = json!(format!("{}/Videos/{jf_id}/Trickplay/{}/{{n}}.jpg?mediaSourceId={source_id}&api_key={token}", j.base, t["width"]));
+        t
+    });
     Ok(json!({
+        // What plays, when it isn't the id asked about (a placeholder's library copy): reports go to it.
+        "itemId": jf_id,
         "url": url,
         "hls": hls,
         "playSessionId": session,
@@ -1453,7 +1562,7 @@ pub async fn play_vlc(app: &AppHandle, jf_id: &str, start: f64, title: &str, wat
     let j = jf(app).filter(|j| j.user_id.is_some()).ok_or("Sign in to Jellyfin first (Settings > Account & devices)")?;
     let token = j.token().ok_or("Sign in to Jellyfin first")?.to_string();
     let within = crate::watchnow::is_placeholder(app, jf_id).then_some(crate::jellyfin::PLACEHOLDER_ASK);
-    let info = j.playback(jf_id, 0.0, None, None, true, within).await.map_err(|e| e.to_string())?;
+    let info = j.playback(jf_id, 0.0, None, None, true, within, None).await.map_err(|e| e.to_string())?;
     let source_id = info["MediaSources"][0]["Id"].as_str().unwrap_or_default().to_string();
     let session = info["PlaySessionId"].as_str().unwrap_or_default().to_string();
     let url = format!("{}/Videos/{jf_id}/stream?static=true&mediaSourceId={source_id}&api_key={token}", j.base);
@@ -1602,6 +1711,7 @@ pub struct Added {
 
 pub async fn get_it(app: &AppHandle, tile: Tile, quality: &str) -> Result<String, String> {
     let added = add(app, &tile, quality).await?;
+    crate::asked::note_with(app, &tile, &[format!("{}:{}", if added.app == AppId::Radarr { "radarr" } else { "sonarr" }, added.id)]);
     follow(app.clone(), added.app, added.id, tile.key.clone(), tile.title.clone());
     Ok(added.msg)
 }
@@ -1789,7 +1899,27 @@ async fn my_list_page(app: &AppHandle, j: Option<&Jf>) -> Vec<Row> {
     }
     let tracked = tracked(app).await;
     let own = |v: Vec<Tile>| mark_tracked(crate::catalog::merge_owned(v, &library), &tracked);
-    row("saved", "My List", my_list_row(app, j, &own).await).into_iter().collect()
+    let saved = my_list_row(app, j, &own).await;
+    // New for you (#72): shows on My List with new episodes, and films on it
+    // that are here now and not watched yet. Each leaves once it's watched.
+    let on_list = |t: &Tile| saved.iter().any(|s| (t.tvdb.is_some() && s.tvdb == t.tvdb) || (t.tmdb.is_some() && s.tmdb == t.tmdb));
+    let shows: Vec<Tile> = crate::newep::shows(app).await.into_iter().map(|(t, _)| t).filter(|t| on_list(t)).collect();
+    let mut new_for_you = keep_lines(own(shows.clone()), &shows);
+    new_for_you.extend(saved.iter().filter(|t| t.kind == "movie" && t.jf_id.is_some() && t.played != Some(true)).cloned().map(|mut t| {
+        t.subtitle = Some("Ready to watch".into());
+        t
+    }));
+    let mut out: Vec<Row> = row("new-for-you", "New for you", new_for_you).into_iter().collect();
+    out.extend(row("saved", "My List", saved));
+    out
+}
+
+/// Cards matched to the library keep the line they were made with ("S2 E7 · 3 new · today").
+fn keep_lines(mut owned: Vec<Tile>, made: &[Tile]) -> Vec<Tile> {
+    for (o, m) in owned.iter_mut().zip(made) {
+        o.subtitle = m.subtitle.clone();
+    }
+    owned
 }
 
 /// The keys and Jellyfin ids on My List, for its button in the detail panel.
@@ -1817,7 +1947,7 @@ pub async fn toggle_my_list(app: &AppHandle, tile: Tile, on: bool) -> Result<boo
 
 /// Everything you asked for that isn't watchable yet, with where it stands.
 pub async fn my_list(app: &AppHandle) -> Vec<Tile> {
-    crate::waiting::list(app).await.into_iter().take(40).map(|w| w.tile).collect()
+    crate::asked::keep_waiting(app, crate::waiting::list(app).await).into_iter().take(40).map(|w| w.tile).collect()
 }
 
 fn enc(term: &str) -> String {

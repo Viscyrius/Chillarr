@@ -16,8 +16,15 @@ export const { listen } = window.__TAURI__.event;
 export const WEB = !!window.__CHILLARR_WEB__;
 /** Who that is (web_viewer), filled in at start. On the desktop app the PC's owner can do everything. */
 export const viewer = { name: "", admin: !WEB, can_delete: !WEB };
-/** Deleting files, stopping downloads, removing Watch now titles. */
-export const canDelete = () => viewer.admin || viewer.can_delete;
+/** Stopping a download: anyone. Each profile only sees, and may only stop,
+    what it asked for itself (waiting.rs may_stop_download / may_stop_waiting). */
+export const canStop = () => true;
+/** Deleting anything from the library (and reading's downloads, and several
+    at once): the main profile in the PC app. Anyone else gets Delete on a
+    title they downloaded or keep on My List (media_can_delete, waiting.rs may_delete). */
+let mainProfile = false;
+export function setMainProfile(on) { mainProfile = !!on; }
+export const canDelete = () => !WEB && mainProfile;
 
 /* Settings kept on this device per person: the signed-in Jellyfin user on
    the web, the active profile in the app ("" until known: the shared ones). */
@@ -65,6 +72,67 @@ export function icon(...paths) {
   }
   return s;
 }
+/* ---------- Pictures at the size they're drawn ----------
+   Posters and backdrops come from TMDB (set widths) or Jellyfin (any size:
+   asked for in steps so its cache is shared). A card is offered a few sizes
+   (srcset) and the browser takes the one that fits its width and the
+   screen's density, so a phone or a 1x monitor doesn't fetch a 1600px
+   backdrop for a 200px card. Never bigger than the URL asked for already. */
+const TMDB_W = [92, 154, 185, 300, 342, 500, 780, 1280];
+const JF_STEPS = [120, 180, 240, 320, 360, 480, 640, 800, 960, 1280, 1600];
+const TMDB_RE = /\/t\/p\/(w\d+|original)\//;
+const JF_RE = /([?&])(fillWidth|fillHeight|maxWidth|maxHeight)=(\d+)/;
+// TVmaze (series) and AniList (anime) posters come at their full size; both
+// have smaller copies at fixed names. medium_portrait is 210 wide; AniList's
+// large is 230 and extraLarge about 460.
+const TVMAZE_RE = /\/uploads\/images\/(original_untouched|medium_portrait)\//;
+const ANILIST_RE = /\/cover\/(extraLarge|large|medium)\//;
+/** `u` asked for at `w` pixels wide; a Jellyfin picture sized by its height gets `h`. */
+export function picAt(u, w, h = w * 1.5) {
+  if (!u) return u;
+  let m = u.match(TMDB_RE);
+  if (m) {
+    const have = m[1] === "original" ? Infinity : +m[1].slice(1);
+    const want = TMDB_W.find((x) => x >= w) || 1280;
+    return want < have ? u.replace(TMDB_RE, `/t/p/w${want}/`) : u;
+  }
+  m = u.match(TVMAZE_RE);
+  if (m) return w <= 210 ? u.replace(TVMAZE_RE, "/uploads/images/medium_portrait/") : u;
+  m = u.match(ANILIST_RE);
+  if (m) return w <= 230 ? u.replace(ANILIST_RE, "/cover/large/") : u;
+  m = u.match(JF_RE);
+  if (m) {
+    const px = /Height/.test(m[2]) ? h : w;
+    const want = JF_STEPS.find((x) => x >= px) || 1600;
+    return want < +m[3] ? u.replace(JF_RE, `$1$2=${want}`) : u;
+  }
+  return u;
+}
+/**
+ * img attributes for `u` drawn `sizes` wide: the URL at each of `widths`
+ * (height = width x `ratio`), the same URL once. A picture from anywhere else
+ * keeps its one `src`.
+ */
+export function picProps(u, widths, ratio, sizes) {
+  if (!u || !(TMDB_RE.test(u) || JF_RE.test(u) || TVMAZE_RE.test(u) || ANILIST_RE.test(u))) return { src: u };
+  // TVmaze and AniList have one small copy (210 and 230 wide). It stands in up
+  // to a phone's poster at 3x (about 340 px): a little soft, a tenth of the
+  // bytes (33 KB against 323 KB), which is what a weak line notices.
+  if (TVMAZE_RE.test(u) || ANILIST_RE.test(u)) {
+    const small = picAt(u, 200);
+    return small === u ? { src: u } : { src: small, srcset: `${small} 342w, ${u} 700w`, sizes };
+  }
+  const seen = new Set();
+  const set = [];
+  for (const w of widths) {
+    const v = picAt(u, w, Math.round(w * ratio));
+    if (seen.has(v)) continue;
+    seen.add(v);
+    set.push(`${v} ${w}w`);
+  }
+  return set.length > 1 ? { src: u, srcset: set.join(", "), sizes } : { src: u };
+}
+
 /** Whole-screen mode. `app` is what the user asked for (F11, the top bar
  *  button); the player borrows full screen on top of it and gives it back. */
 export const screenMode = { app: false };
@@ -99,12 +167,24 @@ export function expandRow(section, key) {
     b.setAttribute("aria-expanded", on ? "true" : "false");
     b.replaceChildren(on ? "Show less" : "Show all", icon(on ? "M6 15l6-6 6 6" : "M6 9l6 6 6-6"));
   };
-  b.addEventListener("click", () => {
+  const flip = () => {
     if (openRows.has(key)) openRows.delete(key); else openRows.add(key);
     draw();
-  });
+  };
+  b.addEventListener("click", flip);
   draw();
-  if (head) head.append(b);
+  if (head) {
+    head.append(b);
+    // The row's title opens and closes it too, like a heading you can press.
+    const h = head.querySelector("h2");
+    if (h && !h.closest("a")) {
+      h.classList.add("row-toggle");
+      h.setAttribute("role", "button");
+      h.setAttribute("tabindex", "0");
+      h.addEventListener("click", flip);
+      h.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); flip(); } });
+    }
+  }
   return section;
 }
 
@@ -114,12 +194,8 @@ export const LABEL = {
 };
 export const ORDER = ["Prowlarr", "Sonarr", "Radarr", "FlareSolverr", "QBittorrent", "Jellyfin", "Suwayomi"];
 
-/** Languages offered for dubs, with how a file's audio track names them. */
-export const AUDIO_LANGS = [
-  ["eng", "English", /^en/i], ["spa", "Spanish", /^(es|spa)/i], ["fre", "French", /^(fr)/i], ["ger", "German", /^(de|ger)/i],
-  ["ita", "Italian", /^it/i], ["por", "Portuguese", /^(pt|por)/i], ["rus", "Russian", /^ru/i], ["hin", "Hindi", /^hi/i],
-  ["ara", "Arabic", /^ar/i], ["tur", "Turkish", /^tr|^tur/i], ["jpn", "Japanese", /^(ja|jp)/i], ["kor", "Korean", /^ko/i], ["zho", "Chinese", /^(zh|ch[is])/i],
-];
+export { AUDIO_LANGS } from "./audiopick.js";
+import { AUDIO_LANGS } from "./audiopick.js";
 
 /** "Subtitles / Dubbed", and which language a dub should be in. `get` and `set` hold { audio_pref, audio_lang }. */
 export function audioChoice(get, set) {

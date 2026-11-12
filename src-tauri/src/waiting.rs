@@ -823,6 +823,61 @@ pub fn without_watch_now(list: Vec<Download>, owned: &HashSet<String>) -> Vec<Do
     list.into_iter().filter(|d| !owned.contains(&d.download_id.to_ascii_lowercase())).collect()
 }
 
+/// Other profiles stop only downloads they asked for (asked.rs); the owner any.
+pub async fn may_stop_download(app: &AppHandle, download_id: &str) -> Result<(), String> {
+    if crate::asked::sees_all(app) {
+        return Ok(());
+    }
+    let mine = crate::asked::keep_by(app, downloads(app).await, |d| &d.tile);
+    if mine.iter().any(|d| d.download_id.eq_ignore_ascii_case(download_id)) {
+        Ok(())
+    } else {
+        Err("Only whoever asked for it, or the main profile, can stop that.".into())
+    }
+}
+
+/// Deleting from the library (the user's rule, 2026-11-10): the main profile
+/// in the PC window deletes anything. Anyone else (or the main profile on a
+/// phone) deletes what they downloaded themselves, or what's on their own My
+/// List. On the web the title is judged as Jellyfin has it (`seen_tile`),
+/// never by what the page sent.
+pub async fn may_delete(app: &AppHandle, tile: &Tile) -> Result<(), String> {
+    if crate::viewer::current().is_none() && app.state::<crate::media::Media>().profile.lock().unwrap().is_none() {
+        return Ok(());
+    }
+    let seen = seen_tile(app, tile).await?;
+    let t = seen.as_ref().unwrap_or(tile);
+    if crate::asked::asked_by_me(app, t) {
+        return Ok(());
+    }
+    // My List: a library title is one of their Jellyfin favourites.
+    if let (Some(id), Some(j)) = (t.jf_id.as_deref(), crate::media::jf(app).filter(|j| j.user_id.is_some())) {
+        let favs = j.favourites().await.unwrap_or_default();
+        if favs.iter().any(|v| v["Id"].as_str().is_some_and(|f| f.eq_ignore_ascii_case(id))) {
+            return Ok(());
+        }
+    }
+    Err("You can delete what you downloaded yourself, or what's on your My List.".into())
+}
+
+/// For the Delete button: whether `may_delete` would let this title go.
+pub async fn can_delete(app: &AppHandle, tile: &Tile) -> bool {
+    may_delete(app, tile).await.is_ok()
+}
+
+/// `may_stop_download` for the waiting list.
+pub async fn may_stop_waiting(app: &AppHandle, which: &str, id: i64) -> Result<(), String> {
+    if crate::asked::sees_all(app) {
+        return Ok(());
+    }
+    let mine = crate::asked::keep_waiting(app, list(app).await);
+    if mine.iter().any(|w| w.app == which && w.id == id) {
+        Ok(())
+    } else {
+        Err("Only whoever asked for it, or the main profile, can stop that.".into())
+    }
+}
+
 /// What Radarr and Sonarr are downloading, one entry per torrent (Watch
 /// now's own left out, see `without_watch_now`).
 pub async fn downloads(app: &AppHandle) -> Vec<Download> {

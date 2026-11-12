@@ -56,6 +56,27 @@ pub fn device_profile() -> Value {
     })
 }
 
+/// The most a stream may use when nothing says less.
+pub const MAX_STREAM: i64 = 120_000_000;
+
+/// A file's own bitrate (its first source's, else its tracks' summed), when Jellyfin knows it.
+pub fn source_bitrate(item: &Value) -> Option<i64> {
+    let src = &item["MediaSources"][0];
+    src["Bitrate"].as_i64().filter(|b| *b > 0).or_else(|| {
+        let sum: i64 = src["MediaStreams"].as_array()?.iter().filter_map(|s| s["BitRate"].as_i64()).filter(|b| *b > 0).sum();
+        (sum > 0).then_some(sum)
+    })
+}
+
+/// The stream's ceiling: the file's own bitrate plus 15%, never more than MAX_STREAM.
+/// Left at MAX_STREAM, a re-encode (a picture subtitle drawn in, HEVC to H.264)
+/// came out bigger than the file: 7.3 Mbps for Ghost in the Shell's 4.4 Mbps
+/// (2026-11-10, over Tailscale to weak wifi). The margin keeps a file that
+/// can be sent as it is from being re-encoded for going over by a hair.
+pub fn stream_cap(source: Option<i64>) -> i64 {
+    source.filter(|b| *b > 0).map_or(MAX_STREAM, |b| (b + b * 15 / 100).min(MAX_STREAM))
+}
+
 /// An item that's only a placeholder, not something in the library: a
 /// Discover shelf title, or a Watch now title still downloading.
 pub fn on_shelf(item: &Value) -> bool {
@@ -410,13 +431,14 @@ impl Jf {
     /// `direct: false` always gets a stream: a Watch now title can't be handed
     /// over as a file, because Jellyfin only passes a placeholder's bytes through
     /// with no way to seek in them, and an iPhone won't play that.
-    pub async fn playback(&self, item_id: &str, start_seconds: f64, audio_index: Option<i64>, subtitle_index: Option<i64>, direct: bool, within: Option<Duration>) -> Result<Value, JfError> {
+    /// `max_bitrate`: the stream's ceiling (`stream_cap`), MAX_STREAM when None.
+    pub async fn playback(&self, item_id: &str, start_seconds: f64, audio_index: Option<i64>, subtitle_index: Option<i64>, direct: bool, within: Option<Duration>, max_bitrate: Option<i64>) -> Result<Value, JfError> {
         let uid = self.uid()?;
         let mut body = json!({
             "DeviceProfile": device_profile(),
             "StartTimeTicks": seconds_to_ticks(start_seconds),
             "AutoOpenLiveStream": true,
-            "MaxStreamingBitrate": 120_000_000,
+            "MaxStreamingBitrate": max_bitrate.unwrap_or(MAX_STREAM),
             "EnableDirectPlay": direct,
             "EnableDirectStream": true,
             "EnableTranscoding": true
@@ -479,6 +501,21 @@ fn urlencode(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stream_never_asks_for_more_than_the_file() {
+        // Ghost in the Shell: 4.4 Mbps HEVC was re-encoded at 7.3 Mbps.
+        let item = json!({ "MediaSources": [{ "Bitrate": 4_634_000 }] });
+        assert_eq!(source_bitrate(&item), Some(4_634_000));
+        assert_eq!(stream_cap(source_bitrate(&item)), 5_329_100);
+        // No container figure: the tracks', summed.
+        let tracks = json!({ "MediaSources": [{ "MediaStreams": [{ "BitRate": 4_378_264 }, { "BitRate": 256_000 }, { "Type": "Subtitle" }] }] });
+        assert_eq!(source_bitrate(&tracks), Some(4_634_264));
+        assert_eq!(source_bitrate(&json!({})), None);
+        assert_eq!(stream_cap(None), MAX_STREAM);
+        assert_eq!(stream_cap(Some(0)), MAX_STREAM);
+        assert_eq!(stream_cap(Some(400_000_000)), MAX_STREAM);
+    }
 
     #[test]
     fn auth_header_names_chillarr_and_carries_the_token() {

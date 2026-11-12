@@ -76,6 +76,16 @@ async function syncClock() {
 }
 
 /* ---------- Connection ---------- */
+/** Tries again until it's back, waiting longer each time (up to a minute),
+    while still in a party: one failed try used to end the retries for good,
+    and the party went quiet while still showing as joined. */
+function reconnect(wait) {
+  setTimeout(() => {
+    if (!g.id || (ws && ws.readyState <= 1)) return;
+    connect().catch(() => reconnect(Math.min(60000, wait * 2)));
+  }, wait);
+}
+
 async function connect() {
   if (ws && ws.readyState <= 1) return;
   const info = await invoke("syncplay_info");
@@ -89,7 +99,7 @@ async function connect() {
       ws = null;
       clearInterval(keepAlive);
       // Still in a group: Jellyfin restarted or the PC slept. Come back.
-      if (g.id) setTimeout(() => connect().catch(() => {}), 3000);
+      if (g.id) reconnect(3000);
     };
   });
   // A full client, as Jellyfin's own apps say they are.

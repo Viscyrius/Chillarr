@@ -215,6 +215,12 @@ fn auth_cache() -> &'static Mutex<HashMap<(String, String), (Instant, Known)>> {
     C.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+/// A removed profile: its remembered sign-ins go at once, so its next call is
+/// asked of Jellyfin (where the account is gone) instead of passing on the cache.
+pub fn forget_user(uid: &str) {
+    auth_cache().lock().unwrap().retain(|_, (_, k)| !matches!(k, Known::Ok(v) if v.session.user_id == uid));
+}
+
 enum AuthError {
     /// No usable sign-in, or Jellyfin turned it down.
     Signin,
@@ -256,9 +262,15 @@ async fn who(app: &AppHandle, c: &Claim, fresh: bool) -> Result<Viewer, AuthErro
                 Known::Ok(Viewer { session, admin, can_delete: admin || me["Policy"]["EnableContentDeletion"] == true, page: c.page.clone() })
             }
         }
-        // Up but slow says nothing about the token: never sign someone out for it.
-        Err(crate::jellyfin::JfError::Down | crate::jellyfin::JfError::Busy) => return Err(AuthError::Down),
-        Err(_) => Known::Bad,
+        // Only Jellyfin saying no (401/403) is a bad sign-in. Anything else (down,
+        // slow, 503 while it starts, a dropped connection) says nothing about the
+        // token: on 2026-11-10 a 503 during a restart was taken as "signed out"
+        // and sent a phone mid watch party to Jellyfin's own pages.
+        Err(crate::jellyfin::JfError::Rejected) => {
+            log(app, Level::Unknown, format!("A web page's sign-in was turned down by Jellyfin (device {}).", c.device.chars().take(12).collect::<String>()));
+            Known::Bad
+        }
+        Err(_) => return Err(AuthError::Down),
     };
     let mut cache = auth_cache().lock().unwrap();
     if cache.len() >= MAX_KNOWN {
@@ -317,18 +329,26 @@ fn need(cmd: &str) -> Option<Need> {
         // series downloads it, like Download does for a film.
         | "read_rows" | "read_search" | "read_library" | "read_detail" | "read_sources" | "read_follow" | "read_open" | "read_progress" | "read_mode" | "read_hide_week" | "read_mark"
         // Each profile's own hidden list and password (hidden.rs).
-        | "hidden_status" | "hidden_set_password" | "hidden_unlock" | "hidden_lock" | "hidden_set" | "hidden_list"
+        | "seen_touch" | "hidden_status" | "hidden_set_password" | "hidden_unlock" | "hidden_lock" | "hidden_set" | "hidden_list"
         // Each profile's own Notify me list and notes (notify.rs).
         | "notify_state" | "notify_set" | "notify_list" | "notify_unseen"
         // Host-only ones check the viewer is the party's host (readparty.rs).
-        | "readparty_start" | "readparty_join" | "readparty_state" | "readparty_move" | "readparty_leave" | "readparty_set" | "readparty_kick" | "readparty_allow" | "readparty_host"
+        | "readparty_start" | "readparty_join" | "readparty_state" | "readparty_move" | "readparty_leave" | "readparty_say" | "readparty_set" | "readparty_kick" | "readparty_allow" | "readparty_host"
         | "read_book_rows" | "read_book_more" | "read_book_search" | "read_book_author" | "read_comic_rows" | "read_comic_search" | "read_book_copies" | "read_book_get" | "read_books" | "read_book_open"
         | "read_languages" | "read_copy_chapters" | "read_get_chapters" | "read_keep_up" | "read_list" | "read_list_set" | "read_explore" | "read_genres" | "read_filter_info" | "read_similar" | "read_about" | "read_downloads"
-        | "read_makers" | "read_maker_works" | "read_for_you"
+        | "read_makers" | "read_maker_works" | "read_for_you" | "read_kind_rows"
         | "read_delete_plan" => Need::Viewer,
-        // Deleting reading's files (read_storage.rs), like a film's Delete.
-        "read_unfollow" | "read_book_remove" | "read_stop_chapters" | "read_storage" | "read_delete_chapters" | "read_book_delete_file" => Need::Delete,
-        "media_delete" | "media_delete_episodes" | "media_stop_download" | "media_stop_waiting" => Need::Delete,
+        // Deleting reading's files: anyone, for what only they read; the
+        // server decides (read_storage::may_delete), not Jellyfin's delete switch.
+        "read_unfollow" | "read_book_remove" | "read_stop_chapters" | "read_delete_chapters" | "read_book_delete_file" | "read_can_delete" => Need::Viewer,
+        // Every profile's reading files at once: the main profile's.
+        "read_storage" => Need::Delete,
+        // Stopping a download, and deleting from the library: anyone, for
+        // what they asked for themselves or keep on their My List
+        // (waiting.rs may_stop_download / may_stop_waiting / may_delete).
+        // Not Jellyfin's allow-media-deletion switch: that left a friend's own
+        // titles stuck on their list with no way to remove them.
+        "media_stop_download" | "media_stop_waiting" | "media_delete" | "media_delete_episodes" | "media_can_delete" => Need::Viewer,
         "storage_overview" | "storage_set_cleanup" | "library_scan" | "library_stats" | "seeding" | "set_seeding" | "get_settings" | "shelf_status" | "meili_status" | "subs_status" => Need::Admin,
         _ => return None,
     })
@@ -360,6 +380,11 @@ fn res<T: Serialize>(r: Result<T, String>) -> Result<Value, String> {
 
 /// Runs a command (already allowed) as the current viewer. Err is the
 /// command's own error, for the page to show.
+/// Now, in Unix milliseconds (a web page's own clock reads the same way).
+fn chrono_now_ms() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64)
+}
+
 async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
     use crate::{completed, details, history, marker, media, pick, similar, skip, storage, subfetch, subs, syncplay, waiting, watchnow};
     let me = viewer::current().ok_or("No viewer")?;
@@ -367,13 +392,24 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
     let app = &app;
     match cmd {
         "web_viewer" => {
+            // This browser went back to Jellyfin's own pages last time (shim.js says why).
+            if let Some(x) = a.get("exit").filter(|x| x.is_object()) {
+                let clean = |v: &Value, n: usize| v.as_str().unwrap_or("?").chars().filter(|c| c.is_ascii_alphanumeric() || "-_/.".contains(*c)).take(n).collect::<String>();
+                let ago = x["at"].as_i64().map(|t| (chrono_now_ms() - t).max(0) / 60_000).unwrap_or(-1);
+                let why = clean(&x["why"], 40);
+                if why.starts_with("healed") {
+                    log(app, Level::Unknown, format!("{}'s browser had an old, ended sign-in after a profile switch {ago} min ago; Chillarr put the new one back.", me.session.user));
+                } else {
+                    log(app, Level::Amber, format!("{}'s browser went back to Jellyfin's own pages {ago} min ago: {why} (on {}).", me.session.user, clean(&x["page"], 40)));
+                }
+            }
             let (theme, audio_pref, audio_lang) = {
                 let st = app.state::<crate::SettingsState>();
                 let s = st.current.lock().unwrap();
                 (s.theme.clone(), s.audio_pref.clone(), s.audio_lang.clone())
             };
             let locked = crate::profiles::web_locked(app, &me.session.user_id, &me.session.token);
-            ok(json!({ "user_id": me.session.user_id, "name": me.session.user, "admin": me.admin, "can_delete": me.can_delete, "theme": theme, "audio_pref": audio_pref, "audio_lang": audio_lang, "locked": locked }))
+            ok(json!({ "user_id": me.session.user_id, "name": me.session.user, "admin": me.admin, "can_delete": me.can_delete, "theme": theme, "audio_pref": audio_pref, "audio_lang": audio_lang, "locked": locked, "kids": crate::profiles::is_kids(app, &me.session.user_id) }))
         }
         // The viewer's own name; the PC's addresses and the owner's account
         // are the window's business.
@@ -399,6 +435,7 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
         "readparty_allow" => res(crate::readparty::allow(app, &arg::<String>(a, "code")?, &arg::<String>(a, "who")?)),
         "readparty_host" => res(crate::readparty::make_host(app, &arg::<String>(a, "code")?, &arg::<String>(a, "who")?)),
         "readparty_leave" => res(crate::readparty::leave(app, &arg::<String>(a, "code")?)),
+        "readparty_say" => res(crate::readparty::say(app, &arg::<String>(a, "code")?, &arg::<String>(a, "text")?)),
         "read_book_more" => res(crate::books::more(&arg::<String>(a, "id")?, arg::<u32>(a, "page")?).await),
         "read_book_author" => res(crate::books::by_author(&arg::<String>(a, "name")?).await),
         "read_comic_rows" => ok(crate::books::comic_rows_now().await),
@@ -426,6 +463,7 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
         "read_makers" => res(crate::read::makers(arg(a, "anilist")?).await),
         "read_maker_works" => res(crate::read::maker_works(app, arg(a, "staff")?, arg::<Option<bool>>(a, "adult")?.unwrap_or(false)).await),
         "read_for_you" => res(crate::read::for_you(app).await),
+        "read_kind_rows" => res(crate::read::kind_rows(app, &arg::<String>(a, "kind")?).await),
         "read_about" => res(crate::read_about_any(arg(a, "anilist")?, arg(a, "olid")?).await),
         "read_filter_info" => ok(serde_json::json!({ "tags": crate::read::TAGS.to_vec(), "adult": crate::read::adult_ok(app) })),
         "read_genres" => ok(crate::read::GENRES.to_vec()),
@@ -434,16 +472,23 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
         "read_storage" => res(crate::read_storage::overview(app).await),
         "read_delete_plan" => res(crate::read_storage::plan(app, &arg::<String>(a, "key")?, arg(a, "ids")?).await),
         "read_delete_chapters" => res(crate::read_storage::delete(app, &arg::<String>(a, "key")?, arg(a, "ids")?, arg::<Option<bool>>(a, "othersOk")?.unwrap_or(false)).await),
+        "read_can_delete" => res(crate::read_storage::can_delete(app, &arg::<String>(a, "key")?)),
         "read_book_delete_file" => res(crate::read_storage::delete_book(app, &arg::<String>(a, "key")?, arg::<Option<bool>>(a, "othersOk")?.unwrap_or(false)).await),
         "read_open" => res(crate::read::open(app, &arg::<String>(a, "key")?, arg(a, "chapter")?).await),
         "read_progress" => res(crate::read::set_spot(app, &arg::<String>(a, "key")?, arg(a, "chapter")?, arg(a, "page")?, arg(a, "pages")?)),
         "read_mode" => res(crate::read::set_mode(app, &arg::<String>(a, "key")?, &arg::<String>(a, "mode")?)),
         "read_hide_week" => res(crate::read::set_hide_week(app, &arg::<String>(a, "key")?, arg(a, "hide")?)),
+        "seen_touch" => {
+            if let Some(uid) = crate::media::active_user(app) {
+                crate::seen::touch(app, &uid);
+            }
+            ok(json!(null))
+        }
         "hidden_status" => res(crate::hidden::status(app)),
         "hidden_set_password" => res(crate::hidden::set_password(app, &arg::<String>(a, "password")?, arg::<Option<String>>(a, "old")?.as_deref())),
         "hidden_unlock" => res(crate::hidden::unlock(app, &arg::<String>(a, "password")?)),
         "hidden_lock" => res(crate::hidden::lock(app)),
-        "hidden_set" => res(crate::hidden::set(app, &arg::<Vec<String>>(a, "keys")?, arg(a, "hide")?, arg::<Option<String>>(a, "label")?.as_deref())),
+        "hidden_set" => res(crate::hidden::set(app, &arg::<Vec<String>>(a, "keys")?, arg(a, "hide")?, arg::<Option<String>>(a, "label")?.as_deref(), arg::<Option<Value>>(a, "item")?)),
         "hidden_list" => res(crate::hidden::list(app)),
         "notify_state" => res(crate::notify::state(app, &arg(a, "target")?)),
         "notify_set" => res(crate::notify::set(app, &arg(a, "target")?, arg(a, "on")?, arg::<Option<bool>>(a, "auto")?.unwrap_or(false))),
@@ -487,12 +532,28 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
         "subs_choice" => res(subfetch::choice(app, &arg::<Tile>(a, "tile")?).await),
         "subs_set" => res(subfetch::set(app, &arg::<String>(a, "key")?, &arg::<String>(a, "title")?, arg(a, "langs")?)),
         "subs_status" => ok(subs::status(app).await),
-        "media_waiting" => ok(waiting::list(app).await),
-        "media_downloads" => ok(waiting::downloads(app).await),
-        "media_stop_waiting" => res(waiting::stop(app, &arg::<String>(a, "which")?, arg(a, "id")?).await),
-        "media_stop_download" => res(waiting::stop_download(app, &arg::<String>(a, "which")?, &arg::<String>(a, "downloadId")?, arg::<Option<bool>>(a, "whole")?.unwrap_or(false)).await),
-        "media_delete" => res(waiting::delete_title(app, &arg::<Tile>(a, "tile")?).await),
-        "media_delete_episodes" => res(waiting::delete_episodes(app, &arg::<Tile>(a, "tile")?, &arg::<Vec<(i64, i64)>>(a, "episodes")?).await),
+        // Other profiles see and stop only what they asked for (asked.rs).
+        "media_waiting" => ok(crate::asked::keep_waiting(app, waiting::list(app).await)),
+        "media_downloads" => ok(crate::asked::keep_by(app, waiting::downloads(app).await, |d| &d.tile)),
+        "media_stop_waiting" => {
+            let (which, id) = (arg::<String>(a, "which")?, arg::<i64>(a, "id")?);
+            res(async { waiting::may_stop_waiting(app, &which, id).await?; waiting::stop(app, &which, id).await }.await)
+        }
+        "media_stop_download" => {
+            let did = arg::<String>(a, "downloadId")?;
+            res(async { waiting::may_stop_download(app, &did).await?; waiting::stop_download(app, &arg::<String>(a, "which")?, &did, arg::<Option<bool>>(a, "whole")?.unwrap_or(false)).await }.await)
+        }
+        "media_delete" => {
+            let t = arg::<Tile>(a, "tile")?;
+            waiting::may_delete(app, &t).await?;
+            res(waiting::delete_title(app, &t).await)
+        }
+        "media_delete_episodes" => {
+            let t = arg::<Tile>(a, "tile")?;
+            waiting::may_delete(app, &t).await?;
+            res(waiting::delete_episodes(app, &t, &arg::<Vec<(i64, i64)>>(a, "episodes")?).await)
+        }
+        "media_can_delete" => ok(waiting::can_delete(app, &arg::<Tile>(a, "tile")?).await),
         "watchnow_start" => res(watchnow::start(app, arg(a, "tile")?, arg(a, "season")?, arg(a, "episode")?).await),
         // Positions are kept per Jellyfin user: always the viewer's own,
         // whatever user id the page sent.
@@ -533,7 +594,7 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
         // Known by the key Chillarr gave the device (it keeps it); none or an
         // unknown one makes a new device, so a page can't take over another's.
         "remote_device" => res(crate::remote::for_device(app, arg::<Option<String>>(a, "key")?.as_deref(), &arg::<Option<String>>(a, "name")?.unwrap_or_default(), arg::<Option<bool>>(a, "renew")?.unwrap_or(false)).await),
-        "profiles_add" => res(crate::profiles::add_web(app, &me.session.user_id, &arg::<String>(a, "name")?, &arg::<String>(a, "color")?, arg(a, "pin")?).await),
+        "profiles_add" => res(crate::profiles::add_web(app, &me.session.user_id, &arg::<String>(a, "name")?, &arg::<String>(a, "color")?, arg(a, "pin")?, arg::<Option<bool>>(a, "kids")?.unwrap_or(false)).await),
         "storage_overview" => ok(storage::overview(app).await),
         "storage_set_cleanup" => res(storage::set_cleanup(app, arg(a, "days")?)),
         "library_stats" => ok(media::library_stats(app).await),
@@ -638,9 +699,19 @@ fn foreign_tokens(app: &AppHandle, own: &str) -> Vec<String> {
 /// answers people Jellyfin knows.
 pub fn start(app: AppHandle) {
     for name in SHARED_EVENTS {
+        let h = app.clone();
         app.listen_any(name, move |e| {
             let payload: Value = serde_json::from_str(e.payload()).unwrap_or(Value::Null);
-            send(None, None, name, &payload);
+            // A download's progress names the title: only for the owner and
+            // whoever asked for it (asked.rs). "Look again" (no key) is for all.
+            match payload["key"].as_str().filter(|k| !k.is_empty()) {
+                Some(key) => {
+                    for uid in crate::asked::audience(&h, key) {
+                        send(Some(uid), None, name, &payload);
+                    }
+                }
+                None => send(None, None, name, &payload),
+            }
         });
     }
     tauri::async_runtime::spawn(async move {
@@ -755,6 +826,47 @@ fn cors(origin: Option<&str>) -> String {
 async fn reply(sock: &mut TcpStream, origin: Option<&str>, status: &str, kind: &str, body: &[u8]) -> std::io::Result<()> {
     let head = format!(
         "HTTP/1.1 {status}\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\n{}Connection: close\r\n\r\n",
+        body.len(),
+        cors(origin)
+    );
+    sock.write_all(head.as_bytes()).await?;
+    sock.write_all(body).await?;
+    sock.shutdown().await
+}
+
+/// A command that only reads: the viewer's cached rows (media::rows) stay.
+/// Anything else may change them, so they're built again on the next ask.
+fn keeps_rows(cmd: &str) -> bool {
+    cmd.starts_with("read_")
+        || matches!(
+            cmd,
+            "media_rows" | "media_status" | "media_search" | "media_search_live" | "media_get" | "media_get_picked" | "media_details" | "media_similar" | "media_seasons" | "media_episodes" | "media_trailer"
+                | "media_explore" | "media_filter" | "media_filter_genres" | "media_filter_studios" | "media_anime_tags" | "media_maker" | "watch_week" | "hidden_status" | "seen_touch" | "web_viewer" | "profiles_list"
+        )
+}
+
+/// `body` gzipped, or None when it's too small to be worth it.
+fn gzip(body: &[u8]) -> Option<Vec<u8>> {
+    use std::io::Write;
+    if body.len() < 1400 {
+        return None;
+    }
+    let mut z = flate2::write::GzEncoder::new(Vec::with_capacity(body.len() / 6), flate2::Compression::fast());
+    z.write_all(body).ok()?;
+    z.finish().ok()
+}
+
+async fn reply_gz(sock: &mut TcpStream, origin: Option<&str>, kind: &str, body: &[u8]) -> std::io::Result<()> {
+    let head = format!(
+        "HTTP/1.1 200 OK
+Content-Type: {kind}
+Content-Encoding: gzip
+Content-Length: {}
+Cache-Control: no-store
+X-Content-Type-Options: nosniff
+{}Connection: close
+
+",
         body.len(),
         cors(origin)
     );
@@ -884,11 +996,15 @@ async fn serve(app: AppHandle, mut sock: TcpStream, gate: Gate) -> std::io::Resu
         }
     };
     let own = v.session.token.clone();
+    let who = v.session.user_id.clone();
     let out = viewer::run(v, async {
         check_items(&app, cmd, &args).await?;
         run(&app, cmd, &args).await
     })
     .await;
+    if out.is_ok() && !keeps_rows(cmd) {
+        crate::media::forget_rows(&who);
+    }
     match out {
         Ok(value) => {
             let text = value.to_string();
@@ -900,7 +1016,12 @@ async fn serve(app: AppHandle, mut sock: TcpStream, gate: Gate) -> std::io::Resu
             // The browser's own Origin header, which a page can't set; the
             // shim's copy only for a client that sends none.
             let text = rewrite(&text, &base, origin.or_else(|| origin_ok(&claim.origin)));
-            reply(&mut sock, origin, "200 OK", "application/json", text.as_bytes()).await
+            // Compressed for a browser that takes it: a tab's rows are 150-400 KB
+            // of JSON, about a tenth gzipped, and phones reach this over far lines.
+            match header(&head, "accept-encoding").filter(|v| v.contains("gzip")).and_then(|_| gzip(text.as_bytes())) {
+                Some(z) => reply_gz(&mut sock, origin, "application/json", &z).await,
+                None => reply(&mut sock, origin, "200 OK", "application/json", text.as_bytes()).await,
+            }
         }
         Err(e) => error(&mut sock, origin, "400 Bad Request", &e).await,
     }
@@ -995,7 +1116,9 @@ mod tests {
         assert_eq!(need("watchnow_ready"), Some(Need::Viewer));
         assert_eq!(need("night_prepare"), Some(Need::Viewer));
         assert_eq!(need("comments_add"), Some(Need::Viewer));
-        assert_eq!(need("media_delete"), Some(Need::Delete));
+        // Anyone may ask; may_delete then allows only their own titles.
+        assert_eq!(need("media_delete"), Some(Need::Viewer));
+        assert_eq!(need("media_stop_waiting"), Some(Need::Viewer));
         assert_eq!(need("storage_set_cleanup"), Some(Need::Admin));
     }
 

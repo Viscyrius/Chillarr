@@ -1,5 +1,87 @@
 # Changelog
 
+## 0.20.1 (2026-11-12)
+- Velvet is its own style now, not Cinema in other colours. Watching is a stage: the featured title stands in the middle between velvet curtains, its poster in a brass frame, rows read like a printed programme, and every card is a ticket with a torn stub. Reading is a reading room: what you're reading lies open on a desk with a ribbon marking how far you are, and everything else stands on shelves.
+- The filters' adult-only choice is now called 18+ R.
+- In Velvet each kind of reading looks like what it is: a manhwa or manhua is a tall scroll in a phone frame, a manga is a paperback with page edges, a novel or book is a hardcover with a cloth spine, and a comic is a stapled issue.
+
+## 0.20.0 (2026-11-12)
+- Fixed for good: Dubbed now means English voices are really in the file. A release only counts as an English dub when its name says English. Plain "Dual Audio" is no longer taken as proof, and Portuguese dubs ("Dublado", "PT-BR") are refused like other foreign dubs. That is how Mushoku Tensei came in with Japanese and Portuguese only. The rule that refuses foreign dubs had broken characters in Sonarr and Radarr and refused nothing. It is checked and rebuilt now, and when Chillarr can't change it, the log says so.
+- With Dubbed on, Chillarr checks each downloaded episode and film for the dub language. A file without it is replaced when a copy that names it turns up. The same release is never taken twice, and nothing is deleted until a replacement has been found.
+- The player starts in English when you chose Dubbed, also when the track is only named "English" without a language tag. When the file has no English voices, it says so. A language you picked yourself for a show still wins. Jellyfin's own apps now start in your dub language too.
+- Fixed for good: Hide really hides. Hidden titles never show on any page again, and they have their own Hidden tab. The Hidden tab opens with your hidden password, only on the device you typed it on, for 15 minutes. Before, setting the password or unlocking showed every hidden title on every page, on every device of that profile, for an hour that kept starting over. That is why hiding seemed to do nothing.
+- The main profile, in the Chillarr app on the PC, can reset any profile's hidden password with one button in Manage profiles. What they hid stays hidden.
+- Fixed: a film and a show with the same TMDB number could hide each other.
+- Fixed: reading showed chapters from the wrong place as the newest ones, like Swordborne's "Chapter 276" (a different manga) and Reincarnated Murim Lord's 559 and 560 (old chapters with stretched pages). Chillarr now checks that a chapter number fits the rest of that copy's list. These strays had also stopped the real next chapters from downloading by themselves, and that works again.
+- Pages in AVIF format show at the right size instead of stretched.
+- Reading search finds a series when you type its name with an extra "s" or a letter off ("Chronicles of Runes").
+- Activity now counts reading, and phones. It used to look only at Jellyfin plays, so someone reading manhwa on their phone for two days showed as "Last on 2 days ago". It also shows what each profile read last, and "Reading now".
+- Phones can delete downloaded books and chapters. Any profile can delete what only it reads; the main profile can delete anything, and is asked first when someone else reads it too.
+- The chapter range in a series ("Chapters 1 to 20") now has Download and Delete next to Mark read.
+- Chapter downloads move live, without the page redrawing itself. Before, the series panel was rebuilt every 5 seconds, and the Downloads tab every 4, which made pictures blink, moved the scroll and cleared what you were typing. A finished movie download no longer redraws the reading pages either. When the manga downloader can't be reached, the Downloads tab says so instead of "Nothing is downloading".
+- Midnight's Latest updates shows two rows, newest first. A series with a new chapter slides in and the oldest drops off the end.
+- New episodes at the top of Home, Series and Anime: every show you watch that has episodes out since you last watched it, with the newest one, how many are new and how long ago. Home shows the count on its tab.
+- My List has a New for you section at the top: shows on your list with new episodes, films on your list that are ready to watch, and in reading, the series you follow with new chapters.
+- Comments on every reading title (manga, manhwa, manhua, novels, books and comics), like a film's. A series has one list, whichever site you opened it from.
+- Read Party has a chat, like Watch together's. On a computer it sits to the right of the page and the page makes room for it, so it never covers what you're reading. On a phone it's a small sheet at the bottom that shrinks to a button with one tap. Messages popping up while you read can be turned off.
+- Reading clean-up, When finished: the clock starts once every downloaded chapter is marked read. Chapters you never downloaded don't hold it back any more. Both choices now say exactly what they do, with your number of days.
+- New style: Velvet. Burgundy velvet with brass when dark, claret on rose paper when light, with serif titles. Pick it under the Look button, for watching and reading.
+- Custom colours: next to Dark and Light, Custom lets you pick the page, card, text and accent colours for any style. The page changes as you drag.
+- Fixed: opening another title while a show was still loading could put the show's buttons, Delete included, on the other title's page.
+- Fixed: a crash or blue screen while saving settings could wipe every setting and show setup again. Settings are now saved safely, with the last good copy kept.
+- Fixed: in Webtoon mode, a page that failed to load stayed broken until you reopened the chapter. It now loads again when you scroll back to it.
+- Fixed: Watch together gave up reconnecting after one failed try (after the PC slept, for example), and the party went quiet while still showing you as in it. It keeps trying now.
+- Fixed: a subtitle from the last episode could show up on the next one.
+- Fixed: the book reader could show an error page as if it were the chapter.
+
+## 0.19.2 (2026-11-11)
+- Reading search finds series AniList doesn't have, and series you know by another name. It now asks MangaUpdates too: Sword God High School: The Talentless Underachiever Becomes the Strongest shows up (AniList doesn't list it at all), and Chronicle of Runes finds Emblem Wars, which is the same manhwa. A series only MangaUpdates knows can be followed and read like any other.
+- Fixed: in reading, clearing the search box sometimes left the search results on screen instead of going back to the tab you were on, so you had to search something else and clear it again.
+
+## 0.19.1 (2026-11-10)
+- Fixed: switching to another profile on a phone (most often an iPhone) could sign you out of Chillarr completely and leave you on Jellyfin's username and password page. The iPhone keyboard sent the PIN twice, Chillarr started two switches, and Jellyfin's second sign-in ended the first one, which was the one the phone kept. A PIN is now sent once, a switch never runs twice at once, and the switch keeps trying through a bad connection instead of giving up. If a phone ever does end up holding an ended sign-in after a switch, Chillarr puts the right one back by itself.
+- Fixed: on phones and in the browser there was no way to see your hidden things again, because the Hidden settings were only in the Chillarr app on the PC. They're now in Settings > Account on every device: Show hidden (with your hidden password), Lock, and the list of what's hidden.
+- The hidden list now has Open next to each title, which takes you straight to its page. This works for anything hidden from now on; titles hidden before only have Show again.
+- Fixed: other profiles couldn't remove things they'd asked for. Stop on Downloading now and the waiting list said they had no permission, so their titles sat on My List > On the way for good. Every profile can now stop what it asked for itself (and still only that).
+- Other profiles can now delete a title from the library if they downloaded it themselves or it's on their My List. Delete shows on that title's page, on phones too. Everything else is still the main profile's to delete, in the Chillarr app on the PC.
+## 0.19.0 (2026-11-10)
+- Fixed: picking another style (Cinema, Midnight or Classic) on a reading tab only changed the colours and kept the old layout. It now redraws the page in the new style, like the watching tabs always did.
+- New colour: Dusk, a warm peach over deep violet. Pick it under the Look button or Settings > Appearance.
+- Up to 12 profiles now (it was 8).
+- The main profile, in the Chillarr app on the PC, runs every profile: open, edit, change or remove anyone's PIN, set their password, or remove them, without knowing their PIN.
+- Manage profiles > Activity (main profile, on the PC only): when each profile was last on, on any device, what they're watching right now and on which device, and what they watched lately. Anyone not on for a month is marked Inactive, with Remove right there.
+- Removing a profile now cuts off every way they had in at once: their Jellyfin account, their sign-ins on phones and TVs, and the phone remote codes for their devices.
+- Privacy: other profiles no longer see what's downloading or waiting in general. Downloading now, On the way, the waiting list and download progress only show them what they asked for themselves, and they can only stop their own. What's in the library and ready to watch is unchanged. The main profile still sees everything.
+## 0.18.1 (2026-11-10)
+- Fixed: on a phone or in a browser, Chillarr went back to Jellyfin's old look by itself, usually about 20 seconds after a page finished loading, or when you came back to the app. 0.18.0 made this much worse. It now only goes back if Chillarr's page truly can't start, and then a "Back to Chillarr" button is right there.
+- Fixed: when Jellyfin restarted (an update, or Chillarr starting it), phones were signed out and dropped on Jellyfin's old look, which is what kicked you out of a watch party. Now the page waits a few seconds for Jellyfin to come back and carries on. You're only sent to sign in if Jellyfin itself says your sign-in is gone.
+- Chillarr no longer restarts Jellyfin for an update while anyone has used it in the last 10 minutes, not just while something is playing.
+- After an update, a phone that still has the old page open keeps working until it's reloaded.
+- If Chillarr's page ever does go back to Jellyfin's own, it notes why, and Chillarr's log says so the next time it opens.
+- Faster on phones and in the browser: the app comes as one file instead of 27, pictures only load when they come into view (Home used to ask for 300 at once), series posters come in a size made for phones (a tenth of the size), what the PC sends is compressed, and a tab you opened a moment ago comes back at once.
+- Deleting from your library (and reading downloads) is only on the main profile, and only in the Chillarr app on the PC. It's gone from other profiles and from phones.
+- Settings > Library & storage: tick several titles (or Select all) and delete them in one go. They leave the list straight away and are deleted together. Deleting is for good, not to the Recycle Bin.
+- Kids profiles: R and NC-17 films and Ecchi anime are kept out of every row, Similar and Watch now too, not only search and filters. A kids' profile in the Chillarr app can only make kids' profiles.
+- Fixed: Series always showed the filtered grid with "Filters 1" instead of its rows.
+- Fixed: "Back to all rows" in reading kept the grid and turned 18+ off.
+- Two new colours: Sakura (soft pink) and Aurora (teal over deep indigo). Pick them under the Look button or Settings > Appearance.
+- Every tab has a look of its own now: away from Home, Movies, Series, Anime, My List, Downloads and each reading tab (Books, Manga and the rest) get their own soft glow at the top, made from your colour, so it works with every theme.
+- Reading tabs come back instantly when you switch back to them: Home and Books (Books used to take several seconds each time), and Manga, Manhwa, Manhua and Novels, right where you were in the list, still loading more as you scroll. Home and Books still show your progress and new chapters: they're redrawn after a few minutes, or straight away when something you read changes.
+
+## 0.18.0 (2026-11-10)
+- Kids profiles: when you add or edit a profile there's a Kids profile switch. A kids' profile only opens titles rated up to PG and never sees 18+, in filters, search or anywhere else. Only the main profile can turn it off again, and a kids' profile can only make kids' profiles.
+- 18+ is on from the start for everyone else: R and NC-17 films and mature anime and manga show in search, filters and on a director's or writer's page without turning anything on. Porn is still its own choice and stays off until you pick it. You can still turn 18+ off in Filters.
+- Watch parties: everyone in the party can find the R-rated film the host is playing now. It used to be hidden from them until they turned on 18+.
+- Fixed: on a phone, Jellyfin's old look sometimes came back instead of Chillarr and stayed until you closed the app. A slow connection counted as Chillarr being broken; now it only falls back on a real error, and tries Chillarr again next time. A phone left open over an update also lost the page; it now moves to the new one.
+- Fixed: a Watch now title that had finished downloading still played through the slow download stream, so it took a while to start (Ghost in the Shell). It now plays the downloaded file straight away and keeps your place.
+- Videos never ask for more than the file's own quality, so a film with picture subtitles turned on doesn't come out bigger than the file itself. Much easier on weak Wi-Fi.
+- Faster on phones and in the browser: the video player loads only when you play something, posters and pictures come in the size they're shown at (about half the data on Home), and the blur effects are gone on phones. Buttons are easier to tap, and the top bar no longer runs off the edge on small laptops and tablets.
+
+## 0.17.1 (2026-11-10)
+- Manga, Manhwa, Manhua and Novels open on rows now, like Movies: Top 10 today, Most popular, Top rated, Ongoing, New and rising, then a row for each genre (Action, Fantasy, Romance, Comedy, Drama and more). Every row's title and Explore all open the whole list. Pick a filter or another order and the matching titles take the rows' place; Back to all rows brings them back.
+- Your week shows every show of yours that is still running, not only ones with an episode in Sonarr this week. Your shows are the ones you download, watch, put on My List or favourite. Each sits on the day it airs, with the episode out this week or the next one announced; a show between seasons says so ("Between seasons, usually Wednesdays"). Air days come from Sonarr, TVmaze and AniList. On Series and Anime it stays on the page with a short note when nothing of yours is running.
+- My List rows open and close from their title too, not just the Show all link, in watching and reading.
+
 ## 0.17.0 (2026-11-10)
 - Movies, Series and Anime have their filters right on the page, like the reading tabs. Filters and Order sit above the rows with the genre chips beside them; pick anything and the matching titles take the rows' place. Back to all rows (or Clear filters) brings the rows back. Home's Filters still opens them on their own page.
 - Your week now shows on Series, Anime and Home in every style, not just Classic: your shows by the day their episodes come out, each card with the episode (S2 E7) and when it's out ("Out today", "Fri at 21:00"). It opens on today, or on the next day something of yours comes out.

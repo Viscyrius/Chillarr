@@ -365,14 +365,142 @@ pub struct Built {
     pub repaired: usize,
 }
 
-/// Makes the patched copy of `installed` under `root/<stamp>` and removes
-/// older copies. An existing copy has Chillarr's files checked and put back
-/// where they differ: the folder is the user's to write, and what's in it is
-/// served to every Jellyfin client.
+/// Marks the page left at an older copy's address (shim.js looks for it).
+const MOVED_MARK: &str = "data-chillarr-moved";
+/// How long an old copy's address keeps sending you on.
+const MOVED_DAYS: u64 = 30;
+
+/// A copy's folder name: what `stamp` makes (16 hex digits). Anything else in
+/// the user-writable folder is never put into a page.
+fn is_stamp(name: &str) -> bool {
+    name.len() == 16 && name.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs())
+}
+
+/// The page left at an older copy's address (/web/chillarr-<old>/ and its
+/// legacy.html) in the current copy. A phone keeps a tab on Chillarr's pages
+/// for days; after Chillarr or Jellyfin updated, that tab's next load got a
+/// 404 from the folder that was gone. This sends it to the same place
+/// (`page`, with its #route) in the current copy. `since`: when that copy
+/// was replaced, so these don't pile up for ever.
+pub fn moved_page(folder: &str, page: &str, since: u64) -> String {
+    format!("<!doctype html><meta charset=\"utf-8\"><title>Chillarr</title><script {MOVED_MARK}=\"{since}\">location.replace(\"../{folder}/{page}\"+location.search+location.hash)</script>")
+}
+
+/// When a moved page says its copy was replaced.
+fn moved_since(page: &str) -> Option<u64> {
+    let rest = &page[page.find(&format!("{MOVED_MARK}=\""))? + MOVED_MARK.len() + 2..];
+    rest[..rest.find('"')?].parse().ok()
+}
+
+/// Every older copy a browser may still have open, with when it was replaced:
+/// the copies beside this one, and the moved pages they carried.
+fn old_copies(root: &Path, stamp: &str, now: u64) -> Vec<(String, u64)> {
+    let mut out: Vec<(String, u64)> = Vec::new();
+    let Ok(rd) = std::fs::read_dir(root) else { return out };
+    for e in rd.flatten() {
+        let name = e.file_name().to_string_lossy().to_string();
+        if name == stamp || !is_stamp(&name) {
+            continue;
+        }
+        out.push((name, now));
+        let Ok(inner) = std::fs::read_dir(e.path()) else { continue };
+        for c in inner.flatten() {
+            let n = c.file_name().to_string_lossy().to_string();
+            let Some(s) = n.strip_prefix("chillarr-").filter(|s| is_stamp(s) && *s != stamp) else { continue };
+            if let Some(since) = std::fs::read_to_string(c.path().join("index.html")).ok().and_then(|t| moved_since(&t)) {
+                if now.saturating_sub(since) < MOVED_DAYS * 86_400 {
+                    out.push((s.to_string(), since));
+                }
+            }
+        }
+    }
+    // The oldest date wins for a copy seen twice, so carrying it on never renews it.
+    out.sort();
+    out.dedup_by(|b, a| a.0 == b.0);
+    out
+}
+
+/// How long an old copy's own files (its scripts, styles, pictures) stay
+/// served beside the new one. A page left open keeps working until it is
+/// loaded again: on 2026-11-10 a phone that had 0.17.1 open lost its scripts
+/// the moment Jellyfin moved to 0.18.0, mid watch party, and fell back to
+/// Jellyfin's own pages. Past this only the moved pages stay.
+const KEEP_FILES_DAYS: u64 = 2;
+
+/// Where an older copy's Chillarr folder still is: in its own copy, or carried
+/// along inside a later one. None once it's gone everywhere.
+fn old_app_files(root: &Path, dir: &Path, old: &str) -> Option<PathBuf> {
+    let name = app_folder(old);
+    let mut places = vec![root.join(old).join(&name)];
+    if let Ok(rd) = std::fs::read_dir(root) {
+        places.extend(rd.flatten().map(|e| e.path().join(&name)));
+    }
+    places.into_iter().find(|p| !p.starts_with(dir) && p.join("js").is_dir())
+}
+
+/// Writes the moved pages for `olds` into the copy at `dir`, and carries each
+/// recent old copy's own files along so pages still open on it keep working.
+fn write_moved(dir: &Path, stamp: &str, olds: &[(String, u64)]) -> std::io::Result<()> {
+    let folder = app_folder(stamp);
+    let root = dir.parent().map(Path::to_path_buf).unwrap_or_default();
+    let now = now_secs();
+    for (old, since) in olds {
+        let target = dir.join(app_folder(old));
+        if now.saturating_sub(*since) < KEEP_FILES_DAYS * 86_400 {
+            if !target.join("js").is_dir() {
+                if let Some(from) = old_app_files(&root, dir, old) {
+                    // Best effort: without them the moved pages below still send a reload on.
+                    let _ = copy_tree(&from, &target);
+                }
+            }
+        } else if let Ok(rd) = std::fs::read_dir(&target) {
+            for e in rd.flatten() {
+                let n = e.file_name();
+                if n == "index.html" || n == "legacy.html" {
+                    continue;
+                }
+                let _ = if e.path().is_dir() { std::fs::remove_dir_all(e.path()) } else { std::fs::remove_file(e.path()) };
+            }
+        }
+        for (file, page) in [("index.html", ""), ("legacy.html", "legacy.html")] {
+            let path = dir.join(app_folder(old)).join(file);
+            let want = moved_page(&folder, page, *since);
+            if std::fs::read_to_string(&path).ok().as_deref() != Some(want.as_str()) {
+                write_planned(dir, &format!("{}/{file}", app_folder(old)), want.as_bytes())?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Removes every copy but `stamp`'s. Only once Jellyfin is on that one (or
+/// not running): Windows lets a folder be deleted while Jellyfin serves from
+/// it, file by file, which left every browser with 404s, Jellyfin's own
+/// pages included, until the restart (and that waits while anyone watches).
+pub fn prune(root: &Path, stamp: &str) {
+    if let Ok(rd) = std::fs::read_dir(root) {
+        for e in rd.flatten() {
+            if e.file_name().to_string_lossy() != stamp {
+                let _ = std::fs::remove_dir_all(e.path());
+            }
+        }
+    }
+}
+
+/// Makes the patched copy of `installed` under `root/<stamp>`, with pages at
+/// older copies' addresses that send you on. An existing copy has Chillarr's
+/// files checked and put back where they differ: the folder is the user's to
+/// write, and what's in it is served to every Jellyfin client. Older copies
+/// stay until `prune`.
 pub fn build(installed: &Path, root: &Path, stamp: &str) -> std::io::Result<Built> {
     let dir = root.join(stamp);
     let p = plan(installed, stamp)?;
     let mut repaired = 0;
+    let olds = old_copies(root, stamp, now_secs());
     if copy_needed(root, stamp) {
         let tmp = root.join(format!("{stamp}.tmp"));
         let _ = std::fs::remove_dir_all(&tmp);
@@ -380,18 +508,11 @@ pub fn build(installed: &Path, root: &Path, stamp: &str) -> std::io::Result<Buil
         for (rel, bytes) in &p.files {
             write_planned(&tmp, rel, bytes)?;
         }
+        write_moved(&tmp, stamp, &olds)?;
         std::fs::rename(&tmp, &dir)?;
     } else {
         repaired = repair(&dir, &p)?;
-    }
-    // Older copies: the one a running Jellyfin still serves can't be removed
-    // yet and goes on a later build.
-    if let Ok(rd) = std::fs::read_dir(root) {
-        for e in rd.flatten() {
-            if e.file_name().to_string_lossy() != stamp {
-                let _ = std::fs::remove_dir_all(e.path());
-            }
-        }
+        write_moved(&dir, stamp, &olds)?;
     }
     Ok(Built { dir, notes: p.notes, repaired })
 }
@@ -422,6 +543,15 @@ pub fn bridge_moved(_app: &AppHandle) {
     if folder.is_dir() {
         let _ = std::fs::write(folder.join("bridge.json"), bridge_json(port));
     }
+    // Older copies still served beside it (pages left open over an update) are told too.
+    if let Ok(rd) = std::fs::read_dir(&dir) {
+        for e in rd.flatten() {
+            let p = e.path();
+            if p != folder && p.join("js").is_dir() && e.file_name().to_string_lossy().starts_with("chillarr-") {
+                let _ = std::fs::write(p.join("bridge.json"), bridge_json(port));
+            }
+        }
+    }
 }
 /// The stamp the last notes were logged for, so they're said once per version.
 static NOTED: Mutex<String> = Mutex::new(String::new());
@@ -437,7 +567,13 @@ pub async fn prepare(app: &AppHandle, exe: &Path) -> Option<(PathBuf, String)> {
         walk(&installed, Path::new(""), &mut files).map_err(|e| format!("couldn't read {}: {e}", installed.display()))?;
         let s = stamp(&files);
         std::fs::create_dir_all(&root).map_err(|e| e.to_string())?;
-        build(&installed, &root, &s).map(|b| (b, s)).map_err(|e| e.to_string())
+        let b = build(&installed, &root, &s).map_err(|e| e.to_string())?;
+        // Nothing serves an older copy while Jellyfin is down; otherwise
+        // `check` removes them once Jellyfin is on this one.
+        if !crate::procs::process_running("jellyfin.exe") {
+            prune(&root, &s);
+        }
+        Ok((b, s))
     })
     .await
     .unwrap_or_else(|e| Err(e.to_string()));
@@ -468,6 +604,17 @@ pub async fn prepare(app: &AppHandle, exe: &Path) -> Option<(PathBuf, String)> {
     }
 }
 
+/// Jellyfin serves the copy at `dir`: the older ones beside it go.
+async fn prune_beside(dir: &Path, stamp: &str) {
+    let Some(root) = dir.parent().map(Path::to_path_buf) else { return };
+    let stamp = stamp.to_string();
+    let _ = tokio::task::spawn_blocking(move || {
+        let _g = BUILDING.lock().unwrap_or_else(|e| e.into_inner());
+        prune(&root, &stamp);
+    })
+    .await;
+}
+
 static RESTARTING: AtomicBool = AtomicBool::new(false);
 
 /// True while Chillarr is restarting Jellyfin onto its copy; the guard
@@ -489,6 +636,29 @@ async fn serving(base: &str, stamp: &str) -> Option<bool> {
 /// Anyone watching or listening right now (a restart would cut them off).
 fn playing(sessions: &serde_json::Value) -> bool {
     sessions.as_array().is_some_and(|a| a.iter().any(|s| !s["NowPlayingItem"].is_null()))
+}
+
+/// How long since someone last used Jellyfin before a restart may cut in.
+const QUIET_MINUTES: i64 = 10;
+
+/// Someone (not Chillarr itself) used Jellyfin in the last `QUIET_MINUTES`:
+/// browsing, a watch party being set up, a paused film. On 2026-11-10 the
+/// restart onto 0.18.0 came while a phone was starting a watch party and
+/// threw it out; "nothing playing" alone wasn't enough. `now_utc` is
+/// "YYYY-MM-DDTHH:MM:SS" in UTC, as Jellyfin's LastActivityDate starts.
+fn in_use(sessions: &serde_json::Value, now_utc: &str) -> bool {
+    let Some(cut) = minus_minutes(now_utc, QUIET_MINUTES) else { return true };
+    sessions.as_array().is_some_and(|a| {
+        a.iter().any(|s| {
+            let last = s["LastActivityDate"].as_str().unwrap_or("");
+            s["Client"].as_str() != Some("Chillarr") && last.len() >= 19 && last[..19] > *cut
+        })
+    })
+}
+
+fn minus_minutes(utc: &str, m: i64) -> Option<String> {
+    let t = chrono::NaiveDateTime::parse_from_str(utc.get(..19)?, "%Y-%m-%dT%H:%M:%S").ok()?;
+    Some((t - chrono::Duration::minutes(m)).format("%Y-%m-%dT%H:%M:%S").to_string())
 }
 
 /// Every few minutes: a Jellyfin started before Chillarr had its copy (by an
@@ -520,9 +690,13 @@ async fn check(app: &AppHandle, said_service: &mut bool, tried: &mut String) {
         return; // The guard starts it, already on the copy.
     }
     let Some((dir, stamp)) = prepare(app, &exe).await else { return };
+    let on = serving(&cfg.base_url, &stamp).await;
+    if on == Some(true) {
+        prune_beside(&dir, &stamp).await;
+    }
     // One restart per copy: if Jellyfin still isn't on it afterwards, that
     // was logged, and restarting it every few minutes wouldn't help.
-    if *tried == stamp || serving(&cfg.base_url, &stamp).await != Some(false) {
+    if *tried == stamp || on != Some(false) {
         return;
     }
     // Something else answering on Jellyfin's port isn't ours to restart.
@@ -531,7 +705,7 @@ async fn check(app: &AppHandle, said_service: &mut bool, tried: &mut String) {
     }
     let Some(j) = crate::media::jf_admin(app) else { return };
     match j.get_json("/Sessions").await {
-        Ok(s) if !playing(&s) => {}
+        Ok(s) if !playing(&s) && !in_use(&s, &chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S").to_string()) => {}
         _ => return, // Busy, or unknown: try again later rather than cut someone off.
     }
     *tried = stamp.clone();
@@ -576,6 +750,7 @@ async fn restart(app: &AppHandle, j: &crate::jellyfin::Jf, exe: &Path, dir: &Pat
     // first check said "not showing" while it was still starting, then it was).
     for _ in 0..30 {
         if serving(base, stamp).await == Some(true) {
+            prune_beside(dir, stamp).await;
             return true;
         }
         tokio::time::sleep(Duration::from_secs(3)).await;
@@ -649,6 +824,9 @@ mod tests {
         assert!(copy_needed(root.path(), "st"));
         let b = build(s, root.path(), "st").unwrap();
         assert!(!copy_needed(root.path(), "st"));
+        // ...once Jellyfin is on the new one (prune), not while it may serve the old.
+        assert!(root.path().join("old").exists());
+        prune(root.path(), "st");
         assert!(!root.path().join("old").exists());
         let d = &b.dir;
         assert!(std::fs::read_to_string(d.join("index.html")).unwrap().contains("chillarr.css?v=st"));
@@ -727,6 +905,53 @@ mod tests {
     }
 
     #[test]
+    fn an_old_copys_address_sends_you_to_the_new_one() {
+        let src = tempfile::tempdir().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let (a, b, c) = ("aaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbb", "cccccccccccccccc");
+        std::fs::write(src.path().join("index.html"), "<html><head></head><body></body></html>").unwrap();
+        build(src.path(), root.path(), a).unwrap();
+        // Something else in the folder is never put into a page.
+        std::fs::create_dir_all(root.path().join("x');alert(1)//")).unwrap();
+
+        let db = build(src.path(), root.path(), b).unwrap().dir;
+        let moved = std::fs::read_to_string(db.join(app_folder(a)).join("index.html")).unwrap();
+        assert!(moved.contains(MOVED_MARK) && moved.contains(r#"location.replace("../chillarr-bbbbbbbbbbbbbbbb/"+location.search+location.hash)"#), "{moved}");
+        let legacy = std::fs::read_to_string(db.join(app_folder(a)).join("legacy.html")).unwrap();
+        assert!(legacy.contains(r#""../chillarr-bbbbbbbbbbbbbbbb/legacy.html""#), "{legacy}");
+        assert!(!std::fs::read_dir(&db).unwrap().flatten().any(|e| e.file_name().to_string_lossy().contains("alert")));
+        // The real page of the new copy isn't mistaken for a moved one (shim.js looks for the mark).
+        assert!(!std::fs::read_to_string(db.join(app_folder(b)).join("index.html")).unwrap().contains(MOVED_MARK));
+        // A page still open on the old copy keeps its scripts: only its front page moved.
+        assert!(db.join(app_folder(a)).join("js").join("app.js").is_file(), "the old copy's scripts are still served");
+        let since_a = moved_since(&moved).unwrap();
+        prune(root.path(), b);
+
+        // Two updates later the first address still works, with its first date.
+        let dc = build(src.path(), root.path(), c).unwrap().dir;
+        prune(root.path(), c);
+        for old in [a, b] {
+            let t = std::fs::read_to_string(dc.join(app_folder(old)).join("index.html")).unwrap();
+            assert!(t.contains("../chillarr-cccccccccccccccc/"), "{t}");
+        }
+        assert_eq!(moved_since(&std::fs::read_to_string(dc.join(app_folder(a)).join("index.html")).unwrap()), Some(since_a));
+        assert!(dc.join(app_folder(c)).join("web").join("shim.js").is_file());
+
+        // A month on, an address is let go.
+        let old = moved_page(&app_folder(c), "", since_a - MOVED_DAYS * 86_400);
+        std::fs::write(dc.join(app_folder(a)).join("index.html"), old).unwrap();
+        let olds = old_copies(root.path(), "dddddddddddddddd", now_secs());
+        assert!(olds.iter().any(|(s, _)| s == c) && olds.iter().any(|(s, _)| s == b));
+        assert!(!olds.iter().any(|(s, _)| s == a), "{olds:?}");
+
+        // Past KEEP_FILES_DAYS an old copy keeps only its moved pages.
+        let olds = vec![(b.to_string(), now_secs() - KEEP_FILES_DAYS * 86_400 - 1)];
+        write_moved(&dc, c, &olds).unwrap();
+        assert!(!dc.join(app_folder(b)).join("js").exists());
+        assert!(dc.join(app_folder(b)).join("index.html").is_file());
+    }
+
+    #[test]
     fn loader_goes_in_once_and_cant_close_its_own_tag() {
         let Patch::Applied(t) = inject_loader("<html><head></head></html>", "go('__CHILLARR_DIR__/');x='</script>'", "chillarr-ab") else { panic!() };
         assert!(t.starts_with(r"<html><head><script data-chillarr-loader>go('chillarr-ab/');x='<\/script>'</script></head>"), "{t}");
@@ -748,6 +973,16 @@ mod tests {
     fn a_session_with_something_playing_is_busy() {
         assert!(!playing(&serde_json::json!([{ "Id": "a" }, { "Id": "b", "NowPlayingItem": null }])));
         assert!(playing(&serde_json::json!([{ "Id": "a" }, { "Id": "b", "NowPlayingItem": { "Id": "x" } }])));
+    }
+
+    #[test]
+    fn someone_using_jellyfin_lately_holds_the_restart() {
+        let now = "2026-11-10T09:57:00";
+        let s = |client: &str, last: &str| serde_json::json!([{ "Client": client, "LastActivityDate": last }]);
+        assert!(in_use(&s("Jellyfin iOS", "2026-11-10T09:52:00.1234567Z"), now), "5 min ago: in use");
+        assert!(!in_use(&s("Jellyfin iOS", "2026-11-10T09:40:00Z"), now), "17 min ago: quiet");
+        assert!(!in_use(&s("Chillarr", "2026-11-10T09:56:59Z"), now), "Chillarr's own calls don't count");
+        assert!(in_use(&s("Jellyfin Web", "2026-11-10T00:05:00Z"), "2026-11-10T00:10:00"), "across midnight");
     }
 
     /// Builds the copy from the real install into $JFWEB_OUT, for looking at

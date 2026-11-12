@@ -11,7 +11,7 @@
 // chip and old links still open them as a page of their own (renderFilter).
 import { el, getPref, icon, ICON, invoke, setPref } from "./api.js";
 import { currentSeq, infiniteGrid, stopBrowse, swapIn } from "./browse.js";
-import { adultFields, chipKit, pornOn, clearButton, filtersButton, moreButton, orderSelect } from "./filterpanel.js";
+import { adultDefault, adultFields, chipKit, isKids, pornOn, clearButton, filtersButton, moreButton, orderSelect } from "./filterpanel.js";
 import { goBack } from "./place.js";
 
 const KINDS = [["movie", "Movies"], ["series", "Series"], ["anime", "Anime"]];
@@ -57,7 +57,7 @@ const studiosOf = (kind) => (kind === "anime" ? [] : studioLists[kind] || invoke
 function trimmed(f) {
   const out = {};
   for (const [k, v] of Object.entries(f)) {
-    if (k === "kind" || v === null || v === false || (Array.isArray(v) && !v.length) || (k === "sort" && v === "popular") || ((k === "adult" || k === "porn") && v === "hide")) continue;
+    if (k === "kind" || v === null || v === false || (Array.isArray(v) && !v.length) || (k === "sort" && v === "popular") || (k === "adult" && v === adultDefault()) || (k === "porn" && v === "hide")) continue;
     out[k] = v;
   }
   return out;
@@ -69,7 +69,7 @@ function filterCount(f) {
   return f.genres.length + f.not_genres.length + f.tags.length + f.not_tags.length + f.languages.length + f.not_languages.length
     + !!f.status + !!f.min_rating + !!(f.year_from || f.year_to) + !!(f.runtime_min || f.runtime_max) + !!(f.episodes_min || f.episodes_max)
     + f.formats.length + !!f.season + f.certs.length + f.studios.length + f.show_types.length + f.not_show_types.length + f.countries.length
-    + !!f.owned + (f.adult && f.adult !== "hide" ? 1 : 0) + (pornOn(f) ? 1 : 0);
+    + !!f.owned + (f.kind !== "series" && !isKids() && f.adult && f.adult !== adultDefault() ? 1 : 0) + (pornOn(f) ? 1 : 0);
 }
 
 // The pending reload of the filters on screen; one set at a time.
@@ -79,13 +79,14 @@ let reloadTimer = null;
 function startFilter(kind, start) {
   const named = start && Object.keys(start).length;
   const saved = (() => { try { return JSON.parse(getPref(prefOf(kind)) || "{}"); } catch (e) { return {}; } })();
-  const f = { ...BLANK, ...(named ? start : saved), kind };
+  const f = { ...BLANK, adult: adultDefault(), ...(named ? start : saved), kind };
   // Links from before genres could be combined carry one "genre".
   if (f.genre) { f.genres = [...new Set([...(f.genres || []), f.genre])]; delete f.genre; }
   // 18+: anime (AniList) and movies (R and NC-17). TVmaze has no adult flag.
   // Porn only for anime: the movie catalog has no porn flag.
   if (kind === "series") f.adult = "hide";
   if (kind !== "anime") f.porn = "hide";
+  if (isKids()) { f.adult = "hide"; f.porn = "hide"; }
   return { f, named };
 }
 
@@ -206,17 +207,17 @@ function buildFilter(kind, f, genres, studios, { inline = false, onChange = () =
       }
       parts.push(row(field("Years", years()),
         field("Only what I have", el("label", { class: "fl-inline fl-owned" }, owned, el("small", { text: "Just the titles in your library" })))));
-      if (!series) {
-        parts.push(...notOwned(adultFields(f, kit, anime, anime ? null : "R and NC-17 films. Off until you pick Included or Only 18+."), "18+"));
+      if (!series && !isKids()) {
+        parts.push(...notOwned(adultFields(f, kit, anime, anime ? null : "R and NC-17 films."), "18+"));
       }
     }
-    if (n) parts.push(clearButton(() => change((x) => Object.assign(x, { ...BLANK, sort: x.sort }), { now: true })));
+    if (n) parts.push(clearButton(() => change((x) => Object.assign(x, { ...BLANK, adult: x.kind === "series" || isKids() ? "hide" : adultDefault(), sort: x.sort }), { now: true })));
     panel.replaceChildren(...parts.filter(Boolean));
   }
 
   drawPanel();
   /** Back to no filters and the usual order. */
-  const reset = () => change((x) => Object.assign(x, { ...BLANK, kind: x.kind }), { now: true });
+  const reset = () => change((x) => Object.assign(x, { ...BLANK, adult: x.kind === "series" || isKids() ? "hide" : adultDefault(), kind: x.kind }), { now: true });
   return { toggle, order, panel, results, load, reset, count: () => (loaded ? loaded.count : 0) };
 }
 

@@ -10,7 +10,7 @@
 //   Free: everyone reads at their own pace; "Jump to the host" catches up.
 // The host can also lock the party, ask for a password, and remove someone.
 // The PC checks all of it; this page only shows it and asks.
-import { ask, el, getPref, icon, invoke, listen, setPref, toast } from "./api.js";
+import { ask, el, getPref, icon, invoke, listen, personKey, setPref, toast } from "./api.js";
 import { openReader } from "./reader.js";
 
 const PEOPLE = "M16 19v-1a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v1M12.5 7a3 3 0 1 1-6 0 3 3 0 0 1 6 0M21 19v-1a4 4 0 0 0-3-3.9M15.5 4.1a3 3 0 0 1 0 5.8";
@@ -124,6 +124,7 @@ async function poll() {
 function ended(e) {
   if (!party) return;
   party = null;
+  chatReset();
   target = null;
   clearTimeout(pollT);
   paint();
@@ -180,6 +181,7 @@ async function leave() {
   party = null;
   target = null;
   clearTimeout(pollT);
+  chatReset();
   paint();
   paintNote();
   close();
@@ -214,6 +216,7 @@ function showNote(text) {
 }
 /** The note stays up while following in the reader (unless hidden); otherwise it goes. */
 function paintNote() {
+  paintChat();
   const show = following() && hooks && !noteOff();
   if (!note) { if (!show) return; makeNote(); }
   noteText.textContent = "Following the host.";
@@ -347,3 +350,113 @@ function paint() {
   const b = el("button", { class: "icon-btn rp-btn rp-top", id: "read-together", "aria-label": "Read together", title: "Read together", onclick: () => panel() }, icon(PEOPLE));
   watch.after(b);
 })();
+
+/* ---------- Chat (#76) ----------
+   Like Watch together's: names, 300 characters, the same rate limit, and a
+   switch for messages popping up while you read. On a wide screen it sits on
+   the right and the page gets narrower, so it never covers what you read; on
+   a phone it's a small sheet at the bottom that shrinks to the chat button
+   with one tap, and never blocks scrolling or turning pages. */
+const CHAT_MAX = 300;
+const FLOAT_MS = 6000;
+const QUIET_PREF = "chillarr-readchat-float";
+const chatQuiet = () => getPref(QUIET_PREF) === "0";
+const said = [];
+let unread = 0;
+let chatOpen = false;
+const CHAT = "M4 5h16v11H9l-5 4z";
+const rpBadge = el("span", { class: "chat-badge", hidden: true });
+const rpBtn = el("button", { class: "rp-chat-btn", "aria-label": "Party chat", title: "Party chat", hidden: true, onclick: () => toggleReadChat() }, icon(CHAT), rpBadge);
+const rpList = el("ol", { class: "chat-list", "aria-live": "polite" });
+const rpInput = el("input", { type: "text", class: "chat-input", maxlength: String(CHAT_MAX), placeholder: "Say something", "aria-label": "Message to the reading party", autocomplete: "off" });
+const rpSend = el("button", { class: "btn small primary", type: "submit" }, "Send");
+const rpForm = el("form", { class: "chat-form" }, rpInput, rpSend);
+const rpQuietSw = el("input", { type: "checkbox", class: "switch", "aria-label": "Show messages while reading" });
+const rpPanel = el("aside", { class: "rp-chat", role: "dialog", "aria-label": "Party chat", hidden: true },
+  el("div", { class: "chat-head" }, el("b", { text: "Party chat" }), el("button", { class: "link-btn", type: "button", onclick: () => toggleReadChat(false) }, "Hide")),
+  rpList, rpForm,
+  el("label", { class: "chat-quiet" }, rpQuietSw, el("span", { text: "Show messages while reading" })));
+const rpFloat = el("ol", { class: "chat-float rp-float", "aria-hidden": "true" });
+document.body.append(rpBtn, rpPanel, rpFloat);
+
+rpQuietSw.addEventListener("change", () => { setPref(QUIET_PREF, rpQuietSw.checked ? "1" : "0"); if (!rpQuietSw.checked) rpFloat.replaceChildren(); });
+// Typing is for the message, not the reader's keys (arrows turn pages).
+for (const n of [rpInput, rpQuietSw]) n.addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Escape") { e.preventDefault(); toggleReadChat(false); } });
+rpPanel.addEventListener("click", (e) => e.stopPropagation());
+
+const timeOf = (at) => new Date(at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+const chatLine = (m) => el("li", { class: m.from_id === personKey() ? "chat-line mine" : "chat-line" },
+  el("b", { text: m.from }), el("span", { text: m.text }), el("time", { text: timeOf(m.at) }));
+
+function drawRpBadge() {
+  rpBadge.hidden = !unread;
+  rpBadge.textContent = unread > 9 ? "9+" : String(unread);
+}
+
+/** The chat shows only in a party, with the reader open. */
+function paintChat() {
+  const can = !!(party && hooks);
+  rpBtn.hidden = !can || chatOpen;
+  rpPanel.hidden = !can || !chatOpen;
+  rpFloat.hidden = !can;
+  document.body.classList.toggle("rp-chat-open", can && chatOpen);
+}
+
+/** Opens or shuts the chat (no argument: the other way). */
+export function toggleReadChat(on = !chatOpen) {
+  chatOpen = !!on && !!party;
+  if (chatOpen) {
+    rpQuietSw.checked = !chatQuiet();
+    unread = 0;
+    drawRpBadge();
+    rpFloat.replaceChildren();
+  } else if (rpPanel.contains(document.activeElement)) document.activeElement.blur();
+  paintChat();
+  // The reader got narrower or wider: it lays its pages out again.
+  requestAnimationFrame(() => window.dispatchEvent(new Event("resize")));
+  if (chatOpen) { rpList.scrollTop = rpList.scrollHeight; if (matchMedia("(min-width: 761px)").matches) rpInput.focus(); }
+}
+
+function chatReset() {
+  said.length = 0;
+  unread = 0;
+  rpList.replaceChildren();
+  rpFloat.replaceChildren();
+  chatOpen = false;
+  drawRpBadge();
+  paintChat();
+}
+
+listen("readparty-chat", (e) => {
+  const m = e.payload;
+  if (!m || !party || m.code !== party.code || said.some((x) => x.id === m.id)) return;
+  said.push(m);
+  if (said.length > 200) said.shift();
+  if (rpList.children.length > 400) rpList.firstChild.remove();
+  const near = rpList.scrollHeight - rpList.scrollTop - rpList.clientHeight < 40;
+  rpList.append(chatLine(m));
+  const mine = m.from_id === personKey();
+  if (near || mine) rpList.scrollTop = rpList.scrollHeight;
+  if (chatOpen || mine) return;
+  unread++;
+  drawRpBadge();
+  if (chatQuiet() || !hooks) return;
+  // While it's shut: the message floats up beside the page, then fades.
+  const f = chatLine(m);
+  rpFloat.append(f);
+  while (rpFloat.children.length > 3) rpFloat.firstChild.remove();
+  setTimeout(() => { f.classList.add("out"); setTimeout(() => f.remove(), 600); }, FLOAT_MS);
+});
+
+rpForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const text = rpInput.value.trim();
+  if (!text || !party) return;
+  rpSend.disabled = true;
+  try {
+    await invoke("readparty_say", { code: party.code, text });
+    rpInput.value = "";
+  } catch (err) { toast(String(err), true); }
+  rpSend.disabled = false;
+  rpInput.focus();
+});

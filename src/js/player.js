@@ -1,6 +1,7 @@
 // The in-app player. Jellyfin decides how to send each file: as-is when the
 // app can play it, or converted on the fly into an HLS stream (played with hls.js).
 import { $, ask, AUDIO_LANGS, el, fmtTime, getPref, icon, invoke, listen, screenMode, setPref, store, toast, windowFull } from "./api.js";
+import { chooseAudio, isEnglish, speaks } from "./audiopick.js";
 import { SubRenderer, parseAss, parseVtt, setSubScale, subScale } from "./subrender.js";
 import { buffering, caughtUp, inGroup, leftPlayer, loadedHere, openTogether, requestPause, requestPlay, requestSeek, startedHere, toggleChat } from "./syncplay.js";
 
@@ -9,6 +10,25 @@ const box = $("#player");
 // Audio, playback moves to a fresh element (freshVideo) without it.
 let video = $("#video");
 let hls = null;
+/* hls.js is 400 KB of script: it used to load (and run) before the first page
+   could draw, which on a phone over a weak line was seconds of nothing. Now
+   it comes when a title opens or starts, while the server is still being
+   asked how to play it. */
+let hlsLoading = null;
+export function loadHls() {
+  if (window.Hls) return Promise.resolve();
+  if (!hlsLoading) {
+    hlsLoading = new Promise((done) => {
+      const s = document.createElement("script");
+      s.src = "vendor/hls.min.js";
+      s.onload = () => done();
+      // Not there (offline): the browser plays HLS itself where it can; a later title tries again.
+      s.onerror = () => { hlsLoading = null; s.remove(); done(); };
+      document.head.appendChild(s);
+    });
+  }
+  return hlsLoading;
+}
 let session = null; // { tile, info, playlist, watchKey }
 let reportTimer = null;
 let idleTimer = null;
@@ -204,7 +224,8 @@ let padTimer = null, osdTimer = null, mouseAt = null;
 
 function body(extra = {}) {
   return {
-    ItemId: session.tile.jf_id,
+    // A stale Watch now tile plays its library copy (media::play): reports go there.
+    ItemId: session.info.itemId || session.tile.jf_id,
     MediaSourceId: session.info.mediaSourceId,
     PlaySessionId: session.info.playSessionId,
     PlayMethod: session.info.playMethod,
@@ -246,7 +267,6 @@ function subPref() {
 function saveSubPref(p) {
   setPref("chillarr-subs", JSON.stringify(p));
 }
-const isEnglish = (lang) => !lang || /^en/i.test(lang);
 
 /** Which subtitle track to start with: the remembered language, or English when the audio isn't. */
 function startingSub(info, preferExternal, audio = null) {
@@ -259,7 +279,7 @@ function startingSub(info, preferExternal, audio = null) {
   if (pref?.off) return null;
   const playing = info.audio.find((a) => a.index === audio) || info.audio.find((a) => a.default) || info.audio[0];
   // In the dub you asked for, nothing needs reading.
-  const inDub = store.settings?.audio_pref === "dub" && dubMatcher().test(playing?.lang || "");
+  const inDub = store.settings?.audio_pref === "dub" && !!playing && speaks(playing, store.settings?.audio_lang || "eng");
   const lang = pref?.lang || (isEnglish(playing?.lang) || inDub ? null : "eng");
   if (!lang) return null;
   const same = subs.filter((s) => s.lang === lang && s.url);
@@ -279,6 +299,7 @@ const subCache = new Map();
 /** Shows one text track (by Jellyfin index), or none. */
 async function showSub(index) {
   if (session) session.sub = index;
+  const s0 = session;
   padRefresh();
   const s = session?.info.subtitles.find((x) => x.index === index);
   if (!s || !s.url) { subs.clear(); return; }
@@ -292,8 +313,9 @@ async function showSub(index) {
       subCache.set(url, doc);
     } catch (e) { toast("Couldn't load those subtitles.", true); return; }
   }
-  // Another track (or nothing) was picked while this one loaded.
-  if (session?.sub !== index) return;
+  // Another track (or nothing) was picked while this one loaded, or another
+  // episode started (most share track numbers, so the index alone said yes).
+  if (session !== s0 || session?.sub !== index) return;
   subs.set(doc);
   const kept = shiftOf(s);
   if (kept) subs.setShift(kept.ratio, kept.offset);
@@ -400,31 +422,11 @@ function saveAudioPref(tile, a) {
   const show = showOf(tile);
   if (show) setPref("chillarr-audio", JSON.stringify({ show, lang: a.lang || null }));
 }
-/** The track in the language last picked for this show, when the file starts in another. */
-function carriedAudio(tile, info) {
+/** The language picked by hand for this show, if any. */
+function handLang(tile) {
   let p = null;
   try { p = JSON.parse(getPref("chillarr-audio") || "null"); } catch (e) { return null; }
-  if (!p?.lang || p.show !== showOf(tile)) return null;
-  const def = info.audio.find((a) => a.default) || info.audio[0];
-  if (!def || def.lang === p.lang) return null;
-  return info.audio.find((a) => a.lang === p.lang)?.index ?? null;
-}
-
-const dubMatcher = () => (AUDIO_LANGS.find(([code]) => code === (store.settings?.audio_lang || "eng")) || AUDIO_LANGS[0])[2];
-
-/** The track Settings' sub or dub choice asks for, when the file starts in the other one. */
-function preferredAudio(info) {
-  const def = info.audio.find((a) => a.default) || info.audio[0];
-  if (!def || info.audio.length < 2) return null;
-  if (store.settings?.audio_pref === "dub") {
-    const says = dubMatcher();
-    if (says.test(def.lang || "")) return null;
-    return info.audio.find((a) => says.test(a.lang || ""))?.index ?? null;
-  }
-  // Original voices: only languages films are rarely dubbed into, so an English
-  // film with an extra Hindi or French track stays in English.
-  if (!isEnglish(def.lang)) return null;
-  return info.audio.find((a) => /^(ja|jp|ko|zh|ch[is])/i.test(a.lang || ""))?.index ?? null;
+  return p?.lang && p.show === showOf(tile) ? p.lang : null;
 }
 
 function pickAudio(a) {
@@ -568,6 +570,7 @@ async function load(tile, playlist, startAt, opts = {}) {
   const seq = ++loadSeq;
   wakeSound();
   $("#p-spinner").hidden = false;
+  const hlsReady = loadHls(); // alongside the ask below, not after it
   let info;
   try {
     // `track`: Jellyfin's numbers just moved (a night copy arrived), so the old one means nothing.
@@ -585,8 +588,13 @@ async function load(tile, playlist, startAt, opts = {}) {
   if (seq !== loadSeq || box.hidden) return;
   // A new episode of a show you picked another language for: asked again in it.
   if (audio == null && session?.tile.jf_id !== tile.jf_id) {
-    const carried = carriedAudio(tile, info) ?? preferredAudio(info);
-    if (carried != null) return load(tile, playlist, startAt, { ...opts, audio: carried });
+    const pick = chooseAudio(info.audio, store.settings, handLang(tile));
+    if (pick.missing) toast(`This copy has no ${dubName()} voices.`);
+    if (pick.index != null) return load(tile, playlist, startAt, { ...opts, audio: pick.index });
+  }
+  if (info.hls && !window.Hls) {
+    await hlsReady;
+    if (seq !== loadSeq || box.hidden) return;
   }
   // The browser playing HLS itself (iPhone): its sound can't go through Web Audio.
   nativeHls = playsNative(info);
@@ -970,7 +978,7 @@ seek.addEventListener("mousemove", (e) => {
   const half = tipPicture(at) ? 100 : 30;
   seekTip.style.left = `${Math.max(half, Math.min(r.width - half, x))}px`;
   seekTip.hidden = false;
-});
+}, { passive: true });
 seek.addEventListener("mouseleave", () => (seekTip.hidden = true));
 
 /** The style that shows Jellyfin's preview picture for time `at` (trickplay.rs) `shown` px wide, or null when it has none. */
@@ -1249,7 +1257,7 @@ window.addEventListener("mousemove", (e) => {
     exitPad();
   }
   poke();
-});
+}, { passive: true });
 
 window.addEventListener("keydown", (e) => {
   if (box.hidden) return;
@@ -1966,6 +1974,14 @@ export async function watchNow(tile, opts = {}) {
       return;
     }
   }
+  // Downloaded and imported already: the backend handed it to the library, and that copy plays.
+  if (!isWatchNow(got)) {
+    if (seq !== loadSeq) return;
+    wn = null;
+    close(false);
+    await play({ ...got, chose: true, resume_seconds: opts.start ?? got.resume_seconds }, null, opts.where);
+    return;
+  }
   if (seq !== loadSeq) {
     // Closed while it got ready: nobody is watching it after all. Unless the
     // same title was pressed again meanwhile: that newer session is watching it.
@@ -2078,7 +2094,7 @@ function dropEarly(keep = null) {
   if (!e || e.key === keep) return;
   e.run.then((got) => {
     // It failed (nothing to undo), or it's being watched after all.
-    if (!got || wn?.key === got.key) return;
+    if (!got || !isWatchNow(got) || wn?.key === got.key) return;
     invoke("watchnow_remove", { key: got.key }).catch(() => {});
   });
 }

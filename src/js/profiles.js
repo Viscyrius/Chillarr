@@ -3,8 +3,9 @@
 // Jellyfin account of its own (profiles.rs), so its history and My List
 // follow it to Jellyfin's TV and phone apps. In Jellyfin's web pages
 // (WEB) it's pick and add only, and a pick signs the browser in as them.
+import { setKids } from "./filterpanel.js";
 import { refreshHidden } from "./hidden.js";
-import { $, ask, el, icon, invoke, setPerson, toast, WEB } from "./api.js";
+import { $, ask, el, icon, invoke, setMainProfile, setPerson, toast, WEB } from "./api.js";
 
 const COLORS = ["#e50914", "#f5a623", "#2ecc71", "#1abc9c", "#3498db", "#9b59b6", "#e84393", "#95a5a6"];
 const LOCK = "M7 11V8a5 5 0 0 1 10 0v3M6 11h12v9H6z";
@@ -23,6 +24,9 @@ async function load() {
   list = await invoke("profiles_list", WEB ? { trust: window.__CHILLARR_JF__.trust() } : {}).catch(() => []);
   // On the web it's whoever is signed in (app.js), profile or not.
   if (!WEB) setPerson(list.find((p) => p.active)?.id);
+  setKids(list.find((p) => p.active)?.kids);
+  // No profiles yet (Jellyfin not set up): the PC's owner is the one here.
+  if (!WEB) setMainProfile(list.length ? !!list.find((p) => p.active)?.owner : true);
   refreshHidden();
   drawTopbar();
   return list;
@@ -108,11 +112,12 @@ function openPicker(manage = false) {
   const tiles = list.map((p) => {
     const b = el("button", { class: "pf-tile", style: `--c:${p.color}` },
       el("span", { class: "pf-face" }, avatar(p, "big"), manage ? el("span", { class: "pf-edit" }, icon(PENCIL)) : null),
-      el("span", { class: "pf-name" }, p.name, (p.has_pin || p.needs_login) && !manage ? el("span", { class: "pf-lock" }, icon(LOCK)) : null));
+      el("span", { class: "pf-name" }, p.name, (p.has_pin || p.needs_login) && !manage ? el("span", { class: "pf-lock" }, icon(LOCK)) : null),
+      p.kids ? el("span", { class: "pf-kids-tag", text: "Kids" }) : null);
     b.addEventListener("click", () => (manage ? edit(p) : choose(p)));
     return b;
   });
-  if (list.length < 8) {
+  if (list.length < 12) { // profiles.rs MAX_PROFILES
     tiles.push(el("button", { class: "pf-tile pf-add", onclick: () => openEditor(null) },
       el("span", { class: "pf-face" }, el("span", { class: "pf-avatar big plus" }, "+")), el("span", { class: "pf-name" }, "Add profile")));
   }
@@ -122,6 +127,7 @@ function openPicker(manage = false) {
     el("div", { class: "pf-foot" },
       WEB ? el("button", { class: "btn ghost", onclick: () => { closePicker(); location.hash = "settings/account"; } }, "Account")
         : el("button", { class: "btn ghost", onclick: () => openPicker(!manage) }, manage ? "Done" : "Manage profiles"),
+      manage && ownerHere() && list.length > 1 ? el("button", { class: "btn ghost", onclick: openActivity }, "Activity") : null,
       canClose && !manage ? el("button", { class: "btn ghost", onclick: closePicker }, "Back") : null)));
   root.hidden = false;
   root.classList.remove("out");
@@ -154,10 +160,14 @@ function setBehind(off) {
   }
 }
 
+/** The owner at this PC, watching as the main profile: they run every profile
+ *  without its PIN (profiles.rs owner_at_pc checks the same, and has the last word). */
+const ownerHere = () => !WEB && !root.dataset.startup && !!list.find((x) => x.active)?.owner;
+
 async function choose(p, pin = null, login = null) {
   if (WEB) return chooseWeb(p, pin);
   if (p.needs_login && login == null) { loginPad(p); return; }
-  if (p.has_pin && pin == null) { pinPad(p); return; }
+  if (p.has_pin && pin == null && !ownerHere()) { pinPad(p); return; }
   try {
     await invoke("profiles_switch", { id: p.id, pin, login });
   } catch (e) {
@@ -237,11 +247,16 @@ function loginPad(p, error = "") {
 function pinPad(p, error = "", submit = (pin) => choose(p, pin), back = () => openPicker(), forgot = null) {
   const boxes = Array.from({ length: 4 }, () => el("input", { class: "pf-pin-box", type: "password", inputmode: "numeric", maxlength: "1", autocomplete: "off", "aria-label": "PIN digit" }));
   const value = () => boxes.map((b) => b.value).join("");
+  // Sent once per pad: an iPhone keyboard fires another input after the 4th
+  // digit (predictions, autofill), and a second switch made Jellyfin end the
+  // first sign-in while the page kept it, so the phone landed on Jellyfin's
+  // sign-in (2026-11-10, Riyadh). A wrong PIN draws a new pad to type again.
+  let sent = false;
   boxes.forEach((b, i) => {
     b.addEventListener("input", () => {
       b.value = b.value.replace(/\D/g, "").slice(-1);
       if (b.value && i < 3) boxes[i + 1].focus();
-      if (value().length === 4) submit(value());
+      if (value().length === 4 && !sent) { sent = true; submit(value()); }
     });
     b.addEventListener("keydown", (e) => {
       if (e.key === "Backspace" && !b.value && i > 0) boxes[i - 1].focus();
@@ -259,11 +274,69 @@ function pinPad(p, error = "", submit = (pin) => choose(p, pin), back = () => op
   boxes[0].focus();
 }
 
+/* ---------- Activity (the main profile, in this PC's window) ----------
+   When each profile was last on, what it's playing now and what it watched
+   lately, read from Jellyfin, so Jellyfin's own TV and phone apps count too.
+   A profile nobody has used in a month is marked, with Remove right there. */
+const INACTIVE_DAYS = 30;
+
+function ago(iso) {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t) || t < Date.UTC(2001, 0, 1)) return null; // Jellyfin's "never" is year 1
+  const m = Math.max(0, Math.round((Date.now() - t) / 60000));
+  if (m < 2) return "just now";
+  if (m < 60) return `${m} minutes ago`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h} hour${h === 1 ? "" : "s"} ago`;
+  const d = Math.round(h / 24);
+  if (d < 60) return `${d} day${d === 1 ? "" : "s"} ago`;
+  const mo = Math.round(d / 30);
+  return `${mo} month${mo === 1 ? "" : "s"} ago`;
+}
+
+const daysSince = (iso) => { const t = Date.parse(iso || ""); return Number.isFinite(t) && t > Date.UTC(2001, 0, 1) ? (Date.now() - t) / 86400000 : Infinity; };
+
+async function openActivity() {
+  const body = el("div", { class: "pf-act-list" }, el("p", { class: "pf-sub", text: "Asking Jellyfin..." }));
+  root.replaceChildren(el("div", { class: "pf-inner pf-act" },
+    el("h1", { text: "Activity" }),
+    el("p", { class: "pf-sub", text: "When each profile was last on, on any device, and what they watched or read. Only you see this." }),
+    body,
+    el("div", { class: "pf-foot" }, el("button", { class: "btn ghost", onclick: () => openPicker(true) }, "Back"))));
+  let all;
+  try { all = await invoke("profiles_activity"); } catch (e) { body.replaceChildren(el("p", { class: "err", text: String(e) })); return; }
+  body.replaceChildren(...all.map((a) => {
+    const p = list.find((x) => x.id === a.id) || a;
+    const readingNow = a.last_read && (Date.now() - Date.parse(a.last_read.at)) < 5 * 60000;
+    const last = a.now.length ? "Watching now" : readingNow ? "Reading now" : ago(a.last_active);
+    const idle = !a.owner && !a.now.length && daysSince(a.last_active) >= INACTIVE_DAYS;
+    const remove = a.owner ? null : el("button", { class: "btn ghost small danger", onclick: async () => {
+      const ok = await ask(`Remove ${a.name}?`, "Their Jellyfin account goes, and with it every way they had in: their sign-ins on phones and TVs, the phone remote, what they watched and their My List. Downloaded movies and shows stay.", [], "Remove");
+      if (!ok) return;
+      try { await invoke("profiles_remove", { id: a.id }); await load(); window.dispatchEvent(new Event("chillarr:refresh")); toast(`Removed ${a.name}.`); openActivity(); } catch (e) { toast(String(e), true); }
+    } }, "Remove");
+    return el("div", { class: idle ? "pf-act-row idle" : "pf-act-row" },
+      avatar(p, "small"),
+      el("div", { class: "pf-act-main" },
+        el("div", { class: "pf-act-head" },
+          el("strong", { text: a.name }),
+          a.owner ? el("span", { class: "pf-act-tag", text: "You" }) : null,
+          a.kids ? el("span", { class: "pf-act-tag", text: "Kids" }) : null,
+          idle ? el("span", { class: "pf-act-tag warn", text: "Inactive" }) : null),
+        el("small", { class: "pf-act-when", text: last ? (a.now.length || readingNow ? last : `Last on ${last}`) : "Never signed in" }),
+        a.last_read ? el("small", { class: "pf-act-when", text: `Read ${a.last_read.title} ${readingNow ? "now" : ago(a.last_read.at) || ""}` }) : null,
+        a.now.length ? el("ul", { class: "pf-act-now" }, a.now.map((n) => el("li", { text: `${n.paused ? "Paused" : "Playing"}: ${n.title}, on ${n.device}` }))) : null,
+        a.recent.length ? el("ul", { class: "pf-act-recent" }, a.recent.map((r) => el("li", {}, el("span", { text: r.title }), el("small", { text: `${r.done ? "Watched" : "Started"} ${ago(r.at) || ""}` })))) : el("small", { class: "pf-act-none", text: "Nothing watched yet." })),
+      remove);
+  }));
+}
+
 /* ---------- Manage ---------- */
 // A profile with a PIN opens for editing only with that PIN (the backend
 // checks it again on every change).
 function edit(p) {
-  if (!p.has_pin) { openEditor(p); return; }
+  if (!p.has_pin || ownerHere()) { openEditor(p); return; }
   const back = () => openPicker(true);
   const forgot = p.owner ? null : () => forgotPin(p);
   const submit = async (pin) => {
@@ -318,6 +391,13 @@ function openEditor(p, currentPin = null) {
   // Not the owner: a password lets this person sign in to Jellyfin's own apps
   // on their devices, and join a watch party from there.
   const jfPass = p?.owner || WEB ? null : el("input", { type: "password", autocomplete: "new-password", placeholder: "Password for Jellyfin apps (optional)", "aria-label": "Password for Jellyfin apps" });
+  // Kids: titles rated up to PG and no 18+. Never the main profile; a kids'
+  // profile on the web only makes kids' profiles (the PC holds to both).
+  const me = list.find((x) => x.active);
+  const kidsLocked = isNew && !!me?.kids;
+  const kids = p?.owner ? null : el("input", { type: "checkbox", class: "switch", "aria-label": "Kids profile", checked: kidsLocked || !!p?.kids, disabled: kidsLocked });
+  const kidsRow = kids ? el("label", { class: "pf-kids" }, kids,
+    el("span", {}, el("strong", { text: "Kids profile" }), el("small", { text: "Only titles rated up to PG, and no 18+." }))) : null;
   const err = el("p", { class: "err" });
   const save = el("button", { class: "btn primary" }, isNew ? "Add profile" : "Save");
   save.addEventListener("click", async () => {
@@ -329,7 +409,7 @@ function openEditor(p, currentPin = null) {
     try {
       if (WEB) {
         // Straight in as them: they just typed the PIN, so it isn't asked again.
-        const made = await invoke("profiles_add", { name: name.value, color, pin: pin.value });
+        const made = await invoke("profiles_add", { name: name.value, color, pin: pin.value, kids: !!kids?.checked });
         save.textContent = "Switching...";
         // It's made either way: a failed switch goes back to the picker, not to a second Add.
         try { await window.__CHILLARR_JF__.switchProfile(made.id, pin.value || null, null); }
@@ -337,8 +417,8 @@ function openEditor(p, currentPin = null) {
         return;
       }
       let id = p?.id;
-      if (isNew) id = (await invoke("profiles_add", { name: name.value, color, pin: pin.value || null })).id;
-      else await invoke("profiles_update", { id: p.id, name: name.value !== p.name ? name.value : null, color, pin: pin.value || null, currentPin });
+      if (isNew) id = (await invoke("profiles_add", { name: name.value, color, pin: pin.value || null, kids: !!kids?.checked })).id;
+      else await invoke("profiles_update", { id: p.id, name: name.value !== p.name ? name.value : null, color, pin: pin.value || null, currentPin, kids: kids && kids.checked !== !!p.kids ? kids.checked : null });
       if (jfPass?.value) {
         // A PIN just set or changed is the one it asks for now.
         const listed = await invoke("profiles_set_password", { id, password: jfPass.value, currentPin: pin.value || currentPin });
@@ -356,6 +436,14 @@ function openEditor(p, currentPin = null) {
       try { await invoke("profiles_update", { id: p.id, pin: "", currentPin }); await load(); toast(`${p.name} has no PIN now.`); openPicker(true); } catch (e) { err.textContent = String(e); }
     } }, "Remove PIN"));
   }
+  // The PC is the admin panel: it can let a profile make a new hidden password (its list stays).
+  if (p && !WEB && ownerHere()) {
+    extras.push(el("button", { class: "btn ghost small", onclick: async () => {
+      const ok = await ask(`Reset ${p.name}'s hidden password?`, `What they hid stays hidden. Next time they hide something or open the Hidden tab, they make a new password.`, [], "Reset");
+      if (!ok) return;
+      try { await invoke("hidden_reset", { profile: p.id }); toast(`${p.name} can make a new hidden password now.`); } catch (e) { err.textContent = String(e); }
+    } }, "Reset hidden password"));
+  }
   if (p && !p.owner) {
     extras.push(el("button", { class: "btn ghost small danger", onclick: async () => {
       const ok = await ask(`Remove ${p.name}?`, `Their Jellyfin account goes too: what they watched, where they stopped, and their My List. Downloaded movies and shows stay.`, [], "Remove");
@@ -366,7 +454,7 @@ function openEditor(p, currentPin = null) {
   root.replaceChildren(el("div", { class: "pf-inner pf-editor" },
     el("h1", { text: isNew ? "Add a profile" : "Edit profile" }),
     isNew ? el("p", { class: "pf-sub", text: "Each profile keeps its own Continue watching and My List. It's also a Jellyfin account, so it works the same in Jellyfin's TV and phone apps." }) : null,
-    el("div", { class: "pf-edit-row" }, face, el("div", { class: "pf-fields" }, name, swatches, pin, jfPass)),
+    el("div", { class: "pf-edit-row" }, face, el("div", { class: "pf-fields" }, name, swatches, pin, jfPass, kidsRow)),
     err,
     el("div", { class: "pf-foot" }, save, el("button", { class: "btn ghost", onclick: () => openPicker(!isNew) }, "Cancel"), ...extras)));
   name.focus();

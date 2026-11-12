@@ -140,6 +140,41 @@ fn others(app: &AppHandle, owners: &[String], me: &str) -> Vec<String> {
     names_of(app, &ids)
 }
 
+/// Who may delete reading's files. Any profile, on a phone too, for what only
+/// it reads; the main profile for anything, asked first when others read it.
+/// A phone used to need Jellyfin's delete permission, and its button was
+/// hidden anyway, so a friend's own downloads could never go.
+pub fn may_delete(is_main: bool, owned: bool, others: bool, others_ok: bool) -> Result<(), String> {
+    if !is_main && !owned {
+        return Err("That isn't in your reading list.".into());
+    }
+    if others && !is_main {
+        return Err("Someone else reads this too, so only the main profile can delete it.".into());
+    }
+    if others && !others_ok {
+        return Err("Someone else still reads this.".into());
+    }
+    Ok(())
+}
+
+#[derive(serde::Serialize)]
+pub struct CanDelete {
+    pub can: bool,
+    /// Who else reads it (the main profile is asked about them first).
+    pub others: Vec<String>,
+}
+
+/// Whether the profile asking may delete a series' or a book's files.
+pub fn can_delete(app: &AppHandle, key: &str) -> Result<CanDelete, String> {
+    let me = read::uid(app)?;
+    let owners = if key.starts_with('b') { crate::books::find(app, key)?.owners } else { find_any(app, key)?.owners };
+    let pc_owner = crate::profiles::owner_id(app);
+    let owned = read::owned_by(&owners, pc_owner.as_deref(), &me);
+    let who = others(app, &owners, &me);
+    let main = crate::asked::sees_all(app);
+    Ok(CanDelete { can: may_delete(main, owned, !who.is_empty(), true).is_ok(), others: who })
+}
+
 /// Any followed series, whoever follows it: Settings lists all of them.
 fn find_any(app: &AppHandle, key: &str) -> Result<Followed, String> {
     read::followed(app).into_iter().find(|f| f.key == key).ok_or_else(|| "That series isn't followed any more.".into())
@@ -245,9 +280,12 @@ pub async fn delete(app: &AppHandle, key: &str, ids: Option<Vec<i64>>, others_ok
     let me = read::uid(app)?;
     let f = find_any(app, key)?;
     let who = others(app, &f.owners, &me);
-    if !who.is_empty() && !others_ok {
+    let owned = read::owned_by(&f.owners, crate::profiles::owner_id(app).as_deref(), &me);
+    let main = crate::asked::sees_all(app);
+    if main && !who.is_empty() && !others_ok {
         return Err(format!("{} still reads this.", who.join(", ")));
     }
+    may_delete(main, owned, !who.is_empty(), others_ok)?;
     let files = on_disk(app, &f).await?;
     let chosen = picked(&files, ids.as_deref());
     if chosen.is_empty() {
@@ -286,6 +324,28 @@ pub async fn delete_book(app: &AppHandle, key: &str, others_ok: bool) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn owner_may_delete_own() {
+        assert!(may_delete(false, true, false, false).is_ok());
+    }
+
+    #[test]
+    fn stranger_may_not() {
+        assert!(may_delete(false, false, true, true).is_err());
+    }
+
+    #[test]
+    fn main_profile_may_delete_any() {
+        assert!(may_delete(true, false, true, true).is_ok());
+        assert!(may_delete(true, false, true, false).is_err(), "still asked first when others read it");
+    }
+
+    #[test]
+    fn shared_series_delete_needs_the_main_profile() {
+        // Someone else reads it too: a phone can't take the files from under them, even when asking to.
+        assert!(may_delete(false, true, true, true).is_err());
+    }
 
     #[test]
     fn a_sharpened_copy_mirrors_its_original() {

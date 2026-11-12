@@ -525,6 +525,10 @@ pub async fn sync(app: &AppHandle) {
                 continue;
             }
         };
+        // What's new for this profile follows what it just watched (newep.rs).
+        if before.series != h.series {
+            crate::newep::forget_user(app, &user_id);
+        }
         for (tvdb, spot, at) in newly_finished(&before, &h) {
             if let Err(e) = crate::marker::finished(&dir, &user_id, tvdb, spot, at) {
                 crate::log::log(app, crate::model::Level::Amber, e);

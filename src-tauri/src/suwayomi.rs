@@ -621,8 +621,12 @@ async fn one_source(source_id: String, source: String, names: Vec<String>) -> Op
         let fresh: Vec<(f64, i64, String)> = hits.into_iter().filter(|h| !tried.contains(&h.1)).take(3).collect();
         for (_, manga_id, title) in fresh {
             tried.push(manga_id);
-            let Ok(got) = gql("mutation($id:Int!){fetchMangaAndChapters(input:{id:$id,fetchManga:true,fetchChapters:true}){chapters{id chapterNumber}}}", json!({ "id": manga_id })).await else { continue };
-            let mut chs: Vec<(i64, f64)> = got["fetchMangaAndChapters"]["chapters"].as_array().map(|a| a.as_slice()).unwrap_or(&[]).iter().filter_map(|c| Some((c["id"].as_i64()?, c["chapterNumber"].as_f64()?))).collect();
+            let Ok(got) = gql("mutation($id:Int!){fetchMangaAndChapters(input:{id:$id,fetchManga:true,fetchChapters:true}){chapters{id chapterNumber uploadDate}}}", json!({ "id": manga_id })).await else { continue };
+            let raw = got["fetchMangaAndChapters"]["chapters"].as_array().map(|a| a.as_slice()).unwrap_or(&[]);
+            // How far this copy really goes: a stray "Chapter 559" isn't reach (read_core::keep_mask).
+            let shapes: Vec<(Option<f64>, Option<i64>)> = raw.iter().map(|c| (c["chapterNumber"].as_f64().filter(|n| *n >= 0.0), c["uploadDate"].as_str().and_then(|u| u.parse::<i64>().ok()).filter(|&d| d > 0))).collect();
+            let trusted = read_core::trusted_top(&shapes, None);
+            let mut chs: Vec<(i64, f64)> = raw.iter().filter_map(|c| Some((c["id"].as_i64()?, c["chapterNumber"].as_f64()?))).filter(|c| trusted.is_none_or(|t| c.1 <= t)).collect();
             // One per chapter number, for the count: duplicates aren't more chapters.
             chs.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
             chs.dedup_by(|a, b| a.1 == b.1);
@@ -747,11 +751,16 @@ pub async fn chapters(manga_id: i64) -> Result<Vec<Chapter>, String> {
 
 /// What's downloading right now: (manga id, chapter id, 0..1).
 pub async fn queue() -> Vec<(i64, i64, f64)> {
-    let Ok(v) = gql("{downloadStatus{queue{progress chapter{id manga{id}}}}}", json!({})).await else { return vec![] };
-    v["downloadStatus"]["queue"]
+    queue_checked().await.unwrap_or_default()
+}
+
+/// The queue, or why it couldn't be read (an error isn't an empty queue).
+pub async fn queue_checked() -> Result<Vec<(i64, i64, f64)>, String> {
+    let v = gql("{downloadStatus{queue{progress chapter{id manga{id}}}}}", json!({})).await?;
+    Ok(v["downloadStatus"]["queue"]
         .as_array()
         .map(|a| a.iter().filter_map(|q| Some((q["chapter"]["manga"]["id"].as_i64()?, q["chapter"]["id"].as_i64()?, q["progress"].as_f64().unwrap_or(0.0)))).collect())
-        .unwrap_or_default()
+        .unwrap_or_default())
 }
 
 /// Deletes downloaded chapters' files (they stay listed, so they can come back).

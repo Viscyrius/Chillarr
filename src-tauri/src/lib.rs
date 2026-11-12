@@ -1,9 +1,15 @@
 mod arr;
+mod dubcheck;
+mod seen;
+mod readlive;
+mod newep;
+mod asked;
 mod week;
 mod downloads_home;
 mod zipread;
 mod read_core;
 mod read;
+mod read_mu;
 mod read_storage;
 mod hidden;
 mod readparty;
@@ -305,8 +311,10 @@ fn profiles_list(app: AppHandle) -> Vec<profiles::View> {
 }
 
 #[tauri::command]
-async fn profiles_add(app: AppHandle, name: String, color: String, pin: Option<String>) -> Result<profiles::View, String> {
-    profiles::add(&app, &name, &color, pin).await
+async fn profiles_add(app: AppHandle, name: String, color: String, pin: Option<String>, kids: Option<bool>) -> Result<profiles::View, String> {
+    // A kids' profile watching in the window only makes kids' profiles.
+    let kids = kids.unwrap_or(false) || profiles::viewer_kids(&app);
+    profiles::add(&app, &name, &color, pin, kids).await
 }
 
 #[tauri::command]
@@ -326,8 +334,8 @@ async fn profiles_check_pin(app: AppHandle, id: String, pin: String) -> Result<(
 }
 
 #[tauri::command]
-async fn profiles_update(app: AppHandle, id: String, name: Option<String>, color: Option<String>, pin: Option<String>, current_pin: Option<String>) -> Result<(), String> {
-    profiles::update(&app, &id, name, color, pin, current_pin).await
+async fn profiles_update(app: AppHandle, id: String, name: Option<String>, color: Option<String>, pin: Option<String>, current_pin: Option<String>, kids: Option<bool>) -> Result<(), String> {
+    profiles::update(&app, &id, name, color, pin, current_pin, kids).await
 }
 
 #[tauri::command]
@@ -338,6 +346,12 @@ async fn profiles_set_password(app: AppHandle, id: String, password: String, cur
 #[tauri::command]
 async fn profiles_remove(app: AppHandle, id: String, pin: Option<String>, login: Option<String>) -> Result<(), String> {
     profiles::remove(&app, &id, pin, login).await
+}
+
+/// Manage profiles > Activity: the owner at this PC only (not in bridge.rs need()).
+#[tauri::command]
+async fn profiles_activity(app: AppHandle) -> Result<Vec<profiles::Activity>, String> {
+    profiles::activity(&app).await
 }
 
 /// Drives, the biggest titles, and the clean-up choice (Settings > Library & storage).
@@ -652,31 +666,41 @@ async fn media_trailer(app: AppHandle, tile: tiles::Tile) -> Option<String> {
 
 #[tauri::command]
 async fn media_downloads(app: AppHandle) -> Vec<waiting::Download> {
-    waiting::downloads(&app).await
+    asked::keep_by(&app, waiting::downloads(&app).await, |d| &d.tile)
 }
 
 #[tauri::command]
 async fn media_stop_download(app: AppHandle, which: String, download_id: String, whole: Option<bool>) -> Result<String, String> {
+    waiting::may_stop_download(&app, &download_id).await?;
     waiting::stop_download(&app, &which, &download_id, whole.unwrap_or(false)).await
 }
 
 #[tauri::command]
 async fn media_delete_episodes(app: AppHandle, tile: tiles::Tile, episodes: Vec<(i64, i64)>) -> Result<String, String> {
+    waiting::may_delete(&app, &tile).await?;
     waiting::delete_episodes(&app, &tile, &episodes).await
 }
 
 #[tauri::command]
 async fn media_delete(app: AppHandle, tile: tiles::Tile) -> Result<String, String> {
+    waiting::may_delete(&app, &tile).await?;
     waiting::delete_title(&app, &tile).await
+}
+
+/// Whether this profile may delete `tile` (shows its Delete button).
+#[tauri::command]
+async fn media_can_delete(app: AppHandle, tile: tiles::Tile) -> bool {
+    waiting::can_delete(&app, &tile).await
 }
 
 #[tauri::command]
 async fn media_waiting(app: AppHandle) -> Vec<waiting::Waiting> {
-    waiting::list(&app).await
+    asked::keep_waiting(&app, waiting::list(&app).await)
 }
 
 #[tauri::command]
 async fn media_stop_waiting(app: AppHandle, which: String, id: i64) -> Result<String, String> {
+    waiting::may_stop_waiting(&app, &which, id).await?;
     waiting::stop(&app, &which, id).await
 }
 
@@ -822,6 +846,12 @@ async fn read_maker_works(app: AppHandle, staff: i64, adult: Option<bool>) -> Re
     read::maker_works(&app, staff, adult.unwrap_or(false)).await
 }
 
+/// A Manga, Manhwa, Manhua or Novels tab's rows: trending, popular, top, then genres.
+#[tauri::command]
+async fn read_kind_rows(app: AppHandle, kind: String) -> Result<serde_json::Value, String> {
+    read::kind_rows(&app, &kind).await
+}
+
 /// Reading Home's rows made from what this profile reads.
 #[tauri::command]
 async fn read_for_you(app: AppHandle) -> Result<serde_json::Value, String> {
@@ -905,13 +935,32 @@ fn notify_unseen(app: AppHandle) -> Result<Vec<notify::Note>, String> {
 }
 
 #[tauri::command]
-fn hidden_set(app: AppHandle, keys: Vec<String>, hide: bool, label: Option<String>) -> Result<bool, String> {
-    hidden::set(&app, &keys, hide, label.as_deref())
+fn hidden_set(app: AppHandle, keys: Vec<String>, hide: bool, label: Option<String>, item: Option<serde_json::Value>) -> Result<bool, String> {
+    hidden::set(&app, &keys, hide, label.as_deref(), item)
 }
 
 #[tauri::command]
 fn hidden_list(app: AppHandle) -> Result<Vec<hidden::Entry>, String> {
     hidden::list(&app)
+}
+
+/// A page reports real use (a tap, a key, a scroll), at most once a minute:
+/// Activity's "Last on" (seen.rs).
+#[tauri::command]
+fn seen_touch(app: AppHandle) {
+    if let Some(uid) = media::active_user(&app) {
+        seen::touch(&app, &uid);
+    }
+}
+
+/// The main profile at the PC (the admin panel) forgets a profile's hidden
+/// password, its list kept. Not on the bridge: phones can't.
+#[tauri::command]
+fn hidden_reset(app: AppHandle, profile: String) -> Result<(), String> {
+    if !profiles::owner_at_pc(&app) {
+        return Err("Only the main profile, at the PC, can do that.".into());
+    }
+    hidden::reset_password(&app, &profile)
 }
 
 #[tauri::command]
@@ -973,6 +1022,11 @@ fn readparty_leave(app: AppHandle, code: String) -> Result<(), String> {
     readparty::leave(&app, &code)
 }
 
+#[tauri::command]
+fn readparty_say(app: AppHandle, code: String, text: String) -> Result<(), String> {
+    readparty::say(&app, &code, &text)
+}
+
 /// One page of a book row's See all.
 #[tauri::command]
 async fn read_book_more(id: String, page: u32) -> Result<serde_json::Value, String> {
@@ -1023,6 +1077,11 @@ async fn read_storage(app: AppHandle) -> Result<read_storage::Overview, String> 
 #[tauri::command]
 async fn read_delete_plan(app: AppHandle, key: String, ids: Option<Vec<i64>>) -> Result<read_storage::Plan, String> {
     read_storage::plan(&app, &key, ids).await
+}
+
+#[tauri::command]
+fn read_can_delete(app: AppHandle, key: String) -> Result<read_storage::CanDelete, String> {
+    read_storage::can_delete(&app, &key)
 }
 
 #[tauri::command]
@@ -1224,7 +1283,11 @@ async fn set_settings(app: AppHandle, mut s: settings::Settings) -> Result<Vec<A
         }
         if dubs_changed {
             let a = app.clone();
-            tauri::async_runtime::spawn(async move { crate::pick::no_dubs(&a).await });
+            tauri::async_runtime::spawn(async move {
+                crate::pick::no_dubs(&a).await;
+                crate::dubcheck::sync_jellyfin(&a).await;
+                crate::dubcheck::pass(&a).await;
+            });
         }
     }
     set_autostart(&app, s.start_with_windows);
@@ -1300,6 +1363,8 @@ pub fn run() {
         .manage(onboard::Onboard::default())
         .manage(read::Reading::default())
         .manage(hidden::Hidden::default())
+        .manage(seen::Seen::default())
+        .manage(newep::Cache::default())
         .invoke_handler(tauri::generate_handler![
             read_base,
             read_rows,
@@ -1323,6 +1388,8 @@ pub fn run() {
             notify_list,
             notify_unseen,
             hidden_list,
+            hidden_reset,
+            seen_touch,
             read_mark,
             read_folder,
             read_set_folder,
@@ -1340,6 +1407,7 @@ pub fn run() {
             read_makers,
             read_maker_works,
             read_for_you,
+            read_kind_rows,
             read_about,
             read_downloads,
             read_book_rows,
@@ -1350,6 +1418,7 @@ pub fn run() {
             readparty_state,
             readparty_move,
             readparty_leave,
+            readparty_say,
             readparty_set,
             readparty_kick,
             readparty_allow,
@@ -1364,6 +1433,7 @@ pub fn run() {
             read_storage,
             read_delete_plan,
             read_delete_chapters,
+            read_can_delete,
             read_book_delete_file,
             read_books,
             read_book_open,
@@ -1439,6 +1509,7 @@ pub fn run() {
             profiles_forget_web_devices,
             profiles_update,
             profiles_remove,
+            profiles_activity,
             profiles_set_password,
             storage_set_cleanup,
             media_my_list_marks,
@@ -1461,6 +1532,7 @@ pub fn run() {
             subs_choice,
             subs_set,
             media_delete,
+            media_can_delete,
             media_downloads,
             media_stop_download,
             media_delete_episodes,
@@ -1539,6 +1611,10 @@ pub fn run() {
                 onboard::start_servers(app.handle());
             }
             storage::start_cleanup(app.handle().clone());
+            // Dubbed means the dub is in the file (dubcheck.rs), and Jellyfin's pages pick it too.
+            dubcheck::start(app.handle().clone());
+            // Chapter downloads pushed to open pages as they move (readlive.rs).
+            readlive::start(app.handle().clone());
             // The catalogs grow quietly in the background.
             let h = app.handle().clone();
             tauri::async_runtime::spawn(async move {

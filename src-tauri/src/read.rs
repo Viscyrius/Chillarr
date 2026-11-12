@@ -12,7 +12,7 @@ use crate::read_core;
 use crate::zipread::{self, Entry};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -272,13 +272,63 @@ pub fn merge_copies(lists: Vec<Vec<crate::suwayomi::Chapter>>) -> Vec<(crate::su
     out
 }
 
+/// A chapter as `read_core::keep_mask` sees it: its number and upload time (ms).
+fn shape(c: &crate::suwayomi::Chapter) -> (Option<f64>, Option<i64>) {
+    (c.number, c.uploaded.as_deref().and_then(|u| u.parse::<i64>().ok()).filter(|&d| d > 0))
+}
+
+/// Each copy without the numbers it can't be trusted with (read_core::keep_mask):
+/// a copy's own run of chapters, plus what another copy's own run backs.
+pub fn clean_copies(lists: Vec<Vec<crate::suwayomi::Chapter>>) -> Vec<Vec<crate::suwayomi::Chapter>> {
+    let shapes: Vec<Vec<(Option<f64>, Option<i64>)>> = lists.iter().map(|l| l.iter().map(shape).collect()).collect();
+    let tops: Vec<Option<f64>> = shapes.iter().map(|s| read_core::own_run_top(s)).collect();
+    lists
+        .into_iter()
+        .enumerate()
+        .map(|(i, list)| {
+            let backing = tops.iter().enumerate().filter(|(j, _)| *j != i).filter_map(|(_, t)| *t).fold(None, |m: Option<f64>, n| Some(m.map_or(n, |m| m.max(n))));
+            let mask = read_core::keep_mask(&shapes[i], backing);
+            list.into_iter().zip(mask).filter(|(_, k)| *k).map(|(c, _)| c).collect()
+        })
+        .collect()
+}
+
+/// A saved mark ("known up to", "told") above what the list can be trusted
+/// with comes down to it: a stray 276 or 560 saved before kept every real
+/// chapter after the true newest from being fetched or told.
+/// Only when every copy answered: a copy that didn't looks like a short list.
+pub fn lowered_mark(mark: Option<f64>, top: Option<f64>, complete: bool) -> Option<f64> {
+    match (mark, top) {
+        (Some(m), Some(t)) if complete && m > t => Some(t),
+        _ => mark,
+    }
+}
+
 /// A followed series' chapters across its copies. The main copy must answer.
 pub async fn chapters_of(f: &Followed) -> Result<Vec<(crate::suwayomi::Chapter, usize)>, String> {
+    Ok(chapters_checked(f).await?.0)
+}
+
+/// The same, and whether every copy answered (a fill copy that didn't is left out).
+pub async fn chapters_checked(f: &Followed) -> Result<(Vec<(crate::suwayomi::Chapter, usize)>, bool), String> {
     let mut lists = vec![crate::suwayomi::chapters(f.manga_id).await?];
+    let mut complete = true;
     for x in &f.fill {
-        lists.push(crate::suwayomi::chapters(x.manga_id).await.unwrap_or_default());
+        match crate::suwayomi::chapters(x.manga_id).await {
+            Ok(l) => lists.push(l),
+            Err(_) => {
+                complete = false;
+                lists.push(vec![]);
+            }
+        }
     }
-    Ok(merge_copies(lists))
+    Ok((merge_copies(clean_copies(lists)), complete))
+}
+
+/// Chapters across copies, and whether every copy answered.
+pub async fn chapter_list_checked(f: &Followed) -> Result<(Vec<crate::suwayomi::Chapter>, bool), String> {
+    let (all, complete) = chapters_checked(f).await?;
+    Ok((all.into_iter().map(|x| x.0).collect(), complete))
 }
 
 async fn chapter_list(f: &Followed) -> Result<Vec<crate::suwayomi::Chapter>, String> {
@@ -332,6 +382,11 @@ fn yes() -> bool {
 
 fn followed_file(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(data_dir(app)?.join("reading.json"))
+}
+
+/// A followed series' title by its key (Activity's "last read").
+pub fn title_of(app: &AppHandle, key: &str) -> Option<String> {
+    followed(app).into_iter().find(|f| f.key == key).map(|f| f.title)
 }
 
 pub fn followed(app: &AppHandle) -> Vec<Followed> {
@@ -478,6 +533,8 @@ struct Ticket {
 pub struct Reading {
     tickets: Mutex<HashMap<String, Ticket>>,
     rows: tokio::sync::Mutex<Option<(Instant, Value)>>,
+    /// kind_rows' answers, per kind.
+    kind_rows: tokio::sync::Mutex<HashMap<String, (Instant, Value)>>,
     /// for_you's rows, per profile and the series they were made from.
     for_you: Mutex<HashMap<String, (Instant, Value)>>,
 }
@@ -1107,7 +1164,7 @@ pub async fn copy_chapters(app: &AppHandle, manga_id: i64, fill_id: Option<i64>)
     if let Some(f) = fill_id {
         lists.push(crate::suwayomi::chapters(f).await.unwrap_or_default());
     }
-    Ok(merge_copies(lists).into_iter().map(|(ch, i)| PickRow { ch, fill: i > 0 }).collect())
+    Ok(merge_copies(clean_copies(lists)).into_iter().map(|(ch, i)| PickRow { ch, fill: i > 0 }).collect())
 }
 
 /// What to download when following.
@@ -1187,7 +1244,7 @@ pub async fn follow(app: &AppHandle, meta: Meta, pick: crate::suwayomi::Candidat
     for x in &fill {
         lists.push(crate::suwayomi::chapters(x.manga_id).await.unwrap_or_default());
     }
-    let merged = merge_copies(lists);
+    let merged = merge_copies(clean_copies(lists));
     let known_upto = top_number(merged.iter().map(|x| &x.0));
     let wanted: Vec<i64> = merged
         .into_iter()
@@ -1352,12 +1409,19 @@ pub fn cleanup_pick(chs: &[crate::suwayomi::Chapter], spots: &[&Spot], days: u32
     // Each reader's furthest point: the chapter they're on, unless it's read.
     let behind_all = spots.iter().map(|s| pos(s.chapter).map(|p| if s.read.contains_key(&s.chapter) { p + 1 } else { p }).unwrap_or(0)).min().unwrap_or(0);
     if whole {
-        // The whole series, once everyone has read all of it, `days` after the last read.
-        let last_read = spots.iter().flat_map(|s| chs.iter().filter_map(|c| s.read.get(&c.id))).max().copied().unwrap_or(now);
-        if behind_all < chs.len() || now - last_read < days as i64 * 86_400 {
+        // Every DOWNLOADED chapter marked read by everyone reading it (#75):
+        // chapters never downloaded don't hold it back. 50 of 200 downloaded
+        // and all 50 read used to keep everything until all 200 were read.
+        // Then all of it goes `days` after the last one was marked.
+        let here: Vec<i64> = chs.iter().filter(|c| c.downloaded).map(|c| c.id).collect();
+        if here.is_empty() || !spots.iter().all(|s| here.iter().all(|id| s.read.contains_key(id))) {
             return vec![];
         }
-        return chs.iter().filter(|c| c.downloaded).map(|c| c.id).collect();
+        let last_read = spots.iter().flat_map(|s| here.iter().filter_map(|id| s.read.get(id))).max().copied().unwrap_or(now);
+        if now - last_read < days as i64 * 86_400 {
+            return vec![];
+        }
+        return here;
     }
     chs.iter()
         .take(behind_all)
@@ -1438,10 +1502,15 @@ async fn fetch_new_once(app: &AppHandle) {
     let profiles = all_spots(app);
     let queued: std::collections::HashSet<i64> = crate::suwayomi::queue().await.into_iter().map(|q| q.1).collect();
     for f in list.into_iter().filter(|f| f.new_too) {
-        let Ok(chs) = chapter_list(&f).await else { continue };
+        let Ok((chs, complete)) = chapter_list_checked(&f).await else { continue };
         let top = top_number(chs.iter());
+        // A mark saved from a stray number comes down, so what follows the real newest is fetched.
+        let lowered = lowered_mark(f.known_upto, top, complete);
+        if lowered != f.known_upto {
+            update_followed(app, &f.key, |x| x.known_upto = lowered);
+        }
         // Not known yet (followed before this was kept): what's listed now is the line.
-        let Some(mark) = f.known_upto else {
+        let Some(mark) = lowered else {
             if top.is_some() {
                 update_followed(app, &f.key, |x| x.known_upto = top);
             }
@@ -1553,7 +1622,11 @@ pub fn toggle_list(app: &AppHandle, card: &Value, on: bool) -> Result<bool, Stri
 
 /// What reading has downloading: each series with chapters queued, and books on their way.
 pub async fn downloads(app: &AppHandle) -> Result<Value, String> {
-    let q = crate::suwayomi::queue().await;
+    // Not readable isn't empty: the page says so instead of "Nothing is downloading".
+    let (q, error) = match crate::suwayomi::queue_checked().await {
+        Ok(q) => (q, None),
+        Err(e) => (vec![], Some(format!("Can't see the chapter downloads right now: {e}"))),
+    };
     let series: Vec<Value> = followed(app)
         .into_iter()
         .filter_map(|f| {
@@ -1562,7 +1635,7 @@ pub async fn downloads(app: &AppHandle) -> Result<Value, String> {
         })
         .collect();
     let books: Vec<Value> = books(app).await?.into_iter().filter(|b| !b.ready).map(|b| json!(b)).collect();
-    Ok(json!({ "series": series, "books": books }))
+    Ok(json!({ "series": series, "books": books, "error": error }))
 }
 
 // ---------- discovery (AniList) ----------
@@ -1597,7 +1670,7 @@ pub fn card(m: &Value) -> Value {
 }
 
 /// AniList descriptions carry <br> and <i>: plain text for the page.
-fn clean_text(s: &str) -> String {
+pub(crate) fn clean_text(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut tag = false;
     for c in s.replace("<br>", "\n").replace("<br/>", "\n").replace("<br />", "\n").chars() {
@@ -1700,8 +1773,9 @@ pub struct Explore {
 /// "it's a universal thing"). It stays off until someone picks Include or Only
 /// 18+ in the filters, and 18+ sources are only searched for 18+ titles. The
 /// one place to narrow it again.
-pub fn adult_ok(_app: &AppHandle) -> bool {
-    true
+pub fn adult_ok(app: &AppHandle) -> bool {
+    // A kids' profile never gets it (profiles.rs).
+    !crate::profiles::viewer_kids(app)
 }
 
 pub fn explore_args(e: &Explore, adult_allowed: bool) -> Result<String, String> {
@@ -1767,6 +1841,80 @@ pub fn explore_args(e: &Explore, adult_allowed: bool) -> Result<String, String> 
     };
     a.push(format!("sort:{sort}"));
     Ok(a.join(","))
+}
+
+/// The genres a Manga, Manhwa, Manhua or Novels tab has a row for, in order.
+pub const KIND_GENRES: [&str; 14] = ["Action", "Fantasy", "Romance", "Comedy", "Drama", "Adventure", "Slice of Life", "Supernatural", "Mystery", "Psychological", "Sci-Fi", "Horror", "Sports", "Thriller"];
+
+/// The row ids of a reading tab: "trending", "popular", "top", "ongoing",
+/// "new", then "g:<Genre>". Each is also how its "Explore all" page asks
+/// (explore_for_row), so the row and its page always agree.
+pub fn kind_row_query(kind: &str, id: &str) -> Option<Explore> {
+    let base = Explore { kind: kind.to_string(), ..Default::default() };
+    let year = chrono::Datelike::year(&chrono::Utc::now()) as u32;
+    Some(match id {
+        "trending" => Explore { sort: Some("trending".into()), ..base },
+        "popular" => Explore { sort: Some("popular".into()), ..base },
+        "top" => Explore { sort: Some("score".into()), ..base },
+        "ongoing" => Explore { sort: Some("popular".into()), status: Some("RELEASING".into()), ..base },
+        "new" => Explore { sort: Some("popular".into()), year_from: Some(year - 1), ..base },
+        g => {
+            let g = g.strip_prefix("g:")?;
+            if !KIND_GENRES.contains(&g) {
+                return None;
+            }
+            Explore { sort: Some("popular".into()), genres: vec![g.to_string()], ..base }
+        }
+    })
+}
+
+/// A Manga, Manhwa, Manhua or Novels tab's rows, like Movies' tabs: trending,
+/// most popular, top rated, ongoing and new, then one row per genre. A few
+/// AniList calls (it limits how much one call may ask), kept six hours.
+/// Never 18+: those are for the filters, where it can be turned on.
+pub async fn kind_rows(app: &AppHandle, kind: &str) -> Result<Value, String> {
+    if !matches!(kind, "manga" | "manhwa" | "manhua" | "novels") {
+        return Err("Unknown kind.".into());
+    }
+    let state = app.state::<Reading>();
+    let mut cache = state.kind_rows.lock().await;
+    if let Some((at, v)) = cache.get(kind) {
+        if at.elapsed() < ROWS_LIFE {
+            return Ok(v.clone());
+        }
+    }
+    let what = match kind { "manga" => "manga", "manhwa" => "manhwa", "manhua" => "manhua", _ => "light novels" };
+    let mut defs: Vec<(String, String)> = vec![
+        ("trending".into(), "Trending now".into()),
+        ("popular".into(), format!("Most popular {what}")),
+        ("top".into(), "Top rated".into()),
+        ("ongoing".into(), "Ongoing".into()),
+        ("new".into(), "New and rising".into()),
+    ];
+    defs.extend(KIND_GENRES.iter().map(|g| (format!("g:{g}"), g.to_string())));
+    let mut out = Vec::new();
+    for chunk in defs.chunks(7) {
+        let mut q = String::from("{");
+        for (i, (id, _)) in chunk.iter().enumerate() {
+            let Some(e) = kind_row_query(kind, id) else { continue };
+            let args = explore_args(&e, false)?;
+            q.push_str(&format!("r{i}:Page(perPage:24){{media({args}){{{MEDIA_FIELDS}}}}} "));
+        }
+        q.push('}');
+        let v = crate::media::anilist(&json!({ "query": q })).await?;
+        if v["data"].is_null() {
+            return Err("AniList didn't answer. Try again in a minute.".into());
+        }
+        for (i, (id, title)) in chunk.iter().enumerate() {
+            let items: Vec<Value> = v["data"][format!("r{i}")]["media"].as_array().map(|a| a.iter().map(card).collect()).unwrap_or_default();
+            if items.len() >= 4 {
+                out.push(json!({ "id": id, "title": title, "items": items }));
+            }
+        }
+    }
+    let v = json!(out);
+    cache.insert(kind.to_string(), (Instant::now(), v.clone()));
+    Ok(v)
 }
 
 pub async fn explore(app: &AppHandle, e: &Explore) -> Result<Value, String> {
@@ -2074,10 +2222,60 @@ pub async fn search(app: &AppHandle, term: &str, adult: bool, porn: bool) -> Res
     if term.is_empty() {
         return Ok(vec![]);
     }
-    let only_safe = search_args(adult && adult_ok(app), porn);
+    let adult = adult && adult_ok(app);
+    let only_safe = search_args(adult, porn);
     let q = format!("query($s:String){{Page(perPage:30){{media(type:MANGA,{only_safe}search:$s,sort:SEARCH_MATCH){{{MEDIA_FIELDS}}}}}}}");
-    let v = crate::media::anilist(&json!({ "query": q, "variables": { "s": term } })).await?;
-    Ok(v["data"]["Page"]["media"].as_array().map(|a| a.iter().map(card).collect()).unwrap_or_default())
+    // MangaUpdates at the same time: the names AniList doesn't have (read_mu.rs).
+    let ask = json!({ "query": q, "variables": { "s": term } });
+    let (v, mu) = tokio::join!(crate::media::anilist(&ask), crate::read_mu::search(term));
+    let mut cards: Vec<Value> = v?["data"]["Page"]["media"].as_array().map(|a| a.iter().map(card).collect()).unwrap_or_default();
+    // Its series go first: each matched the very name typed.
+    let mut first: Vec<Value> = Vec::new();
+    for hit in mu {
+        if (crate::read_mu::porn(&hit) && !(adult && porn)) || (crate::read_mu::ecchi(&hit) && !adult) {
+            continue;
+        }
+        let known: HashSet<String> = hit.names.iter().map(|n| crate::read_mu::norm(n)).collect();
+        let same = |c: &Value| card_names(c).iter().any(|n| known.contains(&crate::read_mu::norm(n)));
+        if let Some(i) = cards.iter().position(|c| same(c)) {
+            first.push(cards.remove(i));
+            continue;
+        }
+        if first.iter().any(|c| same(c)) {
+            continue;
+        }
+        // AniList again, by the names it goes by there (Chronicle of Runes is Emblem Wars).
+        match by_names(&hit.names, only_safe).await.into_iter().find(|c| same(c)) {
+            Some(c) => first.push(c),
+            None => first.push(crate::read_mu::card(&hit)),
+        }
+    }
+    first.extend(cards);
+    Ok(first)
+}
+
+/// A card's title and every other name.
+fn card_names(c: &Value) -> Vec<String> {
+    let mut v: Vec<String> = c["title"].as_str().map(String::from).into_iter().collect();
+    v.extend(c["names"].as_array().into_iter().flatten().filter_map(|n| n.as_str().map(String::from)));
+    v
+}
+
+/// AniList searched by several names in one ask (its limit is 30 a minute).
+async fn by_names(names: &[String], only_safe: &str) -> Vec<Value> {
+    let names: Vec<&String> = names.iter().take(6).collect();
+    if names.is_empty() {
+        return vec![];
+    }
+    let vars: Vec<String> = (0..names.len()).map(|i| format!("$n{i}:String")).collect();
+    let mut q = format!("query({}){{", vars.join(","));
+    for i in 0..names.len() {
+        q.push_str(&format!("p{i}:Page(perPage:5){{media(type:MANGA,{only_safe}search:$n{i}){{{MEDIA_FIELDS}}}}} "));
+    }
+    q.push('}');
+    let variables: serde_json::Map<String, Value> = names.iter().enumerate().map(|(i, n)| (format!("n{i}"), json!(n))).collect();
+    let Ok(v) = crate::media::anilist(&json!({ "query": q, "variables": variables })).await else { return vec![] };
+    (0..names.len()).flat_map(|i| v["data"][format!("p{i}")]["media"].as_array().cloned().unwrap_or_default()).map(|m| card(&m)).collect()
 }
 
 /// The 18+ part of a search: Ecchi only with 18+ on, isAdult only with porn on too.
@@ -2094,6 +2292,32 @@ mod tests {
     use super::*;
     use crate::suwayomi::Chapter;
 
+    fn dated(id: i64, n: f64, ms: i64) -> Chapter {
+        Chapter { uploaded: Some(ms.to_string()), ..ch(id, n, false) }
+    }
+
+    #[test]
+    fn stray_numbers_are_dropped_before_copies_merge() {
+        const W: i64 = 7 * 86_400_000;
+        let base = 1_700_000_000_000;
+        // Bbato (main) 1..116, MangaK 1..120 + "276" from long before.
+        let main: Vec<Chapter> = (1..=116).map(|n| dated(n, n as f64, base + n * W)).collect();
+        let mut fill: Vec<Chapter> = (1..=120).map(|n| dated(1000 + n, n as f64, base + n * W)).collect();
+        fill.push(dated(9999, 276.0, base));
+        let merged = merge_copies(clean_copies(vec![main, fill]));
+        assert_eq!(top_number(merged.iter().map(|x| &x.0)), Some(120.0));
+        assert!(merged.iter().all(|x| x.0.id != 9999));
+    }
+
+    #[test]
+    fn a_mark_above_what_can_be_trusted_comes_down() {
+        assert_eq!(lowered_mark(Some(276.0), Some(120.0), true), Some(120.0));
+        assert_eq!(lowered_mark(Some(276.0), Some(3.0), false), Some(276.0), "a copy didn't answer: never lowered on a short list");
+        assert_eq!(lowered_mark(Some(100.0), Some(120.0), true), Some(100.0));
+        assert_eq!(lowered_mark(None, Some(120.0), true), None);
+        assert_eq!(lowered_mark(Some(276.0), None, true), Some(276.0), "nothing listed: left alone");
+    }
+
     fn ch(id: i64, n: f64, downloaded: bool) -> Chapter {
         Chapter { id, name: format!("Chapter {n}"), number: Some(n), scanlator: None, downloaded, pages: 10, uploaded: None }
     }
@@ -2106,6 +2330,17 @@ mod tests {
         let fill = vec![ch(11, 1.0, false), ch(12, 2.0, true), ch(13, 3.0, false), ch(14, 4.0, false), ch(15, 5.0, false)];
         let m: Vec<(i64, usize)> = merge_copies(vec![main, fill]).into_iter().map(|(c, i)| (c.id, i)).collect();
         assert_eq!(m, vec![(1, 0), (12, 1), (3, 0), (14, 1), (15, 1)], "sharp where it has it, a copy already here is kept, the rest filled");
+    }
+
+    #[test]
+    fn kind_rows_ask_what_they_say() {
+        let e = kind_row_query("manhwa", "g:Romance").unwrap();
+        assert_eq!(e.genres, vec!["Romance".to_string()]);
+        let args = explore_args(&e, false).unwrap();
+        assert!(args.contains("countryOfOrigin:\"KR\"") && args.contains("genre_in:[\"Romance\"]") && args.contains("isAdult:false"), "{args}");
+        assert!(kind_row_query("manga", "g:Made up").is_none());
+        assert!(kind_row_query("manga", "nope").is_none());
+        assert_eq!(kind_row_query("novels", "ongoing").unwrap().status.as_deref(), Some("RELEASING"));
     }
 
     #[test]
@@ -2261,6 +2496,25 @@ mod tests {
         fresh.read.insert(5, now - day);
         assert!(whole(&[&fresh]).is_empty(), "finished yesterday: kept for 3 days");
         assert!(whole(&[&done, &behind]).is_empty(), "someone else is still reading it");
+    }
+
+    #[test]
+    fn when_finished_goes_by_downloaded_chapters() {
+        // 200 listed, 1 to 50 downloaded and all 50 read: that's finished (#75).
+        let chs: Vec<Chapter> = (1..=200).map(|i| ch(i, i as f64, i <= 50)).collect();
+        let day = 86_400;
+        let now = 100 * day;
+        let mut me = Spot { chapter: 50, ..Default::default() };
+        for i in 1..=50 {
+            me.read.insert(i, now - 4 * day);
+        }
+        let got = cleanup_pick(&chs, &[&me], 3, now, true);
+        assert_eq!(got, (1..=50).collect::<Vec<i64>>());
+        let mut not_yet = me.clone();
+        not_yet.read.remove(&37);
+        assert!(cleanup_pick(&chs, &[&not_yet], 3, now, true).is_empty(), "one downloaded chapter still unread");
+        let other = Spot { chapter: 10, ..Default::default() };
+        assert!(cleanup_pick(&chs, &[&me, &other], 3, now, true).is_empty(), "another reader hasn't read them all");
     }
 
     #[test]
