@@ -39,12 +39,41 @@ pub fn norm(s: &str) -> String {
         .join(" ")
 }
 
-/// The name is what was typed, or starts with it (a long title typed in part).
+/// Words with a plural "s" taken off, so "Chronicles" finds "Chronicle".
+fn stem(s: &str) -> String {
+    norm(s)
+        .split(' ')
+        .map(|w| if w.chars().count() > 3 && w.ends_with('s') && !w.ends_with("ss") { &w[..w.len() - 1] } else { w })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The name is what was typed, or starts with it (a long title typed in part),
+/// plurals aside; or, for a long name, nearly the same (a letter off).
 /// MangaUpdates' own search is loose, so anything else is left out.
 pub fn matches(term: &str, name: &str) -> bool {
-    let t = norm(term);
-    let n = norm(name);
-    t.chars().count() >= 4 && (n == t || n.starts_with(&format!("{t} ")))
+    let t = stem(term);
+    let n = stem(name);
+    if t.chars().count() < 4 {
+        return false;
+    }
+    n == t || n.starts_with(&format!("{t} ")) || (t.chars().count() >= 12 && letters_apart(&t, &n) * 10 <= t.chars().count().max(n.chars().count()))
+}
+
+/// How many letters differ (Levenshtein): "swordborn" and "swordborne" are 1.
+fn letters_apart(a: &str, b: &str) -> usize {
+    let (a, b): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
+    let mut row: Vec<usize> = (0..=b.len()).collect();
+    for i in 1..=a.len() {
+        let mut prev = row[0];
+        row[0] = i;
+        for j in 1..=b.len() {
+            let here = row[j];
+            row[j] = (row[j] + 1).min(row[j - 1] + 1).min(prev + usize::from(a[i - 1] != b[j - 1]));
+            prev = here;
+        }
+    }
+    row[b.len()]
 }
 
 /// MangaUpdates' series matching the term, with all their names. Empty when it
@@ -153,6 +182,19 @@ pub fn card(h: &Hit) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn plural_s_dropped() {
+        assert!(matches("Chronicles of Runes", "Chronicle of Runes"));
+        assert!(matches("chronicle of rune", "Chronicle of Runes"));
+        assert!(!matches("Chronicles of Ruins", "Chronicle of Runes"), "a different word isn't a plural");
+    }
+
+    #[test]
+    fn small_differences_in_a_long_name_match() {
+        assert!(matches("The Bastard of Swordborn", "The Bastard of Swordborne"));
+        assert!(!matches("Sword God", "Sword Art Online"), "short and different stays out");
+    }
 
     #[test]
     fn a_long_title_typed_in_part_matches() {
