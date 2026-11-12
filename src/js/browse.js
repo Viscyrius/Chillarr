@@ -551,9 +551,16 @@ document.addEventListener("click", (e) => {
 }, true);
 let heroKey = null; // the featured title showing, kept across a redraw
 
+// A banner drawn before the hidden list arrived (or before a title was hidden)
+// is drawn again without it: banners only check when they're made.
+window.addEventListener("chillarr:hidden", () => {
+  document.querySelectorAll("section.hero").forEach((h) => { if (h.stale?.()) h.replaceWith(h.rebuild()); });
+});
+
 function hero(picks, keep = null) {
   clearInterval(heroTimer);
   heroShow = null;
+  const all = picks;
   picks = picks.filter((p) => !isHidden(p.t));
   if (!picks.length) return heroLook(el("section", { class: "hero empty" }));
   const bgUrl = (p) => `url("${p.t.backdrop.replace(/"/g, "%22")}")`;
@@ -564,6 +571,8 @@ function hero(picks, keep = null) {
   const section = heroLook(el("section", { class: "hero" }, bgA, bgB, heroCopy(picks[at])));
   section.lastChild.classList.add("first"); // the copy a kept tab comes back with (styles.css)
   section.picks = picks.map((p) => p.t.key).join("|");
+  section.stale = () => picks.some((p) => isHidden(p.t));
+  section.rebuild = () => hero(all, heroKey);
   let front = bgA, back = bgB;
   // A press anywhere on the banner opens the title, like a card does. A drag
   // (to move between titles) or a press on a button doesn't.

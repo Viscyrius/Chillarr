@@ -434,6 +434,14 @@ function openEditor(p, currentPin = null) {
       try { await invoke("profiles_update", { id: p.id, pin: "", currentPin }); await load(); toast(`${p.name} has no PIN now.`); openPicker(true); } catch (e) { err.textContent = String(e); }
     } }, "Remove PIN"));
   }
+  // The PC is the admin panel: it can let a profile make a new hidden password (its list stays).
+  if (p && !WEB && ownerHere()) {
+    extras.push(el("button", { class: "btn ghost small", onclick: async () => {
+      const ok = await ask(`Reset ${p.name}'s hidden password?`, `What they hid stays hidden. Next time they hide something or open the Hidden tab, they make a new password.`, [], "Reset");
+      if (!ok) return;
+      try { await invoke("hidden_reset", { profile: p.id }); toast(`${p.name} can make a new hidden password now.`); } catch (e) { err.textContent = String(e); }
+    } }, "Reset hidden password"));
+  }
   if (p && !p.owner) {
     extras.push(el("button", { class: "btn ghost small danger", onclick: async () => {
       const ok = await ask(`Remove ${p.name}?`, `Their Jellyfin account goes too: what they watched, where they stopped, and their My List. Downloaded movies and shows stay.`, [], "Remove");

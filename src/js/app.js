@@ -1,5 +1,5 @@
 // Routing between tabs, the top bar, search, and the first-run tutorial.
-import { refreshHidden } from "./hidden.js";
+import { refreshHidden, renderHidden } from "./hidden.js";
 import { setKids } from "./filterpanel.js";
 import { $, el, getPref, invoke, personKey, screenMode, setPerson, setPref, store, viewer, WEB, windowFull } from "./api.js";
 import { renderTab, renderSearch, renderExplore, renderMaker, stopBrowse, warmTabs, markRestyle } from "./browse.js";
@@ -16,8 +16,8 @@ import { applyTheme, setTabTint, syncIcons } from "./theme.js";
 import { applyLook, drawPickers, onStyle } from "./look.js";
 
 const view = $("#view");
-const TABS = ["home", "movies", "series", "anime", "downloads", "mylist", "settings", "explore", "filter", "maker",
-  "r-home", "r-manhwa", "r-manhua", "r-manga", "r-novels", "r-books", "r-downloads", "r-mylist", "r-all", "r-author", "r-maker"];
+const TABS = ["home", "movies", "series", "anime", "downloads", "mylist", "hidden", "settings", "explore", "filter", "maker",
+  "r-home", "r-manhwa", "r-manhua", "r-manga", "r-novels", "r-books", "r-downloads", "r-mylist", "r-hidden", "r-all", "r-author", "r-maker"];
 
 /* ---------- watching and reading ----------
    Two Chillarrs in one: the book button switches to reading (its own tabs,
@@ -92,6 +92,7 @@ function route(redraw = false) {
   if (!tab.startsWith("r-")) stopRead();
   let drawn;
   if (tab === "settings") { stopBrowse(); renderSettings(view, hash.split("/")[1]); }
+  else if (tab === "hidden" || tab === "r-hidden") { stopBrowse(); drawn = renderHidden(view); }
   else if (tab.startsWith("r-")) { stopBrowse(); drawn = renderRead(view, tab); }
   else if (tab === "filter") {
     const [, kind, json] = hash.split("/");

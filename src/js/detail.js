@@ -1,5 +1,5 @@
 // The detail panel: what a title is, Play / Resume / Download, My List, and episodes.
-import { hideButton } from "./hidden.js";
+import { hideButton, markHidden } from "./hidden.js";
 import { $, ask, canDelete, closeDialog, el, genresAZ, getPref, icon, ICON, invoke, listen, metaBits, picProps, setPref, store, toast } from "./api.js";
 import { canWatchNow, isWatchNow, loadHls, movieLike, play, removeWatchNow, startEpisode, watchNow } from "./player.js";
 import { completedActions, confirmRedownload, isWatched, listable, loadWatched, onMyList, removeContinue, resumable, setMyList } from "./mylist.js";
@@ -1002,6 +1002,7 @@ function simCard(s, i) {
   const b = el("button", { class: "tile", "aria-label": s.title, dataset: { key: s.key } }, art,
     el("div", { class: "cap" }, el("strong", { text: s.title }), s.year ? ` · ${s.year}` : ""));
   b.style.setProperty("--j", Math.min(i, 10));
+  markHidden(b, s);
   b.addEventListener("click", () => simOpen(s, b));
   return b;
 }

@@ -941,6 +941,16 @@ fn hidden_list(app: AppHandle) -> Result<Vec<hidden::Entry>, String> {
     hidden::list(&app)
 }
 
+/// The main profile at the PC (the admin panel) forgets a profile's hidden
+/// password, its list kept. Not on the bridge: phones can't.
+#[tauri::command]
+fn hidden_reset(app: AppHandle, profile: String) -> Result<(), String> {
+    if !profiles::owner_at_pc(&app) {
+        return Err("Only the main profile, at the PC, can do that.".into());
+    }
+    hidden::reset_password(&app, &profile)
+}
+
 #[tauri::command]
 fn read_hide_week(app: AppHandle, key: String, hide: bool) -> Result<bool, String> {
     read::set_hide_week(&app, &key, hide)
@@ -1354,6 +1364,7 @@ pub fn run() {
             notify_list,
             notify_unseen,
             hidden_list,
+            hidden_reset,
             read_mark,
             read_folder,
             read_set_folder,

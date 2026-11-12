@@ -561,6 +561,8 @@ function readHero(picks) {
   const bgB = el("div", { class: "hero-bg read-hero-bg out" });
   const art = el("div", { class: "read-hero-art" });
   const section = el("section", { class: "hero read-hero-top" }, bgA, bgB, copy(picks[0]), art);
+  section.stale = () => picks.some((c) => isHidden(c));
+  section.rebuild = () => readHero(picks.filter((c) => !isHidden(c))) || el("section", { class: "hero empty" });
   drawArt(picks[0]);
   let front = bgA, back = bgB;
   section.addEventListener("click", (e) => { if (!e.target.closest("button, a")) open(picks[at]); });
