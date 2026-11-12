@@ -515,9 +515,11 @@ pub async fn delete_file(app: &AppHandle, key: &str, others_ok: bool) -> Result<
     let pc_owner = crate::profiles::owner_id(app);
     let b = all(app).into_iter().find(|b| b.key == key).ok_or("That book isn't in the list any more.")?;
     let others = crate::read::owners_of(&b.owners, pc_owner.as_deref()).into_iter().any(|o| o != me);
-    if others && !others_ok {
+    let owned = crate::read::owned_by(&b.owners, pc_owner.as_deref(), &me);
+    if others && !others_ok && crate::asked::sees_all(app) {
         return Err("Someone else still reads this book.".into());
     }
+    crate::read_storage::may_delete(crate::asked::sees_all(app), owned, others, others_ok)?;
     if let (Some(h), Some(q)) = (&b.hash, crate::waiting::qbit(app)) {
         let _ = q.delete(&[h.clone()], true).await;
     }

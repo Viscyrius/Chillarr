@@ -1073,6 +1073,11 @@ async fn read_delete_plan(app: AppHandle, key: String, ids: Option<Vec<i64>>) ->
 }
 
 #[tauri::command]
+fn read_can_delete(app: AppHandle, key: String) -> Result<read_storage::CanDelete, String> {
+    read_storage::can_delete(&app, &key)
+}
+
+#[tauri::command]
 async fn read_delete_chapters(app: AppHandle, key: String, ids: Option<Vec<i64>>, others_ok: Option<bool>) -> Result<String, String> {
     read_storage::delete(&app, &key, ids, others_ok.unwrap_or(false)).await
 }
@@ -1419,6 +1424,7 @@ pub fn run() {
             read_storage,
             read_delete_plan,
             read_delete_chapters,
+            read_can_delete,
             read_book_delete_file,
             read_books,
             read_book_open,

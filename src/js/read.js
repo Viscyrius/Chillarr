@@ -6,7 +6,7 @@
 // complete copy, found by asking every source) or a copy of your choice,
 // then which chapters.
 import { hideButton, isHidden, markHidden } from "./hidden.js";
-import { ask, canDelete, choose, el, expandRow, getPref, icon, ICON, invoke, personKey, setPref, toast } from "./api.js";
+import { ask, choose, el, expandRow, getPref, icon, ICON, invoke, personKey, setPref, toast } from "./api.js";
 import { selectable, stopSelecting } from "./select.js";
 import { openReader } from "./reader.js";
 import { openBook } from "./bookreader.js";
@@ -324,9 +324,17 @@ async function removeBooks(list) {
   return ok > 0;
 }
 
-/** A Select button on a row of series you follow, or of your books. Only for those who may delete. */
+/* Who may delete what (read_storage::may_delete): the PC decides per series or
+   book, on phones too. Asked once a panel opens, kept by key. */
+const delOk = new Map();
+async function mayDelete(key) {
+  if (!delOk.has(key)) delOk.set(key, await invoke("read_can_delete", { key }).then((x) => !!x.can).catch(() => false));
+  return delOk.get(key);
+}
+
+/** A Select button on a row of series you follow, or of your books (the PC refuses what isn't yours). */
 function withSelect(section, kind) {
-  if (!canDelete() || !section) return section;
+  if (!section) return section;
   const head = section.querySelector(".row-head");
   const cardsOf = () => [...section.querySelectorAll(".tile")].map((n) => [n, n._sel]);
   const actions = kind === "books"
@@ -1674,7 +1682,8 @@ const releasedEl = (ms) => { const r = released(ms); return r ? el("small", { cl
 
 async function showFollowed(key, mine, c0) {
   let d;
-  try { d = await invoke("read_detail", { key }); } catch (e) { toast(String(e), true); return; }
+  delOk.delete(key);
+  try { [d] = await Promise.all([invoke("read_detail", { key }), mayDelete(key)]); } catch (e) { toast(String(e), true); return; }
   if (mine !== panelSeq) return;
   const f = d.followed;
   const c = { ...(c0 || {}), ...f, chapters: d.chapters.length };
@@ -1714,7 +1723,7 @@ async function showFollowed(key, mine, c0) {
     title: "Keep it out of Your week and Latest updates on this profile",
     onclick: async () => { if (await setHideWeek(key, f.title, !hidden)) showFollowed(key, ++panelSeq, c0); } }, hidden ? "Show in Your week" : "Hide from Your week"));
   const here = d.chapters.filter((r) => r.downloaded);
-  if (here.length && canDelete()) actions.append(el("button", { class: "btn soft", onclick: () => deletePicker(key, f, here, body, c0) }, icon(TRASH), "Delete downloads"));
+  if (here.length && delOk.get(key)) actions.append(el("button", { class: "btn soft", onclick: () => deletePicker(key, f, here, body, c0) }, icon(TRASH), "Delete downloads"));
   const where = el("p", { class: "note read-from-source" },
     `From ${srcName(f.source)}`, f.width ? ` · ${f.width} px wide` : "",
     f.fill && f.fill.length ? ` · the rest from ${f.fill.map((x) => srcName(x.source)).join(", ")}` : "",
@@ -1791,7 +1800,7 @@ function chapterRow(key, r, c0) {
       releasedEl(r.uploaded)),
     r.fresh ? el("b", { class: "read-new-pill", text: "NEW" }) : null,
     el("span", { class: "read-ch-state", text: state }), get || mark,
-    r.downloaded && canDelete() ? el("button", { class: "read-mark read-del", title: "Delete this chapter's download", "aria-label": `Delete ${chLabel(r)}`,
+    r.downloaded && delOk.get(key) ? el("button", { class: "read-mark read-del", title: "Delete this chapter's download", "aria-label": `Delete ${chLabel(r)}`,
       onclick: async (e) => { e.stopPropagation(); if (await deleteChapters(key, [r.id], chLabel(r))) refreshIfOpen(key, c0); } }, icon(TRASH)) : null);
 }
 
@@ -1963,6 +1972,7 @@ const bookMeta = (c) => ({ title: c.title, author: c.author ?? null, cover: c.co
 /** A book or light novel: read it if it's here, else find a copy. */
 export async function openBookPanel(c, mine = null) {
   const my = ++panelSeq;
+  delOk.clear();
   clearTimeout(poll);
   if (!mine) {
     myBooks = await invoke("read_books").catch(() => myBooks);
@@ -1986,7 +1996,7 @@ export async function openBookPanel(c, mine = null) {
       actions.append(el("button", { class: "btn play", onclick: go(done) }, icon(ICON.play),
         done ? "Read again" : mine.read > 0 ? `Resume (${Math.round(mine.read * 100)}%)` : "Read"));
       if (done && mine.read < 0.995) actions.append(el("button", { class: "btn soft", onclick: go(false) }, `Resume (${Math.round(mine.read * 100)}%)`));
-      if (canDelete()) actions.append(el("button", { class: "btn soft", onclick: async () => { if (await deleteBookFile(mine)) { window.dispatchEvent(new Event("chillarr:refresh")); openBookPanel(c); } } }, icon(TRASH), "Delete file"));
+      if (await mayDelete(mine.key)) actions.append(el("button", { class: "btn soft", onclick: async () => { if (await deleteBookFile(mine)) { window.dispatchEvent(new Event("chillarr:refresh")); openBookPanel(c); } } }, icon(TRASH), "Delete file"));
     } else if (mine.not_downloaded) {
       // Its file was deleted: still in the list, downloaded again from here.
       actions.append(el("span", { class: "status-pill", text: "Not downloaded" }));
