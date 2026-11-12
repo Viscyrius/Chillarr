@@ -204,7 +204,10 @@ function card(c, shelf = null) {
   const extra = el("div", { class: "rc-extra" },
     ...[c.genres && c.genres.length ? el("span", { class: "rc-genre", text: c.genres[0] }) : null,
       chs ? el("span", { class: "rc-ch", text: `${chs} chapters` }) : null].filter(Boolean));
-  const b = el("button", { class: "tile", "aria-label": c.title }, box,
+  // What it is, for styles that draw each kind as its own object (Velvet:
+  // a manhwa is a scroll, a manga a paperback, a novel or book a hardcover).
+  const shape = c.kind === "book" || c.format === "NOVEL" ? "book" : c.kind === "comic" ? "comic" : c.country === "KR" || c.country === "CN" || c.country === "TW" ? "scroll" : "paperback";
+  const b = el("button", { class: "tile", "aria-label": c.title, dataset: { shape } }, box,
     el("div", { class: "cap" }, el("strong", { text: c.title }), sub ? ` · ${sub}` : ""), extra);
   b.addEventListener("click", () => pvOpen(c, shelf));
   b.addEventListener("mouseenter", () => pvSchedule(b, c, shelf));
@@ -885,11 +888,72 @@ async function classicHome(view, my) {
   return true;
 }
 
+/* ---------- Velvet: the reading room ----------
+   No big picture and no rows sliding sideways. What you're reading lies open
+   on the desk, each with a ribbon marking how far you are; everything else
+   stands on shelves, spines out, a whole shelf at a time. */
+function deskCard(s) {
+  const c = asCard(s);
+  const read = s.chapters ? Math.max(0, Math.min(1, (s.chapters - s.unread) / s.chapters)) : 0;
+  const go = () => (s.resume ? read_(s.key, s.resume[0], c) : openSeries({ key: s.key, card: c }));
+  const b = el("article", { class: "vv-desk-card" },
+    el("button", { class: "vv-desk-cover", "aria-label": s.title, onclick: go },
+      s.cover ? el("img", { src: s.cover, alt: "", loading: "lazy", decoding: "async" }) : el("span", { text: s.title }),
+      el("span", { class: "vv-ribbon", style: `--p:${Math.round(read * 100)}%`, "aria-hidden": "true" })),
+    el("div", { class: "vv-desk-text" },
+      el("button", { class: "vv-desk-title", onclick: () => openSeries({ key: s.key, card: c }), text: s.title }),
+      el("p", { class: "vv-desk-where", text: s.resume_label || (s.unread ? `${s.unread} to read` : "Up to date") }),
+      el("div", { class: "vv-desk-bar", "aria-hidden": "true" }, el("span", { style: `width:${Math.round(read * 100)}%` })),
+      el("button", { class: "btn small primary", onclick: go }, s.resume ? "Continue" : "Open")));
+  return markHidden(b, c, s);
+}
+const read_ = (key, chapter, c) => read(key, chapter, c);
+
+/** A shelf: covers standing on a board, a few to a shelf, wrapping onto the next. */
+function shelf(id, title, cards) {
+  if (!cards.length) return null;
+  return el("section", { class: "vv-shelf", dataset: { row: id } }, el("h2", { class: "vv-h", text: title }), el("div", { class: "vv-board" }, cards));
+}
+
+async function velvetHome(view, my) {
+  const desk = el("section", { class: "vv-block" });
+  const shelves = el("div", { class: "vv-shelves" }, ...skel());
+  const hour = new Date().getHours();
+  const when = hour < 5 ? "Reading late" : hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
+  view.replaceChildren(el("div", { class: "read-page vv-home" }, inlinePicker(),
+    el("header", { class: "vv-room" }, el("h1", { text: "The reading room" }), el("p", { text: `${when}. Your series are on the desk, everything else is on the shelves.` })),
+    desk, shelves));
+  drawPickers();
+  const [{ lib: series }, books, got] = await Promise.all([know(), invoke("read_books").catch(() => []), invoke("read_rows").catch(() => [])]);
+  if (!alive(my)) return;
+  myBooks = books;
+  const fresh = freshSection(series, "vv-block");
+  if (fresh) desk.before(fresh);
+  const reading = series.filter((s) => !s.finished);
+  if (reading.length) desk.append(el("h2", { class: "vv-h", text: "On your desk" }), el("div", { class: "vv-desk" }, reading.slice(0, 8).map(deskCard)));
+  else desk.remove();
+  const unread = (b) => !b.finished && b.read < 1;
+  const mine = books.filter((b) => b.ready && unread(b));
+  const list = [
+    shelf("books", "Your books", mine.map(bookCard)),
+    ...got.filter((r) => r.items.length).map((r) => shelf(r.id, r.title, r.items.slice(0, 12).map((c) => card(c)))),
+    shelf("finished", "Finished", series.filter((s) => s.finished).map((s) => card(asCard(s), s))),
+  ].filter(Boolean);
+  shelves.replaceChildren(...(list.length ? list : [note("The shelves fill up as you follow series.")]));
+  forYou().then((fy) => {
+    if (!alive(my) || !fy.length) return;
+    const at = shelves.children[mine.length ? 1 : 0] || null;
+    for (const r of fy) { const sh = shelf(r.id, r.title, r.items.slice(0, 12).map((c) => card(c))); if (sh) shelves.insertBefore(sh, at); }
+  });
+  return true;
+}
+
 async function homePage(view, my) {
   const style = styleNow();
   applyLook();
   if (style === "midnight") return midnightHome(view, my);
   if (style === "classic") return classicHome(view, my);
+  if (style === "velvet") return velvetHome(view, my);
   drawPickers();
   const lib = el("div");
   const rows = el("div", {}, ...skel());
@@ -981,7 +1045,7 @@ async function explorePage(view, tab, my) {
       rowsAsked = true;
       remembered(`kr:${kind}`, 30 * 60000, () => invoke("read_kind_rows", { kind })).then((rows) => {
         if (!alive(my)) return;
-        rowsBox.replaceChildren(...rows.map((r) => (r.id === "trending" && (styleNow() === "cinema" || styleNow() === "velvet")
+        rowsBox.replaceChildren(...rows.map((r) => (r.id === "trending" && styleNow() === "cinema"
           ? row(`k.${kind}.top10`, "Top 10 today", r.items.slice(0, 10).map((c, i) => topTen(c, i + 1)), `k.${kind}.trending`)
           : row(`k.${kind}.${r.id}`, r.title, r.items.map((c) => card(c))))));
       }).catch((e) => { rowsAsked = false; if (alive(my)) rowsBox.replaceChildren(note(String(e)), el("button", { class: "btn soft", style: "margin: 0 var(--gutter)", onclick: () => { rowsBox.replaceChildren(...skel()); showMode(); } }, "Try again")); });
@@ -1048,11 +1112,14 @@ async function explorePage(view, tab, my) {
     body = el("div", { class: "read-page cl-home cl-explore" }, picker,
       el("div", { class: "cl-banner" }, el("h1", { text: TAB_TITLE[tab] }), el("p", { text: `The ${TAB_TITLE[tab].toLowerCase()} people are reading now, and everything else to find.` })),
       top5, filterHead, panel, filteredNote, rowsBox, grid, more);
+  } else if (style === "velvet") {
+    body = el("div", { class: "read-page vv-home vv-explore" }, picker,
+      el("header", { class: "vv-room" }, el("h1", { text: TAB_TITLE[tab] })), filterHead, panel, filteredNote, rowsBox, grid, more);
   } else {
     body = page(picker, filterHead, panel, filteredNote, rowsBox, grid, more);
   }
   view.replaceChildren(top, body);
-  if (style !== "classic") {
+  if (style !== "classic" && style !== "velvet") {
     invoke("read_explore", { e: { kind, sort: "trending", page: 1 } }).then((g) => {
       if (!alive(my)) return;
       const h = readHero(heroPicks(g.items || []));

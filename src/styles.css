@@ -2913,6 +2913,106 @@ body[data-rshade="light"] .lk-shade-custom label { background: rgba(15, 20, 30, 
 .lk-shade-custom input[type="color"] { width: 28px; height: 22px; padding: 0; border: 0; border-radius: 6px; background: none; cursor: pointer; }
 .lk-shade-custom .lk-reset { grid-column: 1 / -1; justify-self: start; border: 0; background: none; padding: 2px 4px; color: var(--muted); font: 600 12px var(--display); text-decoration: underline; cursor: pointer; }
 
+/* ---------- Velvet's own layouts (browse.js heroLook, read.js velvetHome) ---------- */
+/* Watching: a stage. The title stands in the middle, the poster in a brass
+   frame above it, two velvet curtains drawn back at the sides. */
+body[data-rstyle="velvet"] .hero.vv-stage { display: flex; align-items: flex-end; justify-content: center; text-align: center; overflow: hidden; }
+body[data-rstyle="velvet"] .vv-stage .hero-bg { filter: saturate(0.85) brightness(0.55); }
+body[data-rstyle="velvet"] .vv-stage::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 28px; background: linear-gradient(180deg, #5a3a1e, #2b1a0d); box-shadow: 0 -1px 0 rgba(217, 178, 106, 0.5), 0 -30px 60px rgba(0, 0, 0, 0.55) inset; z-index: 1; }
+.vv-curtain { position: absolute; top: 0; bottom: 0; width: 17%; z-index: 2; pointer-events: none;
+  background: repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.35) 0 6px, rgba(255, 255, 255, 0.04) 10px, rgba(0, 0, 0, 0.3) 18px 22px), linear-gradient(180deg, #7d1532, #4a0b1d 70%, #2a0611);
+  box-shadow: inset -18px 0 30px rgba(0, 0, 0, 0.55); }
+.vv-curtain.left { left: 0; border-bottom-right-radius: 70% 22%; }
+.vv-curtain.right { right: 0; transform: scaleX(-1); border-bottom-right-radius: 70% 22%; }
+.vv-curtain::after { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 64px; background: linear-gradient(180deg, #9b2242, #5e0f25); border-bottom: 2px solid #d9b26a; border-radius: 0 0 40% 40% / 0 0 60% 60%; }
+body[data-rstyle="velvet"] .vv-stage .hero-copy { position: relative; z-index: 3; display: flex; flex-direction: column; align-items: center; max-width: min(720px, 64vw); margin: 0 auto; padding-bottom: 64px; }
+body[data-rstyle="velvet"] .vv-stage .hero-copy .actions { justify-content: center; }
+body[data-rstyle="velvet"] .vv-stage .hero-copy .meta { justify-content: center; }
+body[data-rstyle="velvet"] .vv-stage .hero-copy .overview { margin-left: auto; margin-right: auto; }
+.vv-frame { width: clamp(110px, 11vw, 170px); aspect-ratio: 2 / 3; padding: 6px; margin-bottom: 18px; border-radius: 8px; background: linear-gradient(145deg, #f0d9a8, #a8803c 45%, #e6c47f 60%, #7c5a22); box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(0, 0, 0, 0.4); }
+.vv-frame img { width: 100%; height: 100%; object-fit: cover; border-radius: 4px; display: block; }
+body[data-rstyle="velvet"] .vv-stage .hero-nav { position: absolute; z-index: 3; left: 50%; right: auto; bottom: 34px; transform: translateX(-50%); }
+body[data-rstyle="velvet"] .vv-stage .hero-dots button { background: rgba(217, 178, 106, 0.35); }
+body[data-rstyle="velvet"] .vv-stage .hero-dots button.on { background: #d9b26a; box-shadow: 0 0 10px rgba(217, 178, 106, 0.8); }
+/* Rows read like a printed programme: a centred heading between brass rules. */
+body[data-rstyle="velvet"] .rows .row-head { justify-content: center; gap: 16px; }
+body[data-rstyle="velvet"] .rows .row-head::before, body[data-rstyle="velvet"] .rows .row-head::after { content: ""; flex: 1; max-width: 220px; height: 1px; background: linear-gradient(90deg, transparent, rgba(var(--accent-rgb), 0.7)); }
+body[data-rstyle="velvet"] .rows .row-head::after { transform: scaleX(-1); }
+body[data-rstyle="velvet"] .rows .row-head .count, body[data-rstyle="velvet"] .rows .row-head .explore { order: 3; }
+/* Cards are tickets: the poster, then a stub under a perforated line. */
+body[data-rstyle="velvet"] .rows .tile:not(.top10):not(.wide) { background: var(--surface); border-radius: 10px; padding: 6px 6px 0; box-shadow: 0 0 0 1px var(--line); }
+body[data-rstyle="velvet"] .rows .tile:not(.top10):not(.wide) .art { border-radius: 6px; }
+body[data-rstyle="velvet"] .rows .tile:not(.top10):not(.wide) .cap { position: relative; margin: 6px -6px 0; padding: 9px 10px 10px; border-top: 2px dashed rgba(var(--accent-rgb), 0.35); font-family: var(--serif); text-align: center; }
+body[data-rstyle="velvet"] .rows .tile:not(.top10):not(.wide) .cap::before, body[data-rstyle="velvet"] .rows .tile:not(.top10):not(.wide) .cap::after { content: ""; position: absolute; top: -8px; width: 14px; height: 14px; border-radius: 50%; background: var(--bg); }
+body[data-rstyle="velvet"] .rows .tile:not(.top10):not(.wide) .cap::before { left: -7px; }
+body[data-rstyle="velvet"] .rows .tile:not(.top10):not(.wide) .cap::after { right: -7px; }
+/* Reading: the reading room. */
+.vv-home { padding-top: 92px; }
+.vv-room { padding: 0 var(--gutter) 18px; text-align: center; }
+.vv-room h1 { margin: 0; font: 700 clamp(30px, 4vw, 52px) var(--serif, var(--display)); letter-spacing: -0.02em; color: var(--accent-tint); }
+.vv-room p { margin: 8px auto 0; max-width: 56ch; color: var(--muted); }
+.vv-room::after { content: ""; display: block; width: 120px; height: 1px; margin: 18px auto 0; background: linear-gradient(90deg, transparent, var(--accent), transparent); }
+.vv-block { padding: 0 var(--gutter); margin-bottom: 34px; }
+.vv-h { margin: 0 0 14px; font: 600 22px var(--serif, var(--display)); color: var(--accent-tint); }
+.vv-desk { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
+.vv-desk-card { display: flex; gap: 14px; padding: 12px; border-radius: 12px; background: linear-gradient(180deg, var(--surface-hi), var(--surface)); box-shadow: 0 0 0 1px var(--line), 0 14px 30px rgba(0, 0, 0, 0.25); }
+.vv-desk-cover { position: relative; flex: none; width: 92px; aspect-ratio: 2 / 3; padding: 0; border: 0; border-radius: 3px 8px 8px 3px; overflow: visible; background: var(--raised); cursor: pointer; box-shadow: -4px 0 0 rgba(0, 0, 0, 0.25), 0 8px 18px rgba(0, 0, 0, 0.35); }
+.vv-desk-cover img { width: 100%; height: 100%; object-fit: cover; border-radius: inherit; display: block; }
+.vv-ribbon { position: absolute; top: -4px; right: 14px; width: 12px; height: calc(18px + var(--p, 0%) * 0.7); max-height: 92%; background: linear-gradient(180deg, #c7604f, #8e1c3a); clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 82%, 0 100%); }
+.vv-desk-text { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.vv-desk-title { padding: 0; border: 0; background: none; color: var(--text); font: 600 17px var(--serif, var(--display)); text-align: left; cursor: pointer; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.vv-desk-where { margin: 0; color: var(--muted); font-size: 13px; }
+.vv-desk-bar { width: 100%; height: 4px; border-radius: 2px; background: var(--raised); overflow: hidden; margin: 2px 0 6px; }
+.vv-desk-bar span { display: block; height: 100%; background: var(--accent); }
+.vv-shelves { padding: 0 var(--gutter); }
+.vv-shelf { margin-bottom: 30px; }
+.vv-board { position: relative; display: grid; grid-template-columns: repeat(auto-fill, minmax(124px, 1fr)); align-items: end; gap: 34px 16px; padding: 0 10px 14px; }
+.vv-board .tile { width: auto; position: relative; }
+/* Each cover stands on its own length of board; side by side they make one shelf. */
+.vv-board .tile::after, body[data-rstyle="velvet"] .vv-explore .grid .tile::after { content: ""; position: absolute; left: -9px; right: -9px; bottom: -14px; height: 12px; border-radius: 1px; background: linear-gradient(180deg, #5a3519, #2c180a); box-shadow: 0 8px 12px rgba(0, 0, 0, 0.35); pointer-events: none; }
+body[data-rstyle="velvet"] .vv-explore .grid .tile { position: relative; }
+.vv-board .tile .art { border-radius: 2px 6px 6px 2px; box-shadow: -3px 0 0 rgba(0, 0, 0, 0.3), 0 12px 20px rgba(0, 0, 0, 0.45); }
+.vv-board .tile .cap { font-family: var(--serif, inherit); padding-bottom: 18px; }
+/* Kind tabs: the grid stands on shelves too. */
+body[data-rstyle="velvet"] .vv-explore .read-grid, body[data-rstyle="velvet"] .vv-explore .grid { gap: 30px 16px; }
+body[data-rstyle="velvet"] .vv-explore .tile .art { border-radius: 2px 6px 6px 2px; box-shadow: -3px 0 0 rgba(0, 0, 0, 0.3), 0 12px 20px rgba(0, 0, 0, 0.45); }
+body[data-rstyle="velvet"][data-rshade="light"] .vv-board .tile::after, body[data-rstyle="velvet"][data-rshade="light"] .vv-explore .grid .tile::after { background: linear-gradient(180deg, #c49a6c, #8c6238); box-shadow: 0 6px 10px rgba(80, 40, 20, 0.2); }
+body[data-rstyle="velvet"][data-rshade="light"] .vv-stage::after { background: linear-gradient(180deg, #c49a6c, #8c6238); }
+@media (max-width: 700px) {
+  .vv-curtain { width: 9%; }
+  .vv-curtain::after { height: 38px; }
+  body[data-rstyle="velvet"] .vv-stage .hero-copy { max-width: 84vw; padding-bottom: 58px; }
+  .vv-home { padding-top: 76px; }
+  .vv-desk { grid-template-columns: 1fr; }
+  .vv-board { grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 28px 10px; }
+}
+@media (prefers-reduced-motion: reduce) { .vv-ribbon { transition: none; } }
+
+/* ---------- Velvet: every kind drawn as what it is ----------
+   Films are posters on tickets (above). Reading cards take the shape of the
+   thing: a manhwa or manhua is a long scroll you read on a phone, so it's a
+   tall strip in a phone-like frame; a manga is a paperback with a spine and
+   page edges; a novel or book is a hardcover with a cloth spine and gilt edge;
+   a comic is a stapled issue. */
+body[data-rstyle="velvet"] .read-page .tile[data-shape] .art { position: relative; overflow: visible; }
+body[data-rstyle="velvet"] .read-page .tile[data-shape] .art img { border-radius: inherit; }
+/* Scroll (manhwa, manhua): a taller strip, rounded like a phone, a thin scroll bar at the side. */
+body[data-rstyle="velvet"] .read-page .tile[data-shape="scroll"] .art { aspect-ratio: 9 / 15; border-radius: 16px; box-shadow: 0 0 0 4px #1b0b12, 0 0 0 5px rgba(217, 178, 106, 0.45), 0 14px 26px rgba(0, 0, 0, 0.45); }
+body[data-rstyle="velvet"] .read-page .tile[data-shape="scroll"] .art::after { content: ""; position: absolute; right: 5px; top: 18%; width: 3px; height: 26%; border-radius: 2px; background: rgba(240, 217, 168, 0.75); }
+/* Paperback (manga): spine on the right (read right to left), page edges showing. */
+body[data-rstyle="velvet"] .read-page .tile[data-shape="paperback"] .art { border-radius: 6px 2px 2px 6px; box-shadow: 4px 0 0 #f1e6d2, 6px 1px 0 #d8cab0, 8px 2px 0 #bfae90, 0 12px 22px rgba(0, 0, 0, 0.45); }
+body[data-rstyle="velvet"] .read-page .tile[data-shape="paperback"] .art::after { content: ""; position: absolute; top: 0; bottom: 0; right: 0; width: 9px; background: linear-gradient(90deg, rgba(0, 0, 0, 0.0), rgba(0, 0, 0, 0.45)); border-radius: 0 2px 2px 0; }
+/* Hardcover (novels, books): cloth spine on the left, gilt along the edge. */
+body[data-rstyle="velvet"] .read-page .tile[data-shape="book"] .art { border-radius: 2px 6px 6px 2px; box-shadow: inset 0 0 0 2px rgba(217, 178, 106, 0.55), 0 12px 22px rgba(0, 0, 0, 0.45); }
+body[data-rstyle="velvet"] .read-page .tile[data-shape="book"] .art::before { content: ""; position: absolute; z-index: 1; top: 0; bottom: 0; left: 0; width: 12px; border-radius: 2px 0 0 2px; background: repeating-linear-gradient(180deg, #5e0f25 0 3px, #6e1530 3px 6px); box-shadow: inset -2px 0 0 rgba(217, 178, 106, 0.7); }
+/* Comic: a stapled issue. */
+body[data-rstyle="velvet"] .read-page .tile[data-shape="comic"] .art { border-radius: 3px; box-shadow: 0 12px 22px rgba(0, 0, 0, 0.45); }
+body[data-rstyle="velvet"] .read-page .tile[data-shape="comic"] .art::after { content: ""; position: absolute; left: 4px; top: 30%; width: 3px; height: 40%; background: repeating-linear-gradient(180deg, #c9c9c9 0 6px, transparent 6px 26%); }
+/* On a shelf, books stand on it; scrolls lean on a small stand. */
+.vv-board .tile[data-shape="scroll"]::after { left: -6px; right: -6px; height: 8px; bottom: -11px; border-radius: 6px; background: linear-gradient(180deg, #d9b26a, #7c5a22); }
+/* Velvet reading pages: one warm light, not the tab colours. */
+body[data-rstyle="velvet"][data-mode="read"]::before { opacity: 0; }
+
 /* ---------- Filters right on Movies, Series and Anime (filter.js inlineFilters) ---------- */
 .fl-tab { margin: 0 0 6px; }
 .fl-tab-head { display: flex; align-items: center; gap: 10px 18px; flex-wrap: wrap; padding: 0 var(--gutter) 18px; min-height: 40px; }

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.20.1 (2026-11-12)
+- Velvet is its own style now, not Cinema in other colours. Watching is a stage: the featured title stands in the middle between velvet curtains, its poster in a brass frame, rows read like a printed programme, and every card is a ticket with a torn stub. Reading is a reading room: what you're reading lies open on a desk with a ribbon marking how far you are, and everything else stands on shelves.
+- In Velvet each kind of reading looks like what it is: a manhwa or manhua is a tall scroll in a phone frame, a manga is a paperback with page edges, a novel or book is a hardcover with a cloth spine, and a comic is a stapled issue.
+
 ## 0.20.0 (2026-11-12)
 - Fixed for good: Dubbed now means English voices are really in the file. A release only counts as an English dub when its name says English. Plain "Dual Audio" is no longer taken as proof, and Portuguese dubs ("Dublado", "PT-BR") are refused like other foreign dubs. That is how Mushoku Tensei came in with Japanese and Portuguese only. The rule that refuses foreign dubs had broken characters in Sonarr and Radarr and refused nothing. It is checked and rebuilt now, and when Chillarr can't change it, the log says so.
 - With Dubbed on, Chillarr checks each downloaded episode and film for the dub language. A file without it is replaced when a copy that names it turns up. The same release is never taken twice, and nothing is deleted until a replacement has been found.

@@ -533,7 +533,12 @@ function heroCopy({ t, kicker }) {
     actions.append(el("button", { class: "btn play", onclick: () => openDetail(t, { get: true }) }, icon(ICON.download), "Download"));
   }
   actions.append(el("button", { class: "btn soft", onclick: () => openDetail(t) }, icon(ICON.info), "More info"));
+  // Velvet: the title's poster stands centre stage in a brass frame.
+  const poster = styleNow("watch") === "velvet" && t.poster
+    ? el("div", { class: "vv-frame", "aria-hidden": "true" }, el("img", { src: t.poster, alt: "", decoding: "async" }))
+    : null;
   return el("div", { class: "hero-copy" },
+    poster,
     el("p", { class: "hero-kicker", text: kicker }),
     el("h1", { text: t.title }),
     el("p", { class: "meta" }, metaBits(t), t.genres?.length ? [el("span", { class: "sep" }), el("span", { text: genresAZ(t.genres, 2).join(", ") })] : null),
@@ -640,11 +645,16 @@ function hero(picks, keep = null) {
   return section;
 }
 
-/** Midnight's hero is shorter; Classic's is a card inside the page, like a banner. */
+/** Midnight's hero is shorter; Classic's is a card inside the page, like a
+ *  banner; Velvet's is a stage, the title in the middle between two curtains. */
 function heroLook(section) {
   const s = styleNow("watch");
   if (s === "midnight") section.classList.add("compact");
   if (s === "classic") section.classList.add("cl-hero");
+  if (s === "velvet") {
+    section.classList.add("vv-stage");
+    section.append(el("div", { class: "vv-curtain left", "aria-hidden": "true" }), el("div", { class: "vv-curtain right", "aria-hidden": "true" }));
+  }
   return section;
 }
 
