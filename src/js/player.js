@@ -299,6 +299,7 @@ const subCache = new Map();
 /** Shows one text track (by Jellyfin index), or none. */
 async function showSub(index) {
   if (session) session.sub = index;
+  const s0 = session;
   padRefresh();
   const s = session?.info.subtitles.find((x) => x.index === index);
   if (!s || !s.url) { subs.clear(); return; }
@@ -312,8 +313,9 @@ async function showSub(index) {
       subCache.set(url, doc);
     } catch (e) { toast("Couldn't load those subtitles.", true); return; }
   }
-  // Another track (or nothing) was picked while this one loaded.
-  if (session?.sub !== index) return;
+  // Another track (or nothing) was picked while this one loaded, or another
+  // episode started (most share track numbers, so the index alone said yes).
+  if (session !== s0 || session?.sub !== index) return;
   subs.set(doc);
   const kept = shiftOf(s);
   if (kept) subs.setShift(kept.ratio, kept.offset);

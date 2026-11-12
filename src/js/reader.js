@@ -401,8 +401,10 @@ function drawScroll(page) {
     const pad = w && h ? (h / w) * 100 : 141;
     const img = el("img", { alt: `Page ${i + 1}`, decoding: "async", draggable: "false" });
     const cell = el("div", { class: "rd-cell", style: `padding-bottom:${pad}%`, dataset: { i: String(i) } }, img);
-    img.addEventListener("load", () => cell.classList.add("loaded"), { once: true });
-    img.addEventListener("error", () => cell.classList.add("failed"), { once: true });
+    img.addEventListener("load", () => { cell.classList.remove("failed"); cell.classList.add("loaded"); });
+    // A failed page is asked again when it comes back on screen, as it says
+    // (a dropped request on a phone left it broken until the chapter was reopened).
+    img.addEventListener("error", () => { cell.classList.add("failed"); img._tries = (img._tries || 0) + 1; img.removeAttribute("src"); });
     return cell;
   });
   col.append(...imgs, endCard());
@@ -414,7 +416,12 @@ function drawScroll(page) {
   // Load what's near the screen (three screens ahead, one behind), and
   // always the next two pages: webtoon pages can be 5000 px tall, taller
   // than any margin, and the next one must be there before you reach it.
-  const want = (i) => { const img = imgs[i]?.firstChild; if (img && !img.src) img.src = r.url(i); };
+  const want = (i) => {
+    const img = imgs[i]?.firstChild;
+    if (!img || img.getAttribute("src") || (img._tries || 0) > 5) return;
+    const u = r.url(i);
+    img.src = img._tries ? `${u}${u.includes("?") ? "&" : "?"}retry=${img._tries}` : u;
+  };
   r.io = new IntersectionObserver((seen) => {
     for (const s of seen) {
       if (!s.isIntersecting) continue;

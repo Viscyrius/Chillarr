@@ -936,6 +936,10 @@ export async function openDetail(t, opts = {}) {
     if (isPickable && opts.get) setTimeout(() => $("#detail-pick").scrollIntoView({ behavior: "smooth", block: "start" }), 400);
     else if (opts.get) setTimeout(() => get.click(), 50);
   }
+  // Another title opened while this one was loading (a show's episodes can
+  // take seconds): its own buttons are already there. This one's My List,
+  // Hide and Delete used to land on the other title's panel.
+  if (seq !== openSeq) return;
   // A Watch now title's Jellyfin item is a placeholder: no My List, no Delete (Remove does that).
   if (t.completed) completedBits(t, actions);
   if (opts.episodes) showEpisodes(seq);

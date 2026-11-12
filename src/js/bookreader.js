@@ -93,7 +93,8 @@ async function show(idx, at) {
   idx = Math.max(0, Math.min(idx, b.o.spine.length - 1));
   const path = b.o.spine[idx];
   let text;
-  try { text = await (await fetch(fileUrl(path))).text(); } catch (e) { toast("Couldn't open that part of the book.", true); return; }
+  // An error page (an expired link, the PC busy) isn't the chapter: what's showing stays.
+  try { const res = await fetch(fileUrl(path)); if (!res.ok) throw new Error(String(res.status)); text = await res.text(); } catch (e) { toast("Couldn't open that part of the book. Try again in a moment.", true); return; }
   if (!b) return;
   b.idx = idx;
   b.pendingAt = at;
@@ -116,7 +117,9 @@ async function clean(text, path) {
   for (const l of Array.from(doc.querySelectorAll("link[rel~=stylesheet][href]"))) {
     const css = resolve(path, l.getAttribute("href"));
     try {
-      const t = await (await fetch(fileUrl(css))).text();
+      const res = await fetch(fileUrl(css));
+      if (!res.ok) continue;
+      const t = await res.text();
       // url(...) inside the sheet is relative to the sheet.
       styles.push(t.replace(/url\(\s*(['"]?)(?!data:|https?:)([^'")]+)\1\s*\)/g, (_, q, u) => `url("${fileUrl(resolve(css, u))}")`));
     } catch (e) { /* a missing sheet just isn't used */ }
