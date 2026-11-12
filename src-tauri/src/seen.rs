@@ -45,6 +45,7 @@ fn loaded(app: &AppHandle) -> std::sync::MutexGuard<'_, HashMap<String, i64>> {
 
 /// The profile using this page did something just now.
 pub fn touch(app: &AppHandle, uid: &str) {
+    crate::activity::touch();
     let now = chrono::Utc::now().timestamp();
     let snapshot = {
         let mut at = loaded(app);

@@ -116,6 +116,11 @@ pub fn device_online(device: &str) -> bool {
     device_streams().lock().unwrap().get(device).is_some_and(|n| *n > 0)
 }
 
+/// Any phone, TV or browser with a Chillarr page open (activity.rs).
+pub fn any_page_open() -> bool {
+    device_streams().lock().unwrap().values().any(|n| *n > 0)
+}
+
 fn device_streams() -> &'static Mutex<HashMap<String, usize>> {
     static S: OnceLock<Mutex<HashMap<String, usize>>> = OnceLock::new();
     S.get_or_init(|| Mutex::new(HashMap::new()))
@@ -499,7 +504,10 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
         "media_search" => ok(media::search(app, &arg::<String>(a, "term")?).await),
         "media_search_live" => ok(crate::search::live(app.clone(), arg(a, "term")?, arg(a, "seq")?, arg::<Option<bool>>(a, "adult")?.unwrap_or(false)).await),
         "media_play" => res(media::play(app, &arg::<String>(a, "id")?, arg(a, "start")?, arg(a, "audio")?, arg(a, "subtitle")?, &arg::<Option<Vec<String>>>(a, "codecs")?.unwrap_or_default()).await),
-        "media_report" => res(media::report(app, &arg::<String>(a, "what")?, arg(a, "body")?).await),
+        "media_report" => {
+            crate::activity::touch();
+            res(media::report(app, &arg::<String>(a, "what")?, arg(a, "body")?).await)
+        }
         "media_forget_resume" => res(media::forget_resume(app, &arg::<String>(a, "id")?).await),
         "media_get" => res(media::get_it(app, arg(a, "tile")?, arg::<Option<String>>(a, "quality")?.as_deref().unwrap_or("best")).await),
         "media_get_picked" => res(pick::get_picked(app, arg(a, "tile")?, arg::<Option<String>>(a, "quality")?.as_deref().unwrap_or("best"), arg(a, "pick")?).await),

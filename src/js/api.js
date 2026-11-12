@@ -14,6 +14,12 @@ export const { listen } = window.__TAURI__.event;
 
 /** Chillarr inside Jellyfin's web pages (web/shim.js): runs as the signed-in Jellyfin user. */
 export const WEB = !!window.__CHILLARR_WEB__;
+/* The PC window hidden to the tray: WebView2 never says so (document.hidden
+   stays false), so the app tells the page ("win-shown", lib.rs). Timers that
+   redraw or poll check away() and rest while nobody can see them. */
+let winShown = true;
+export const away = () => document.hidden || !winShown;
+if (!WEB) listen("win-shown", (e) => { winShown = !!e.payload; });
 /** Who that is (web_viewer), filled in at start. On the desktop app the PC's owner can do everything. */
 export const viewer = { name: "", admin: !WEB, can_delete: !WEB };
 /** Stopping a download: anyone. Each profile only sees, and may only stop,

@@ -1,4 +1,5 @@
 mod arr;
+mod activity;
 mod dubcheck;
 mod seen;
 mod readlive;
@@ -594,6 +595,8 @@ fn subs_set(app: AppHandle, key: String, title: String, langs: Vec<String>) -> R
 
 #[tauri::command]
 async fn media_report(app: AppHandle, what: String, body: serde_json::Value) -> Result<(), String> {
+    // Something playing is someone using it, input or not (activity.rs).
+    activity::touch();
     media::report(&app, &what, body).await
 }
 
@@ -1627,7 +1630,8 @@ pub fn run() {
                 tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                 loop {
                     media::grow(&h).await;
-                    tokio::time::sleep(std::time::Duration::from_secs(15 * 60)).await;
+                    // Nobody on it: every 3 hours.
+                    activity::nap(false, std::time::Duration::from_secs(15 * 60), std::time::Duration::from_secs(3 * 60 * 60)).await;
                 }
             });
             tray::build(app.handle())?;
@@ -1664,10 +1668,24 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            // Closing the window keeps Chillarr running in the tray.
-            if let WindowEvent::CloseRequested { api, .. } = event {
-                api.prevent_close();
-                let _ = window.hide();
+            match event {
+                // Closing the window keeps Chillarr running in the tray.
+                WindowEvent::CloseRequested { api, .. } => {
+                    api.prevent_close();
+                    let _ = window.hide();
+                    // Nobody's looking: the page stops its timers, the loops slow down (activity.rs).
+                    activity::window_shown(false);
+                    let _ = tauri::Emitter::emit(window, "win-shown", false);
+                }
+                // Minimised counts as not looking; brought back counts as looking.
+                WindowEvent::Resized(_) | WindowEvent::Focused(_) => {
+                    let shown = window.is_visible().unwrap_or(false) && !window.is_minimized().unwrap_or(false);
+                    if shown != activity::window_is_shown() {
+                        activity::window_shown(shown);
+                        let _ = tauri::Emitter::emit(window, "win-shown", shown);
+                    }
+                }
+                _ => {}
             }
         })
         .run(tauri::generate_context!())

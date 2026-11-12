@@ -269,7 +269,7 @@ pub fn spawn(app: AppHandle) {
         let mut count = 0u32;
         let mut failing = false;
         loop {
-            tokio::time::sleep(EVERY).await;
+            crate::activity::nap(false, EVERY, std::time::Duration::from_secs(30)).await;
             let (on, host_free) = with(&app, |s| (s.on, s.host_free));
             if !on {
                 crate::manga_net::set_rate(0, 0);

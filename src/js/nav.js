@@ -2,7 +2,7 @@
 // and PlayStation pads both show up as standard gamepads), the arrow keys a TV
 // remote or air mouse sends, and the phone remote. Focus jumps to the nearest
 // thing in the direction pressed, and rows scroll to keep it in view.
-import { $, closeDialog, listen, WEB } from "./api.js";
+import { $, away, closeDialog, listen, WEB } from "./api.js";
 import { heroStep } from "./browse.js";
 import { padInput } from "./player.js";
 import { goBack, stop as stopRestore } from "./place.js";
@@ -326,7 +326,7 @@ function startPolling() {
 window.addEventListener("gamepadconnected", startPolling);
 // A pad paired before Chillarr opened only reports itself once a button is pressed;
 // a slow check catches it without a loop running when there's no controller.
-setInterval(() => { if (!polling && [...(navigator.getGamepads?.() || [])].some(Boolean)) startPolling(); }, 2000);
+setInterval(() => { if (!polling && !away() && [...(navigator.getGamepads?.() || [])].some(Boolean)) startPolling(); }, 2000);
 
 /* ---------- Phone remote ---------- */
 listen("remote", (e) => {

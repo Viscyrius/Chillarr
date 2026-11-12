@@ -10,7 +10,7 @@
 //   Free: everyone reads at their own pace; "Jump to the host" catches up.
 // The host can also lock the party, ask for a password, and remove someone.
 // The PC checks all of it; this page only shows it and asks.
-import { ask, el, getPref, icon, invoke, listen, personKey, setPref, toast } from "./api.js";
+import { away, ask, el, getPref, icon, invoke, listen, personKey, setPref, toast } from "./api.js";
 import { openReader } from "./reader.js";
 
 const PEOPLE = "M16 19v-1a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v1M12.5 7a3 3 0 1 1-6 0 3 3 0 0 1 6 0M21 19v-1a4 4 0 0 0-3-3.9M15.5 4.1a3 3 0 0 1 0 5.8";
@@ -118,7 +118,7 @@ async function poll() {
       }
     }
   } catch (e) { ended(e); return; }
-  pollT = setTimeout(poll, document.hidden ? 4000 : 1000);
+  pollT = setTimeout(poll, away() ? 4000 : 1000);
 }
 
 function ended(e) {

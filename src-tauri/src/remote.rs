@@ -627,7 +627,9 @@ pub fn start(app: AppHandle) {
             if r.generation.load(Ordering::SeqCst) != my_gen {
                 break;
             }
-            if looked.elapsed() > TAILSCALE_EVERY {
+            // Nobody on it: Tailscale is asked every 10 minutes (each ask starts a process).
+            let every = crate::activity::wait_for(crate::activity::active(), false, TAILSCALE_EVERY, std::time::Duration::from_secs(10 * 60));
+            if looked.elapsed() > every {
                 // Tailscale connected or dropped since: its name is let in, or no longer.
                 let h = app.clone();
                 tauri::async_runtime::spawn(async move { refresh_tailscale(&h).await });

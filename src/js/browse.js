@@ -1,7 +1,7 @@
 // Home, Movies, Series, Anime and My downloads: a hero, genre chips and rows
 // of posters; hover previews; Top 10; and "Explore all" pages that keep loading.
 import { isHidden, markHidden } from "./hidden.js";
-import { $, ask, canDelete, canStop, choose, WEB, el, expandRow, genresAZ, getPref, icon, ICON, invoke, listen, metaBits, personKey, picProps, store, toast } from "./api.js";
+import { away, $, ask, canDelete, canStop, choose, WEB, el, expandRow, genresAZ, getPref, icon, ICON, invoke, listen, metaBits, personKey, picProps, store, toast } from "./api.js";
 import { openDetail, playShowNow } from "./detail.js";
 import { canWatchNow, confirmRemove, isWatchNow, movieLike, play, removeWatchNow, watchNow } from "./player.js";
 import { completedActions, confirmRedownload, listable, markWatched, onMyList, removeCompleted, removeContinue, resumable, setMyList } from "./mylist.js";
@@ -639,7 +639,7 @@ function hero(picks, keep = null) {
   }
   function restart() {
     clearInterval(heroTimer);
-    heroTimer = setInterval(() => { if (!document.hidden && $("#player").hidden && !$("#detail").open && !preview && document.body.contains(section)) show(at + 1); }, 9000);
+    heroTimer = setInterval(() => { if (!away() && $("#player").hidden && !$("#detail").open && !preview && document.body.contains(section)) show(at + 1); }, 9000);
   }
   section.resume();
   return section;
@@ -1104,7 +1104,7 @@ export function warmTabs() {
   setTimeout(async () => {
     const who = personKey();
     for (const tab of ["home", "movies", "series", "anime", "mylist", "downloads"]) {
-      if (document.hidden) return;
+      if (away()) return;
       const rows = await invoke("media_rows", { tab }).catch(() => null);
       if (who !== personKey()) return;
       if (rows && hasContent(tab, rows)) saveRows(tab, rows);
@@ -1117,10 +1117,10 @@ export function warmTabs() {
 function startRefresh(view, tab, entry, seq) {
   clearInterval(refreshTimer);
   if (tab === "downloads") {
-    refreshTimer = setInterval(() => { if (!document.hidden && $("#player").hidden) fillDownloads(view, seq); }, 15000);
+    refreshTimer = setInterval(() => { if (!away() && $("#player").hidden) fillDownloads(view, seq); }, 15000);
   } else if (entry.kind === "rows" && entry.rows.some((r) => r.id === "downloading" || r.id === "mylist")) {
     refreshTimer = setInterval(() => {
-      if (document.hidden || !$("#player").hidden || $("#detail").open || preview) return;
+      if (away() || !$("#player").hidden || $("#detail").open || preview) return;
       refreshPage(view, tab, entry, seq);
     }, 20000);
   }

@@ -1133,14 +1133,23 @@ pub fn spawn(app: AppHandle) {
                 crate::read::fetch_new(&app).await;
                 crate::read::clean_up(&app).await;
             }
+            let using = crate::activity::active();
+            let coming = crate::activity::downloads_running(&app).await;
             check(&app, &mut seen).await;
-            crate::history::sync(&app).await;
-            crate::transcodes::keep_tidy(&app).await;
-            crate::trickplay::ensure(&app).await;
+            // The watch log only changes while someone watches (the clean-up syncs it itself).
+            if using {
+                crate::history::sync(&app).await;
+            }
+            // Jellyfin's settings rarely drift: once an hour is plenty.
+            if n % 30 == 0 {
+                crate::transcodes::keep_tidy(&app).await;
+                crate::trickplay::ensure(&app).await;
+            }
             tidy_imported(&app).await;
             crate::books::tick(&app).await;
             crate::watchnow::tick(&app).await;
-            tokio::time::sleep(TICK).await;
+            // Nobody on it and nothing coming in: new releases are looked for every 10 minutes.
+            crate::activity::nap(coming, TICK, Duration::from_secs(10 * 60)).await;
         }
     });
 }

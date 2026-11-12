@@ -6,7 +6,7 @@
 // complete copy, found by asking every source) or a copy of your choice,
 // then which chapters.
 import { hideButton, isHidden, markHidden } from "./hidden.js";
-import { ask, choose, el, expandRow, getPref, icon, ICON, invoke, listen, personKey, setPref, toast } from "./api.js";
+import { away, ask, choose, el, expandRow, getPref, icon, ICON, invoke, listen, personKey, setPref, toast } from "./api.js";
 import { selectable, stopSelecting } from "./select.js";
 import { openReader } from "./reader.js";
 import { openBook } from "./bookreader.js";
@@ -626,7 +626,7 @@ function readHero(picks) {
     clearInterval(heroTimer);
     heroTimer = setInterval(() => {
       if (!document.body.contains(section)) { clearInterval(heroTimer); return; }
-      if (!document.hidden && !(dlg && dlg.open) && !document.querySelector(".reader")) show(at + 1);
+      if (!away() && !(dlg && dlg.open) && !document.querySelector(".reader")) show(at + 1);
     }, 9000);
   }
   restart();
@@ -1335,7 +1335,7 @@ async function downloadsPage(view, my) {
       body.replaceChildren(note(d.error));
     }
     for (const [k, x] of want) rows.get(k).set(x);
-    if (d.books.length) timer = setTimeout(function again() { if (!alive(my)) return; if (document.hidden) { timer = setTimeout(again, 4000); return; } draw(); }, 4000);
+    if (d.books.length) timer = setTimeout(function again() { if (!alive(my)) return; if (away()) { timer = setTimeout(again, 4000); return; } draw(); }, 4000);
   };
   // Chapters moved: looked at again, a little after the last change.
   let soon = 0;
@@ -1967,7 +1967,7 @@ listen("read-live", (e) => {
   if ((items || []).some((it) => it.done)) {
     clearTimeout(landedSoon);
     landedSoon = setTimeout(function again() {
-      if (document.body.dataset.mode !== "read" || document.hidden) return;
+      if (document.body.dataset.mode !== "read" || away()) return;
       if (dlg && dlg.open) { landedSoon = setTimeout(again, 3000); return; }
       window.dispatchEvent(new Event("chillarr:refresh"));
     }, 3000);

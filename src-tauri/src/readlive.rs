@@ -72,7 +72,12 @@ pub fn start(app: AppHandle) {
         let mut failing = false;
         loop {
             let busy = !prev.is_empty();
-            tokio::time::sleep(if busy { BUSY_EVERY } else { IDLE_EVERY }).await;
+            // Something downloading: every 2 s. Otherwise every 10 s with someone on it, a minute without.
+            if busy {
+                tokio::time::sleep(BUSY_EVERY).await;
+            } else {
+                crate::activity::nap(false, IDLE_EVERY, Duration::from_secs(60)).await;
+            }
             // Nothing to ask before reading is set up.
             if crate::read::followed(&app).is_empty() {
                 continue;

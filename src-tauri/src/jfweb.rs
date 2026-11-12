@@ -671,7 +671,7 @@ pub fn spawn(app: AppHandle) {
         let mut tried = String::new();
         loop {
             check(&app, &mut said_service, &mut tried).await;
-            tokio::time::sleep(Duration::from_secs(5 * 60)).await;
+            crate::activity::nap(false, Duration::from_secs(5 * 60), Duration::from_secs(30 * 60)).await;
         }
     });
 }

@@ -1,7 +1,7 @@
 // Routing between tabs, the top bar, search, and the first-run tutorial.
 import { refreshHidden, renderHidden } from "./hidden.js";
 import { setKids } from "./filterpanel.js";
-import { $, el, getPref, invoke, personKey, screenMode, setPerson, setPref, store, viewer, WEB, windowFull } from "./api.js";
+import { away, $, el, getPref, invoke, personKey, screenMode, setPerson, setPref, store, viewer, WEB, windowFull } from "./api.js";
 import { renderTab, renderSearch, renderExplore, renderMaker, stopBrowse, warmTabs, markRestyle } from "./browse.js";
 import { renderFilter } from "./filter.js";
 import { renderRead, renderReadSearch, softRefresh, stopRead } from "./read.js";
@@ -280,7 +280,7 @@ window.addEventListener("chillarr:refresh", () => {
 let seenAt = 0;
 const seenNow = () => {
   const t = Date.now();
-  if (t - seenAt < 60000 || document.hidden) return;
+  if (t - seenAt < 60000 || away()) return;
   seenAt = t;
   invoke("seen_touch").catch(() => { seenAt = 0; });
 };
