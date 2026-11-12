@@ -272,13 +272,44 @@ pub fn merge_copies(lists: Vec<Vec<crate::suwayomi::Chapter>>) -> Vec<(crate::su
     out
 }
 
+/// A chapter as `read_core::keep_mask` sees it: its number and upload time (ms).
+fn shape(c: &crate::suwayomi::Chapter) -> (Option<f64>, Option<i64>) {
+    (c.number, c.uploaded.as_deref().and_then(|u| u.parse::<i64>().ok()).filter(|&d| d > 0))
+}
+
+/// Each copy without the numbers it can't be trusted with (read_core::keep_mask):
+/// a copy's own run of chapters, plus what another copy's own run backs.
+pub fn clean_copies(lists: Vec<Vec<crate::suwayomi::Chapter>>) -> Vec<Vec<crate::suwayomi::Chapter>> {
+    let shapes: Vec<Vec<(Option<f64>, Option<i64>)>> = lists.iter().map(|l| l.iter().map(shape).collect()).collect();
+    let tops: Vec<Option<f64>> = shapes.iter().map(|s| read_core::own_run_top(s)).collect();
+    lists
+        .into_iter()
+        .enumerate()
+        .map(|(i, list)| {
+            let backing = tops.iter().enumerate().filter(|(j, _)| *j != i).filter_map(|(_, t)| *t).fold(None, |m: Option<f64>, n| Some(m.map_or(n, |m| m.max(n))));
+            let mask = read_core::keep_mask(&shapes[i], backing);
+            list.into_iter().zip(mask).filter(|(_, k)| *k).map(|(c, _)| c).collect()
+        })
+        .collect()
+}
+
+/// A saved mark ("known up to", "told") above what the list can be trusted
+/// with comes down to it: a stray 276 or 560 saved before kept every real
+/// chapter after the true newest from being fetched or told.
+pub fn lowered_mark(mark: Option<f64>, top: Option<f64>) -> Option<f64> {
+    match (mark, top) {
+        (Some(m), Some(t)) if m > t => Some(t),
+        _ => mark,
+    }
+}
+
 /// A followed series' chapters across its copies. The main copy must answer.
 pub async fn chapters_of(f: &Followed) -> Result<Vec<(crate::suwayomi::Chapter, usize)>, String> {
     let mut lists = vec![crate::suwayomi::chapters(f.manga_id).await?];
     for x in &f.fill {
         lists.push(crate::suwayomi::chapters(x.manga_id).await.unwrap_or_default());
     }
-    Ok(merge_copies(lists))
+    Ok(merge_copies(clean_copies(lists)))
 }
 
 async fn chapter_list(f: &Followed) -> Result<Vec<crate::suwayomi::Chapter>, String> {
@@ -1109,7 +1140,7 @@ pub async fn copy_chapters(app: &AppHandle, manga_id: i64, fill_id: Option<i64>)
     if let Some(f) = fill_id {
         lists.push(crate::suwayomi::chapters(f).await.unwrap_or_default());
     }
-    Ok(merge_copies(lists).into_iter().map(|(ch, i)| PickRow { ch, fill: i > 0 }).collect())
+    Ok(merge_copies(clean_copies(lists)).into_iter().map(|(ch, i)| PickRow { ch, fill: i > 0 }).collect())
 }
 
 /// What to download when following.
@@ -1189,7 +1220,7 @@ pub async fn follow(app: &AppHandle, meta: Meta, pick: crate::suwayomi::Candidat
     for x in &fill {
         lists.push(crate::suwayomi::chapters(x.manga_id).await.unwrap_or_default());
     }
-    let merged = merge_copies(lists);
+    let merged = merge_copies(clean_copies(lists));
     let known_upto = top_number(merged.iter().map(|x| &x.0));
     let wanted: Vec<i64> = merged
         .into_iter()
@@ -1442,8 +1473,13 @@ async fn fetch_new_once(app: &AppHandle) {
     for f in list.into_iter().filter(|f| f.new_too) {
         let Ok(chs) = chapter_list(&f).await else { continue };
         let top = top_number(chs.iter());
+        // A mark saved from a stray number comes down, so what follows the real newest is fetched.
+        let lowered = lowered_mark(f.known_upto, top);
+        if lowered != f.known_upto {
+            update_followed(app, &f.key, |x| x.known_upto = lowered);
+        }
         // Not known yet (followed before this was kept): what's listed now is the line.
-        let Some(mark) = f.known_upto else {
+        let Some(mark) = lowered else {
             if top.is_some() {
                 update_followed(app, &f.key, |x| x.known_upto = top);
             }
@@ -2220,6 +2256,31 @@ fn search_args(adult: bool, porn: bool) -> &'static str {
 mod tests {
     use super::*;
     use crate::suwayomi::Chapter;
+
+    fn dated(id: i64, n: f64, ms: i64) -> Chapter {
+        Chapter { uploaded: Some(ms.to_string()), ..ch(id, n, false) }
+    }
+
+    #[test]
+    fn stray_numbers_are_dropped_before_copies_merge() {
+        const W: i64 = 7 * 86_400_000;
+        let base = 1_700_000_000_000;
+        // Bbato (main) 1..116, MangaK 1..120 + "276" from long before.
+        let main: Vec<Chapter> = (1..=116).map(|n| dated(n, n as f64, base + n * W)).collect();
+        let mut fill: Vec<Chapter> = (1..=120).map(|n| dated(1000 + n, n as f64, base + n * W)).collect();
+        fill.push(dated(9999, 276.0, base));
+        let merged = merge_copies(clean_copies(vec![main, fill]));
+        assert_eq!(top_number(merged.iter().map(|x| &x.0)), Some(120.0));
+        assert!(merged.iter().all(|x| x.0.id != 9999));
+    }
+
+    #[test]
+    fn a_mark_above_what_can_be_trusted_comes_down() {
+        assert_eq!(lowered_mark(Some(276.0), Some(120.0)), Some(120.0));
+        assert_eq!(lowered_mark(Some(100.0), Some(120.0)), Some(100.0));
+        assert_eq!(lowered_mark(None, Some(120.0)), None);
+        assert_eq!(lowered_mark(Some(276.0), None), Some(276.0), "nothing listed: left alone");
+    }
 
     fn ch(id: i64, n: f64, downloaded: bool) -> Chapter {
         Chapter { id, name: format!("Chapter {n}"), number: Some(n), scanlator: None, downloaded, pages: 10, uploaded: None }

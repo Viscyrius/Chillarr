@@ -144,7 +144,9 @@ fn fmt(n: f64) -> String {
 async fn tell_new(app: &AppHandle, f: &Followed) {
     let Ok(chs) = read::chapter_list_of(f).await else { return };
     let here: Vec<f64> = chs.iter().filter(|c| c.downloaded).filter_map(|c| c.number).collect();
-    let (text, told) = new_note(&f.title, f.told, &here);
+    // A "told" saved from a stray number (276, 560) comes down to the trusted newest.
+    let was = read::lowered_mark(f.told, read::top_number(chs.iter()));
+    let (text, told) = new_note(&f.title, was, &here);
     if told != f.told {
         read::update_followed(app, &f.key, |x| x.told = told);
     }
