@@ -1,6 +1,7 @@
 // The in-app player. Jellyfin decides how to send each file: as-is when the
 // app can play it, or converted on the fly into an HLS stream (played with hls.js).
 import { $, ask, AUDIO_LANGS, el, fmtTime, getPref, icon, invoke, listen, screenMode, setPref, store, toast, windowFull } from "./api.js";
+import { chooseAudio, isEnglish, speaks } from "./audiopick.js";
 import { SubRenderer, parseAss, parseVtt, setSubScale, subScale } from "./subrender.js";
 import { buffering, caughtUp, inGroup, leftPlayer, loadedHere, openTogether, requestPause, requestPlay, requestSeek, startedHere, toggleChat } from "./syncplay.js";
 
@@ -266,7 +267,6 @@ function subPref() {
 function saveSubPref(p) {
   setPref("chillarr-subs", JSON.stringify(p));
 }
-const isEnglish = (lang) => !lang || /^en/i.test(lang);
 
 /** Which subtitle track to start with: the remembered language, or English when the audio isn't. */
 function startingSub(info, preferExternal, audio = null) {
@@ -279,7 +279,7 @@ function startingSub(info, preferExternal, audio = null) {
   if (pref?.off) return null;
   const playing = info.audio.find((a) => a.index === audio) || info.audio.find((a) => a.default) || info.audio[0];
   // In the dub you asked for, nothing needs reading.
-  const inDub = store.settings?.audio_pref === "dub" && dubMatcher().test(playing?.lang || "");
+  const inDub = store.settings?.audio_pref === "dub" && !!playing && speaks(playing, store.settings?.audio_lang || "eng");
   const lang = pref?.lang || (isEnglish(playing?.lang) || inDub ? null : "eng");
   if (!lang) return null;
   const same = subs.filter((s) => s.lang === lang && s.url);
@@ -420,31 +420,11 @@ function saveAudioPref(tile, a) {
   const show = showOf(tile);
   if (show) setPref("chillarr-audio", JSON.stringify({ show, lang: a.lang || null }));
 }
-/** The track in the language last picked for this show, when the file starts in another. */
-function carriedAudio(tile, info) {
+/** The language picked by hand for this show, if any. */
+function handLang(tile) {
   let p = null;
   try { p = JSON.parse(getPref("chillarr-audio") || "null"); } catch (e) { return null; }
-  if (!p?.lang || p.show !== showOf(tile)) return null;
-  const def = info.audio.find((a) => a.default) || info.audio[0];
-  if (!def || def.lang === p.lang) return null;
-  return info.audio.find((a) => a.lang === p.lang)?.index ?? null;
-}
-
-const dubMatcher = () => (AUDIO_LANGS.find(([code]) => code === (store.settings?.audio_lang || "eng")) || AUDIO_LANGS[0])[2];
-
-/** The track Settings' sub or dub choice asks for, when the file starts in the other one. */
-function preferredAudio(info) {
-  const def = info.audio.find((a) => a.default) || info.audio[0];
-  if (!def || info.audio.length < 2) return null;
-  if (store.settings?.audio_pref === "dub") {
-    const says = dubMatcher();
-    if (says.test(def.lang || "")) return null;
-    return info.audio.find((a) => says.test(a.lang || ""))?.index ?? null;
-  }
-  // Original voices: only languages films are rarely dubbed into, so an English
-  // film with an extra Hindi or French track stays in English.
-  if (!isEnglish(def.lang)) return null;
-  return info.audio.find((a) => /^(ja|jp|ko|zh|ch[is])/i.test(a.lang || ""))?.index ?? null;
+  return p?.lang && p.show === showOf(tile) ? p.lang : null;
 }
 
 function pickAudio(a) {
@@ -606,8 +586,9 @@ async function load(tile, playlist, startAt, opts = {}) {
   if (seq !== loadSeq || box.hidden) return;
   // A new episode of a show you picked another language for: asked again in it.
   if (audio == null && session?.tile.jf_id !== tile.jf_id) {
-    const carried = carriedAudio(tile, info) ?? preferredAudio(info);
-    if (carried != null) return load(tile, playlist, startAt, { ...opts, audio: carried });
+    const pick = chooseAudio(info.audio, store.settings, handLang(tile));
+    if (pick.missing) toast(`This copy has no ${dubName()} voices.`);
+    if (pick.index != null) return load(tile, playlist, startAt, { ...opts, audio: pick.index });
   }
   if (info.hls && !window.Hls) {
     await hlsReady;

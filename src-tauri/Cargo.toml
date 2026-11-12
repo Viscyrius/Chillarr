@@ -53,6 +53,8 @@ windows-core = "0.62"
 
 [dev-dependencies]
 tempfile = "3"
+# The *arr apps run .NET regexes with lookbehind; tests check ours the same way.
+fancy-regex = "0.14"
 
 [profile.release]
 codegen-units = 1

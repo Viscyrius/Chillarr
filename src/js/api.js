@@ -194,12 +194,8 @@ export const LABEL = {
 };
 export const ORDER = ["Prowlarr", "Sonarr", "Radarr", "FlareSolverr", "QBittorrent", "Jellyfin", "Suwayomi"];
 
-/** Languages offered for dubs, with how a file's audio track names them. */
-export const AUDIO_LANGS = [
-  ["eng", "English", /^en/i], ["spa", "Spanish", /^(es|spa)/i], ["fre", "French", /^(fr)/i], ["ger", "German", /^(de|ger)/i],
-  ["ita", "Italian", /^it/i], ["por", "Portuguese", /^(pt|por)/i], ["rus", "Russian", /^ru/i], ["hin", "Hindi", /^hi/i],
-  ["ara", "Arabic", /^ar/i], ["tur", "Turkish", /^tr|^tur/i], ["jpn", "Japanese", /^(ja|jp)/i], ["kor", "Korean", /^ko/i], ["zho", "Chinese", /^(zh|ch[is])/i],
-];
+export { AUDIO_LANGS } from "./audiopick.js";
+import { AUDIO_LANGS } from "./audiopick.js";
 
 /** "Subtitles / Dubbed", and which language a dub should be in. `get` and `set` hold { audio_pref, audio_lang }. */
 export function audioChoice(get, set) {

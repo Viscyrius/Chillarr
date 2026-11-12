@@ -1,4 +1,5 @@
 mod arr;
+mod dubcheck;
 mod asked;
 mod week;
 mod downloads_home;
@@ -1250,7 +1251,11 @@ async fn set_settings(app: AppHandle, mut s: settings::Settings) -> Result<Vec<A
         }
         if dubs_changed {
             let a = app.clone();
-            tauri::async_runtime::spawn(async move { crate::pick::no_dubs(&a).await });
+            tauri::async_runtime::spawn(async move {
+                crate::pick::no_dubs(&a).await;
+                crate::dubcheck::sync_jellyfin(&a).await;
+                crate::dubcheck::pass(&a).await;
+            });
         }
     }
     set_autostart(&app, s.start_with_windows);
@@ -1568,6 +1573,8 @@ pub fn run() {
                 onboard::start_servers(app.handle());
             }
             storage::start_cleanup(app.handle().clone());
+            // Dubbed means the dub is in the file (dubcheck.rs), and Jellyfin's pages pick it too.
+            dubcheck::start(app.handle().clone());
             // The catalogs grow quietly in the background.
             let h = app.handle().clone();
             tauri::async_runtime::spawn(async move {

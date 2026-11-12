@@ -218,9 +218,20 @@ pub async fn no_disc_copies(app: &AppHandle) {
 /// Dubs that get added to other films' releases ("Dual Audio Hindi English"),
 /// as release-name words. Japanese and English aren't here: anime's dual
 /// audio is Japanese + English and is usually wanted; so is an English track
-/// on a foreign film. Short tags that collide with group names (PL, POR) are
-/// left out.
-const DUB_WORDS: &str = r"(hindi|tamil|telugu|malayalam|kannada|bengali|ita|italian|french|truefrench|vff|vfq|german|ger|spanish|latino|castellano|portuguese|russian|rus|ukrainian|ukr|polish|czech|hungarian|turkish|thai|vietnamese|persian)";
+/// on a foreign film. Brazilian releases say "Dublado" or "PT-BR" (measured:
+/// "[DUAL JAP PT-BR] [SUB PT-BR ENG]" came in as an English dub). A macro so
+/// the patterns below can be `concat!`ed at compile time.
+macro_rules! foreign_dub {
+    () => {
+        "hindi|tamil|telugu|malayalam|kannada|bengali|ita|italian|french|truefrench|vff|vfq|german|ger|spanish|latino|castellano|portuguese|dublado|pt-?br|ptbr|russian|rus|ukrainian|ukr|polish|czech|hungarian|turkish|thai|vietnamese|persian"
+    };
+}
+/// One of those words, as a whole word ("ger" not inside "Danger").
+macro_rules! foreign_word {
+    () => {
+        concat!(r"(?<![a-z0-9])(", foreign_dub!(), r")(?![a-z0-9])")
+    };
+}
 const DUB_FORMAT: &str = "Chillarr: extra dub";
 /// Enough to take a release below any profile's minimum score.
 const DUB_SCORE: i64 = -10000;
@@ -236,7 +247,7 @@ const DUB_SCORE: i64 = -10000;
 pub(crate) fn dub_format(_options: &[Value]) -> Value {
     json!({ "name": DUB_FORMAT, "includeCustomFormatWhenRenaming": false, "specifications": [
         { "name": "A dub in the name", "implementation": "ReleaseTitleSpecification", "negate": false, "required": true,
-          "fields": [{ "name": "value", "value": format!("(?i){DUB_WORDS}") }] },
+          "fields": [{ "name": "value", "value": concat!("(?i)", foreign_word!()) }] },
         { "name": "Not only the film's own language", "implementation": "LanguageSpecification", "negate": false, "required": true,
           "fields": [{ "name": "value", "value": -2 }, { "name": "exceptLanguage", "value": true }] }
     ]})
@@ -247,7 +258,8 @@ pub(crate) fn dub_format(_options: &[Value]) -> Value {
 /// (label, type, order...), so comparing whole fields always differed.
 fn same_specs(have: &Value, want: &Value) -> bool {
     let (Some(h), Some(w)) = (have["specifications"].as_array(), want["specifications"].as_array()) else { return false };
-    h.len() == w.len()
+    !has_control(have)
+        && h.len() == w.len()
         && h.iter().zip(w).all(|(h, w)| {
             ["name", "implementation", "negate", "required"].iter().all(|k| h[k] == w[k])
                 && w["fields"].as_array().into_iter().flatten().all(|wf| {
@@ -277,8 +289,19 @@ pub(crate) fn score_format(p: &mut Value, format: i64, score: i64) -> bool {
 
 const HAS_DUB_FORMAT: &str = "Chillarr: has a dub";
 const ONLY_DUB_FORMAT: &str = "Chillarr: dub only";
-/// A release that says it has dubbed voices, alone or beside the original.
-const HAS_DUB: &str = r"(?i)(dual|multi)[ ._-]?audio|(?<![a-z0-9])dub(bed|s)?(?![a-z0-9])";
+/// An English dub, named: "Dual Audio ... ENG", "English Dub", "(Dub) [ENG]".
+/// "Dual Audio" alone isn't proof (that's `MAYBE_DUB`), English subtitles
+/// ("ENG SUB") aren't a dub, and a name with a foreign dub in it never counts.
+const HAS_DUB: &str = concat!(
+    r"(?i)^(?!.*", foreign_word!(), r")",
+    r".*((?<![a-z0-9])((dual|multi)([ ._-]?audio)?|dub(bed|s)?)(?![a-z0-9]).*(?<![a-z0-9])(?<!sub )(?<!sub\.)(?<!sub_)(?<!sub-)eng(lish)?(?![a-z0-9])(?![ ._-]?sub)",
+    r"|(?<![a-z0-9])eng(lish)?(?![a-z0-9])(?![ ._-]?sub).*(?<![a-z0-9])(dual|multi)[ ._-]?audio(?![a-z0-9])",
+    r"|(?<![a-z0-9])eng(lish)?[ ._-]?dub(bed|s)?(?![a-z0-9]))"
+);
+const MAYBE_DUB_FORMAT: &str = "Chillarr: maybe a dub";
+/// "Dual Audio" with no language named and no foreign dub word: usually
+/// Japanese + English for anime, but only worth a little.
+const MAYBE_DUB: &str = concat!(r"(?i)^(?!.*", foreign_word!(), r").*(?<![a-z0-9])(dual|multi)[ ._-]?audio(?![a-z0-9])");
 /// A release that says it's dubbed and not that it carries the original too.
 const ONLY_DUB: &str = r"(?i)^(?!.*(dual|multi)[ ._-]?audio)(?!.*(?<![a-z0-9])dual(?![a-z0-9])).*(?<![a-z0-9])(dubbed|eng(lish)?[ ._-]?dub)(?![a-z0-9])";
 /// Words release names use for a dub in each language Chillarr offers. None: not one of them.
@@ -313,6 +336,17 @@ fn has_dub_pattern(lang: &str) -> String {
 /// Wins between two copies of the same quality; quality still comes first.
 const PREFER_SCORE: i64 = 1000;
 
+/// What an unnamed "Dual Audio" earns: less than a named dub in every mode.
+pub(crate) fn maybe_score(_pref: &str) -> i64 {
+    PREFER_SCORE / 4
+}
+
+/// A stored format holding a control character (a `` once saved as a
+/// backspace byte) matches nothing: it must be written again.
+fn has_control(v: &Value) -> bool {
+    v["specifications"].as_array().into_iter().flatten().flat_map(|s| s["fields"].as_array().into_iter().flatten()).any(|f| f["value"].as_str().is_some_and(|t| t.chars().any(|c| c.is_control())))
+}
+
 fn title_format(name: &str, pattern: &str) -> Value {
     json!({ "name": name, "includeCustomFormatWhenRenaming": false, "specifications": [
         { "name": name, "implementation": "ReleaseTitleSpecification", "negate": false, "required": true,
@@ -332,27 +366,41 @@ pub(crate) fn audio_scores(pref: &str) -> (i64, i64) {
     }
 }
 
-/// A custom format, made or brought up to date. Its id.
+/// A custom format, made or brought up to date. Its id. Every failure is
+/// logged: these used to fail silently, and a broken format then refused
+/// nothing for weeks (2026-11-12: backspace bytes in "extra dub").
 async fn ensure_format(app: &AppHandle, a: &crate::arr::Arr, id: AppId, want: &Value) -> Option<i64> {
     let name = want["name"].as_str().unwrap_or("");
-    match a.list("customformat").await.unwrap_or_default().into_iter().find(|c| c["name"] == name) {
-        Some(mut c) => {
-            let fid = c["id"].as_i64();
-            if !same_specs(&c, want) {
-                c["specifications"] = want["specifications"].clone();
-                if let Some(f) = fid {
-                    let _ = a.update(&format!("customformat/{f}"), &c).await;
-                }
-            }
-            fid
+    // A failed list isn't an empty one: creating then fails with "Must be unique".
+    let list = match a.list("customformat").await {
+        Ok(l) => l,
+        Err(e) => {
+            log(app, Level::Amber, format!("Couldn't read {id:?}'s formats to set up {name}: {e:?}"));
+            return None;
         }
-        None => match a.create("customformat", want).await {
-            Ok(v) => v["id"].as_i64(),
-            Err(e) => {
-                log(app, Level::Amber, format!("Couldn't set up {name} in {id:?}: {e:?}"));
-                None
-            }
-        },
+    };
+    if let Some(mut c) = list.into_iter().find(|c| c["name"] == name) {
+        let fid = c["id"].as_i64()?;
+        if same_specs(&c, want) {
+            return Some(fid);
+        }
+        c["specifications"] = want["specifications"].clone();
+        match a.update(&format!("customformat/{fid}"), &c).await {
+            Ok(()) => return Some(fid),
+            Err(e) => log(app, Level::Amber, format!("Couldn't update {name} in {id:?} ({e:?}); making it again.")),
+        }
+        // Made again from scratch; the profiles get its new id scored below.
+        if let Err(e) = a.delete(&format!("customformat/{fid}")).await {
+            log(app, Level::Amber, format!("Couldn't remove the old {name} in {id:?}: {e:?}"));
+            return None;
+        }
+    }
+    match a.create("customformat", want).await {
+        Ok(v) => v["id"].as_i64(),
+        Err(e) => {
+            log(app, Level::Amber, format!("Couldn't set up {name} in {id:?}: {e:?}"));
+            None
+        }
     }
 }
 
@@ -381,7 +429,7 @@ pub async fn no_dubs(app: &AppHandle) {
             continue;
         }
         let mut scores: Vec<(i64, i64)> = Vec::new();
-        for (want, score) in [(dub_format(&options), if skip { DUB_SCORE } else { 0 }), (title_format(HAS_DUB_FORMAT, &has_dub_pattern(if pref == "dub" { &lang } else { "eng" })), has_score), (title_format(ONLY_DUB_FORMAT, ONLY_DUB), only_score)] {
+        for (want, score) in [(dub_format(&options), if skip { DUB_SCORE } else { 0 }), (title_format(HAS_DUB_FORMAT, &has_dub_pattern(if pref == "dub" { &lang } else { "eng" })), has_score), (title_format(ONLY_DUB_FORMAT, ONLY_DUB), only_score), (title_format(MAYBE_DUB_FORMAT, MAYBE_DUB), if pref == "dub" && lang != "eng" { 0 } else { maybe_score(&pref) })] {
             if let Some(format) = ensure_format(app, &a, id, &want).await {
                 scores.push((format, score));
             }
@@ -1475,6 +1523,65 @@ mod tests {
         assert!(!score_format(&mut p, 7, -10000));
         assert!(score_format(&mut p, 7, 0));
         assert_eq!(p["formatItems"][0]["score"], 0);
+    }
+
+    fn hits(pattern: &str, name: &str) -> bool {
+        fancy_regex::Regex::new(pattern).unwrap().is_match(name).unwrap()
+    }
+    fn extra() -> String {
+        dub_format(&[])["specifications"][0]["fields"][0]["value"].as_str().unwrap().to_string()
+    }
+    const ANITSU: &str = "[Anitsu] Mushoku Tensei - 13 [DUAL JAP PT-BR] [SUB PT-BR ENG]";
+    const DUBLADO: &str = "The Walking Dead S06E16 1080p Dual Audio Dublado";
+    const BREEZE: &str = "[SubsPlease] Breeze - 03 (1080p) Dual Audio";
+
+    #[test]
+    fn pt_br_dual_is_a_foreign_dub() {
+        assert!(hits(&extra(), ANITSU), "PT-BR is a Portuguese dub");
+        assert!(!hits(&has_dub_pattern("eng"), ANITSU), "ENG here is the subtitles");
+        assert!(!hits(MAYBE_DUB, ANITSU));
+    }
+
+    #[test]
+    fn dublado_is_a_foreign_dub() {
+        assert!(hits(&extra(), DUBLADO));
+        assert!(!hits(&has_dub_pattern("eng"), DUBLADO));
+        assert!(!hits(MAYBE_DUB, DUBLADO));
+    }
+
+    #[test]
+    fn plain_dual_audio_is_only_a_maybe() {
+        assert!(!hits(&has_dub_pattern("eng"), BREEZE), "no language named: not proof of English");
+        assert!(hits(MAYBE_DUB, BREEZE));
+        assert!(!hits(&extra(), BREEZE));
+        assert!(maybe_score("dub") > 0 && maybe_score("dub") < audio_scores("dub").0);
+    }
+
+    #[test]
+    fn named_english_dual_is_preferred() {
+        for n in ["[Judas] Show - 03 [Dual-Audio] [ENG]", "Show S01 English Dub 1080p", "Show.S01E02.1080p.Dual.Audio.English.Japanese", "[Group] Show (Dub) [ENG]"] {
+            assert!(hits(&has_dub_pattern("eng"), n), "{n}");
+        }
+        assert!(!hits(&has_dub_pattern("eng"), "[Erai-raws] Show - 03 [1080p][ENG SUB]"), "English subtitles aren't a dub");
+        assert!(!hits(&has_dub_pattern("eng"), "Movie 2024 1080p Dual Audio Hindi English"), "a Hindi dub release isn't what was asked");
+    }
+
+    #[test]
+    fn original_only_still_downloads() {
+        assert_eq!(audio_scores("dub").1, 0, "dub only isn't forced");
+        assert!(audio_scores("dub").0 > 0);
+        assert!(!hits(&extra(), "[SubsPlease] Show - 03 (1080p) [ABCD1234].mkv"));
+    }
+
+    #[test]
+    fn stored_pattern_has_no_control_chars() {
+        let want = dub_format(&[]);
+        let mut have = want.clone();
+        let v = extra().replace("(?i)", "(?i)\u{8}");
+        have["specifications"][0]["fields"][0]["value"] = json!(v);
+        assert!(!same_specs(&have, &want), "a stored pattern holding a backspace is broken");
+        assert!(!has_control(&want), "ours never holds one");
+        assert!(has_control(&have));
     }
 
     #[test]
