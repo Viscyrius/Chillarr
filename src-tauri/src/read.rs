@@ -1409,12 +1409,19 @@ pub fn cleanup_pick(chs: &[crate::suwayomi::Chapter], spots: &[&Spot], days: u32
     // Each reader's furthest point: the chapter they're on, unless it's read.
     let behind_all = spots.iter().map(|s| pos(s.chapter).map(|p| if s.read.contains_key(&s.chapter) { p + 1 } else { p }).unwrap_or(0)).min().unwrap_or(0);
     if whole {
-        // The whole series, once everyone has read all of it, `days` after the last read.
-        let last_read = spots.iter().flat_map(|s| chs.iter().filter_map(|c| s.read.get(&c.id))).max().copied().unwrap_or(now);
-        if behind_all < chs.len() || now - last_read < days as i64 * 86_400 {
+        // Every DOWNLOADED chapter marked read by everyone reading it (#75):
+        // chapters never downloaded don't hold it back. 50 of 200 downloaded
+        // and all 50 read used to keep everything until all 200 were read.
+        // Then all of it goes `days` after the last one was marked.
+        let here: Vec<i64> = chs.iter().filter(|c| c.downloaded).map(|c| c.id).collect();
+        if here.is_empty() || !spots.iter().all(|s| here.iter().all(|id| s.read.contains_key(id))) {
             return vec![];
         }
-        return chs.iter().filter(|c| c.downloaded).map(|c| c.id).collect();
+        let last_read = spots.iter().flat_map(|s| here.iter().filter_map(|id| s.read.get(id))).max().copied().unwrap_or(now);
+        if now - last_read < days as i64 * 86_400 {
+            return vec![];
+        }
+        return here;
     }
     chs.iter()
         .take(behind_all)
@@ -2489,6 +2496,25 @@ mod tests {
         fresh.read.insert(5, now - day);
         assert!(whole(&[&fresh]).is_empty(), "finished yesterday: kept for 3 days");
         assert!(whole(&[&done, &behind]).is_empty(), "someone else is still reading it");
+    }
+
+    #[test]
+    fn when_finished_goes_by_downloaded_chapters() {
+        // 200 listed, 1 to 50 downloaded and all 50 read: that's finished (#75).
+        let chs: Vec<Chapter> = (1..=200).map(|i| ch(i, i as f64, i <= 50)).collect();
+        let day = 86_400;
+        let now = 100 * day;
+        let mut me = Spot { chapter: 50, ..Default::default() };
+        for i in 1..=50 {
+            me.read.insert(i, now - 4 * day);
+        }
+        let got = cleanup_pick(&chs, &[&me], 3, now, true);
+        assert_eq!(got, (1..=50).collect::<Vec<i64>>());
+        let mut not_yet = me.clone();
+        not_yet.read.remove(&37);
+        assert!(cleanup_pick(&chs, &[&not_yet], 3, now, true).is_empty(), "one downloaded chapter still unread");
+        let other = Spot { chapter: 10, ..Default::default() };
+        assert!(cleanup_pick(&chs, &[&me, &other], 3, now, true).is_empty(), "another reader hasn't read them all");
     }
 
     #[test]

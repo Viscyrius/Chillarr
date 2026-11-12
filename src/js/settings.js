@@ -359,23 +359,32 @@ function readingBox() {
   const drawWhen = () => when.replaceChildren(
     el("button", { class: whole ? "" : "on", onclick: () => setWhen(false) }, "As you read"),
     el("button", { class: whole ? "on" : "", onclick: () => setWhen(true) }, "When finished"));
-  const whenRow = el("div", { class: "opt" }, el("span", {}, el("b", { text: "Delete" }),
-    el("small", { text: "As you read: each chapter goes once it's read. When finished: a series stays whole until everyone reading it has read every chapter, then all of it goes." })), when);
+  // Says exactly what each choice does, with the days filled in (#75).
+  const whenText = el("small");
+  const drawWhenText = () => {
+    const n = +days.value || 0;
+    const d = `${n} day${n === 1 ? "" : "s"}`;
+    whenText.textContent = whole
+      ? `When finished: nothing is deleted until every downloaded chapter is marked read. Then the whole series goes ${d} after the last one was marked. Marked read means you reached its last page, or marked it read yourself (one, a range or all).`
+      : `As you read: each chapter is deleted ${d} after it was marked read. Marked read means you reached its last page, or marked it read yourself (one, a range or all).`;
+  };
+  const whenRow = el("div", { class: "opt" }, el("span", {}, el("b", { text: "Delete" }), whenText), when);
   const save = async (n) => {
     try {
       await invoke("read_set_cleanup", { days: n, whole });
-      toast(!n ? "Chapters are kept." : whole ? `A series is deleted ${n} day${n === 1 ? "" : "s"} after everyone reading it has finished it.` : `Chapters are deleted ${n} day${n === 1 ? "" : "s"} after everyone reading them has read them.`);
+      toast(!n ? "Chapters are kept." : whole ? `A series is deleted ${n} day${n === 1 ? "" : "s"} after everyone reading it has marked every downloaded chapter read.` : `Chapters are deleted ${n} day${n === 1 ? "" : "s"} after everyone reading them has read them.`);
     } catch (e) { toast(String(e), true); }
   };
-  const setWhen = (w) => { whole = w; drawWhen(); save(+days.value || 0); };
+  const setWhen = (w) => { whole = w; drawWhen(); drawWhenText(); save(+days.value || 0); };
   invoke("get_settings").then((s) => {
     days.value = String((s && s.read_cleanup_days) || 0);
     whole = !!(s && s.read_cleanup_whole);
     drawWhen();
+    drawWhenText();
     whenRow.hidden = !(+days.value);
   }).catch(() => {});
   drawWhen();
-  days.addEventListener("change", () => { const n = +days.value || 0; whenRow.hidden = !n; save(n); });
+  days.addEventListener("change", () => { const n = +days.value || 0; whenRow.hidden = !n; drawWhenText(); save(n); });
   const inside = el("div", { class: "rs-inside" });
   const room = el("div", { class: "rs-room" });
   drawReadingRoom(inside, room);
