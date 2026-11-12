@@ -329,7 +329,7 @@ fn need(cmd: &str) -> Option<Need> {
         // series downloads it, like Download does for a film.
         | "read_rows" | "read_search" | "read_library" | "read_detail" | "read_sources" | "read_follow" | "read_open" | "read_progress" | "read_mode" | "read_hide_week" | "read_mark"
         // Each profile's own hidden list and password (hidden.rs).
-        | "hidden_status" | "hidden_set_password" | "hidden_unlock" | "hidden_lock" | "hidden_set" | "hidden_list"
+        | "seen_touch" | "hidden_status" | "hidden_set_password" | "hidden_unlock" | "hidden_lock" | "hidden_set" | "hidden_list"
         // Each profile's own Notify me list and notes (notify.rs).
         | "notify_state" | "notify_set" | "notify_list" | "notify_unseen"
         // Host-only ones check the viewer is the party's host (readparty.rs).
@@ -473,6 +473,12 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
         "read_progress" => res(crate::read::set_spot(app, &arg::<String>(a, "key")?, arg(a, "chapter")?, arg(a, "page")?, arg(a, "pages")?)),
         "read_mode" => res(crate::read::set_mode(app, &arg::<String>(a, "key")?, &arg::<String>(a, "mode")?)),
         "read_hide_week" => res(crate::read::set_hide_week(app, &arg::<String>(a, "key")?, arg(a, "hide")?)),
+        "seen_touch" => {
+            if let Some(uid) = crate::media::active_user(app) {
+                crate::seen::touch(app, &uid);
+            }
+            ok(json!(null))
+        }
         "hidden_status" => res(crate::hidden::status(app)),
         "hidden_set_password" => res(crate::hidden::set_password(app, &arg::<String>(a, "password")?, arg::<Option<String>>(a, "old")?.as_deref())),
         "hidden_unlock" => res(crate::hidden::unlock(app, &arg::<String>(a, "password")?)),
@@ -830,7 +836,7 @@ fn keeps_rows(cmd: &str) -> bool {
         || matches!(
             cmd,
             "media_rows" | "media_status" | "media_search" | "media_search_live" | "media_get" | "media_get_picked" | "media_details" | "media_similar" | "media_seasons" | "media_episodes" | "media_trailer"
-                | "media_explore" | "media_filter" | "media_filter_genres" | "media_filter_studios" | "media_anime_tags" | "media_maker" | "watch_week" | "hidden_status" | "web_viewer" | "profiles_list"
+                | "media_explore" | "media_filter" | "media_filter_genres" | "media_filter_studios" | "media_anime_tags" | "media_maker" | "watch_week" | "hidden_status" | "seen_touch" | "web_viewer" | "profiles_list"
         )
 }
 

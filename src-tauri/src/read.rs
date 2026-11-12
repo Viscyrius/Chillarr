@@ -365,6 +365,11 @@ fn followed_file(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(data_dir(app)?.join("reading.json"))
 }
 
+/// A followed series' title by its key (Activity's "last read").
+pub fn title_of(app: &AppHandle, key: &str) -> Option<String> {
+    followed(app).into_iter().find(|f| f.key == key).map(|f| f.title)
+}
+
 pub fn followed(app: &AppHandle) -> Vec<Followed> {
     let mut all: Vec<Followed> = followed_file(app).map(|p| load_json(&p)).unwrap_or_default();
     for f in &mut all {

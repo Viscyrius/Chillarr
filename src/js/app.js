@@ -274,3 +274,14 @@ window.addEventListener("chillarr:refresh", () => {
   // Coming back from the player (or a download landing) keeps your place on the page.
   route(true);
 });
+
+/* Activity's "Last on" (seen.rs): real use of a page, a tap, a key or a
+   scroll, reported at most once a minute. Polling pages don't count. */
+let seenAt = 0;
+const seenNow = () => {
+  const t = Date.now();
+  if (t - seenAt < 60000 || document.hidden) return;
+  seenAt = t;
+  invoke("seen_touch").catch(() => { seenAt = 0; });
+};
+for (const ev of ["pointerdown", "keydown", "wheel", "touchstart", "scroll"]) addEventListener(ev, seenNow, { passive: true, capture: true });

@@ -301,14 +301,15 @@ async function openActivity() {
   const body = el("div", { class: "pf-act-list" }, el("p", { class: "pf-sub", text: "Asking Jellyfin..." }));
   root.replaceChildren(el("div", { class: "pf-inner pf-act" },
     el("h1", { text: "Activity" }),
-    el("p", { class: "pf-sub", text: "When each profile was last on, on any device, and what they watched. Only you see this." }),
+    el("p", { class: "pf-sub", text: "When each profile was last on, on any device, and what they watched or read. Only you see this." }),
     body,
     el("div", { class: "pf-foot" }, el("button", { class: "btn ghost", onclick: () => openPicker(true) }, "Back"))));
   let all;
   try { all = await invoke("profiles_activity"); } catch (e) { body.replaceChildren(el("p", { class: "err", text: String(e) })); return; }
   body.replaceChildren(...all.map((a) => {
     const p = list.find((x) => x.id === a.id) || a;
-    const last = a.now.length ? "Watching now" : ago(a.last_active);
+    const readingNow = a.last_read && (Date.now() - Date.parse(a.last_read.at)) < 5 * 60000;
+    const last = a.now.length ? "Watching now" : readingNow ? "Reading now" : ago(a.last_active);
     const idle = !a.owner && !a.now.length && daysSince(a.last_active) >= INACTIVE_DAYS;
     const remove = a.owner ? null : el("button", { class: "btn ghost small danger", onclick: async () => {
       const ok = await ask(`Remove ${a.name}?`, "Their Jellyfin account goes, and with it every way they had in: their sign-ins on phones and TVs, the phone remote, what they watched and their My List. Downloaded movies and shows stay.", [], "Remove");
@@ -323,7 +324,8 @@ async function openActivity() {
           a.owner ? el("span", { class: "pf-act-tag", text: "You" }) : null,
           a.kids ? el("span", { class: "pf-act-tag", text: "Kids" }) : null,
           idle ? el("span", { class: "pf-act-tag warn", text: "Inactive" }) : null),
-        el("small", { class: "pf-act-when", text: last ? (a.now.length ? last : `Last on ${last}`) : "Never signed in" }),
+        el("small", { class: "pf-act-when", text: last ? (a.now.length || readingNow ? last : `Last on ${last}`) : "Never signed in" }),
+        a.last_read ? el("small", { class: "pf-act-when", text: `Read ${a.last_read.title} ${readingNow ? "now" : ago(a.last_read.at) || ""}` }) : null,
         a.now.length ? el("ul", { class: "pf-act-now" }, a.now.map((n) => el("li", { text: `${n.paused ? "Paused" : "Playing"}: ${n.title}, on ${n.device}` }))) : null,
         a.recent.length ? el("ul", { class: "pf-act-recent" }, a.recent.map((r) => el("li", {}, el("span", { text: r.title }), el("small", { text: `${r.done ? "Watched" : "Started"} ${ago(r.at) || ""}` })))) : el("small", { class: "pf-act-none", text: "Nothing watched yet." })),
       remove);

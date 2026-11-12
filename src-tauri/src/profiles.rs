@@ -489,8 +489,11 @@ pub struct Activity {
     pub color: String,
     pub owner: bool,
     pub kids: bool,
-    /// Last time Jellyfin saw the account do anything (RFC 3339), from any device.
+    /// Last time the profile did anything (RFC 3339), from any device: the
+    /// latest of Chillarr's own (seen.rs), Jellyfin's and its reading.
     pub last_active: Option<String>,
+    /// The series it read last and when (RFC 3339), if any.
+    pub last_read: Option<Played>,
     pub last_login: Option<String>,
     /// What they have open right now, one per device.
     pub now: Vec<NowPlaying>,
@@ -569,9 +572,17 @@ pub async fn activity(app: &AppHandle) -> Result<Vec<Activity>, String> {
                     .collect()
             })
             .unwrap_or_default();
+        // Reading never touches Jellyfin: its own progress counts too.
+        let spots = crate::read::spots(app, &p.id);
+        let newest = spots.iter().max_by_key(|(_, s)| s.at).map(|(k, s)| (k.clone(), s.at));
+        let jf = u["LastActivityDate"].as_str().and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok()).map(|t| t.timestamp()).filter(|t| *t > 978_307_200);
+        let when = crate::seen::latest(&[jf, crate::seen::get(app, &p.id), newest.as_ref().map(|n| n.1)]);
+        let rfc = |t: i64| chrono::DateTime::from_timestamp(t, 0).map(|d| d.to_rfc3339());
+        let last_read = newest.and_then(|(key, at)| Some(Played { title: crate::read::title_of(app, &key).unwrap_or_else(|| "a series".into()), at: rfc(at)?, done: false }));
         out.push(Activity {
             owner: p.id == me.user_id,
-            last_active: u["LastActivityDate"].as_str().map(String::from),
+            last_active: when.and_then(rfc),
+            last_read,
             last_login: u["LastLoginDate"].as_str().map(String::from),
             id: p.id,
             name: p.name,
@@ -1219,6 +1230,7 @@ pub async fn remove(app: &AppHandle, id: &str, pin: Option<String>, login: Optio
     crate::watchnow::drop_placeholders(app, &gone).await;
     let _ = std::fs::remove_file(app.path().app_data_dir().map(|d| crate::completed::hidden_file(&d, id)).unwrap_or_default());
     crate::hidden::forget_profile(app, id);
+    crate::seen::forget(app, id);
     let _ = std::fs::remove_file(app.path().app_data_dir().map(|d| crate::marker::file(&d, id)).unwrap_or_default());
     let _ = std::fs::remove_file(app.path().app_data_dir().map(|d| crate::marker::file(&d, id).with_extension("json.bad")).unwrap_or_default());
     let profiles = app.state::<Profiles>();

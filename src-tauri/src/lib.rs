@@ -1,5 +1,6 @@
 mod arr;
 mod dubcheck;
+mod seen;
 mod asked;
 mod week;
 mod downloads_home;
@@ -941,6 +942,15 @@ fn hidden_list(app: AppHandle) -> Result<Vec<hidden::Entry>, String> {
     hidden::list(&app)
 }
 
+/// A page reports real use (a tap, a key, a scroll), at most once a minute:
+/// Activity's "Last on" (seen.rs).
+#[tauri::command]
+fn seen_touch(app: AppHandle) {
+    if let Some(uid) = media::active_user(&app) {
+        seen::touch(&app, &uid);
+    }
+}
+
 /// The main profile at the PC (the admin panel) forgets a profile's hidden
 /// password, its list kept. Not on the bridge: phones can't.
 #[tauri::command]
@@ -1341,6 +1351,7 @@ pub fn run() {
         .manage(onboard::Onboard::default())
         .manage(read::Reading::default())
         .manage(hidden::Hidden::default())
+        .manage(seen::Seen::default())
         .invoke_handler(tauri::generate_handler![
             read_base,
             read_rows,
@@ -1365,6 +1376,7 @@ pub fn run() {
             notify_unseen,
             hidden_list,
             hidden_reset,
+            seen_touch,
             read_mark,
             read_folder,
             read_set_folder,
