@@ -751,11 +751,16 @@ pub async fn chapters(manga_id: i64) -> Result<Vec<Chapter>, String> {
 
 /// What's downloading right now: (manga id, chapter id, 0..1).
 pub async fn queue() -> Vec<(i64, i64, f64)> {
-    let Ok(v) = gql("{downloadStatus{queue{progress chapter{id manga{id}}}}}", json!({})).await else { return vec![] };
-    v["downloadStatus"]["queue"]
+    queue_checked().await.unwrap_or_default()
+}
+
+/// The queue, or why it couldn't be read (an error isn't an empty queue).
+pub async fn queue_checked() -> Result<Vec<(i64, i64, f64)>, String> {
+    let v = gql("{downloadStatus{queue{progress chapter{id manga{id}}}}}", json!({})).await?;
+    Ok(v["downloadStatus"]["queue"]
         .as_array()
         .map(|a| a.iter().filter_map(|q| Some((q["chapter"]["manga"]["id"].as_i64()?, q["chapter"]["id"].as_i64()?, q["progress"].as_f64().unwrap_or(0.0)))).collect())
-        .unwrap_or_default()
+        .unwrap_or_default())
 }
 
 /// Deletes downloaded chapters' files (they stay listed, so they can come back).

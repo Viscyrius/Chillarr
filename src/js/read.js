@@ -6,7 +6,7 @@
 // complete copy, found by asking every source) or a copy of your choice,
 // then which chapters.
 import { hideButton, isHidden, markHidden } from "./hidden.js";
-import { ask, choose, el, expandRow, getPref, icon, ICON, invoke, personKey, setPref, toast } from "./api.js";
+import { ask, choose, el, expandRow, getPref, icon, ICON, invoke, listen, personKey, setPref, toast } from "./api.js";
 import { selectable, stopSelecting } from "./select.js";
 import { openReader } from "./reader.js";
 import { openBook } from "./bookreader.js";
@@ -1206,35 +1206,53 @@ async function listPage(view, my) {
 async function downloadsPage(view, my) {
   const body = el("div", {}, ...skel());
   view.replaceChildren(page(head("Downloads"), body));
-  // One timer for the page: a Stop used to start a second loop beside the first.
+  // Rows by key: a new look changes the bars and counts in place, and only a
+  // series or book starting or finishing changes the list. Chapters move by
+  // read-live (readlive.rs); books (torrents) are looked at every 4 s while
+  // one downloads and the page is on screen.
+  const rows = new Map();
   let timer = 0;
+  let busy = false;
+  const seriesRow = (s) => {
+    const bar = el("span");
+    const count = el("small");
+    const n = el("div", { class: "read-dl" },
+      el("img", { class: "read-dl-cover", src: s.cover || "", alt: "" }),
+      el("div", { class: "read-dl-text" }, el("strong", { text: s.title }), count, el("div", { class: "read-q wide" }, bar)),
+      el("button", { class: "btn soft small", onclick: async () => { try { toast(await invoke("read_stop_chapters", { key: s.key })); draw(); } catch (e) { toast(String(e), true); } } }, "Stop"));
+    n.set = (x) => { count.textContent = `${x.chapters} chapter${x.chapters === 1 ? "" : "s"} to go`; bar.style.width = `${Math.max(3, Math.round(x.progress * 100))}%`; };
+    return n;
+  };
+  const bookRow = (b) => {
+    const bar = el("span");
+    const what = el("small");
+    const n = el("div", { class: "read-dl" },
+      el("img", { class: "read-dl-cover", src: b.cover || "", alt: "" }),
+      el("div", { class: "read-dl-text" }, el("strong", { text: b.title }), what, el("div", { class: "read-q wide" }, bar)));
+    n.set = (x) => { what.textContent = x.problem || (x.progress != null ? `${Math.round(x.progress * 100)}%` : "Starting"); bar.style.width = `${Math.max(3, Math.round((x.progress || 0) * 100))}%`; };
+    return n;
+  };
   const draw = async () => {
+    if (busy) return;
+    busy = true;
     clearTimeout(timer);
     const d = await invoke("read_downloads").catch((e) => ({ error: String(e), series: [], books: [] }));
+    busy = false;
     if (!alive(my)) return;
-    const items = [
-      ...d.series.map((s) => el("div", { class: "read-dl" },
-        el("img", { class: "read-dl-cover", src: s.cover || "", alt: "" }),
-        el("div", { class: "read-dl-text" }, el("strong", { text: s.title }),
-          el("small", { text: `${s.chapters} chapter${s.chapters === 1 ? "" : "s"} to go` }),
-          el("div", { class: "read-q wide" }, el("span", { style: `width:${Math.max(3, Math.round(s.progress * 100))}%` }))),
-        el("button", { class: "btn soft small", onclick: async () => { try { toast(await invoke("read_stop_chapters", { key: s.key })); draw(); } catch (e) { toast(String(e), true); } } }, "Stop"))),
-      ...d.books.map((b) => el("div", { class: "read-dl" },
-        el("img", { class: "read-dl-cover", src: b.cover || "", alt: "" }),
-        el("div", { class: "read-dl-text" }, el("strong", { text: b.title }),
-          el("small", { text: b.problem || (b.progress != null ? `${Math.round(b.progress * 100)}%` : "Starting") }),
-          el("div", { class: "read-q wide" }, el("span", { style: `width:${Math.max(3, Math.round((b.progress || 0) * 100))}%` }))))),
-    ];
-    body.replaceChildren(...(items.length ? items : [note(d.error || "Nothing is downloading.")]));
-    if (items.length) {
-      clearTimeout(timer);
-      timer = setTimeout(function again() {
-        if (!alive(my)) return;
-        if (document.hidden) { timer = setTimeout(again, 4000); return; }
-        draw();
-      }, 4000);
+    const want = [...d.series.map((x) => ["s" + x.key, x, seriesRow]), ...d.books.map((x) => ["b" + x.key, x, bookRow])];
+    const same = want.length === rows.size && want.every(([k]) => rows.has(k));
+    if (!same) {
+      rows.clear();
+      for (const [k, x, make] of want) rows.set(k, make(x));
+      body.replaceChildren(...(want.length ? rows.values() : [note(d.error || "Nothing is downloading.")]));
     }
+    for (const [k, x] of want) rows.get(k).set(x);
+    if (d.books.length) timer = setTimeout(function again() { if (!alive(my)) return; if (document.hidden) { timer = setTimeout(again, 4000); return; } draw(); }, 4000);
   };
+  // Chapters moved: looked at again, a little after the last change.
+  let soon = 0;
+  const onLive = () => { if (!alive(my)) { removeEventListener("chillarr:read-live", onLive); return; } clearTimeout(soon); soon = setTimeout(draw, 400); };
+  addEventListener("chillarr:read-live", onLive);
   await draw();
   return true;
 }
@@ -1733,20 +1751,6 @@ async function showFollowed(key, mine, c0) {
   const list = el("ol", { class: "read-chapters" }, ...d.chapters.slice().reverse().map((r) => chapterRow(key, r, c0)));
   body.append(...[where, markBar(key, d.chapters, c0), list, moreBySection(c, mine), similarSection(c, mine)].filter(Boolean));
   if (scroll) dlg.scrollTop = scroll;
-  // Chapters still coming: the list keeps itself current, but never while
-  // you're in the middle of something on the panel (picking chapters to
-  // delete, another copy, typing a chapter number, a question up): a redraw
-  // would throw that away. It looks again a little later.
-  if (d.downloading) {
-    const busy = () => dlg.querySelector(".read-delpick, .read-change") || dlg.contains(document.activeElement) && /^(INPUT|SELECT)$/.test(document.activeElement.tagName)
-      || document.getElementById("ask")?.open;
-    const tick = () => {
-      if (mine !== panelSeq || !dlg || !dlg.open) return;
-      if (busy() || document.hidden) { poll = setTimeout(tick, 5000); return; }
-      showFollowed(key, ++panelSeq, c0);
-    };
-    poll = setTimeout(tick, 5000);
-  }
 }
 
 /** Marks a stretch of chapters read (read somewhere else, or skipped), or the whole series. */
@@ -1807,7 +1811,7 @@ function chapterRow(key, r, c0) {
   const mark = r.downloaded ? el("button", { class: "read-mark", title: r.read ? "Mark unread" : "Mark read", "aria-label": r.read ? "Mark unread" : "Mark read",
     onclick: async (e) => { e.stopPropagation(); try { await invoke("read_mark", { key, chapters: [r.id], read: !r.read }); refreshIfOpen(key, c0); } catch (err) { toast(String(err), true); } } },
     icon(r.read ? "M5 12l5 5L20 7" : "M12 5a7 7 0 1 0 0 14 7 7 0 0 0 0-14z")) : null;
-  return el("li", { class: "read-ch" + (r.read ? " is-read" : "") + (r.downloaded ? "" : " not-here") },
+  const li = el("li", { class: "read-ch" + (r.read ? " is-read" : "") + (r.downloaded ? "" : " not-here"), dataset: { ch: String(r.id) } },
     el("button", { class: "read-ch-open", disabled: !r.downloaded, onclick: () => read(key, r.id, c0) },
       el("strong", { text: chLabel(r) }), name ? el("span", { class: "read-ch-name", text: name }) : null,
       r.scanlator && !/^unknown$/i.test(r.scanlator) ? el("small", { text: r.scanlator }) : null,
@@ -1816,7 +1820,38 @@ function chapterRow(key, r, c0) {
     el("span", { class: "read-ch-state", text: state }), get || mark,
     r.downloaded && delOk.get(key) ? el("button", { class: "read-mark read-del", title: "Delete this chapter's download", "aria-label": `Delete ${chLabel(r)}`,
       onclick: async (e) => { e.stopPropagation(); if (await deleteChapters(key, [r.id], chLabel(r))) refreshIfOpen(key, c0); } }, icon(TRASH)) : null);
+  // What a live update (read-live) needs to draw this row again on its own.
+  li._row = { key, r, c0 };
+  return li;
 }
+
+/* Chapter downloads, live (readlive.rs): the one row changes; the panel isn't
+   drawn again (it used to be, every 5 seconds, which reloaded its pictures,
+   moved the scroll and dropped what was being typed). */
+let landedSoon = 0;
+listen("read-live", (e) => {
+  const { items, error } = e.payload || {};
+  if (error) { if (dlg && dlg.open) toast(error, true); return; }
+  for (const it of items || []) {
+    const node = dlg && dlg.open ? dlg.querySelector(`.read-ch[data-ch="${it.ch}"]`) : null;
+    if (!node || !node._row || node._row.key !== it.key) continue;
+    const { key, r, c0 } = node._row;
+    r.queued = it.done ? null : it.p;
+    if (it.done) r.downloaded = true;
+    node.replaceWith(chapterRow(key, r, c0));
+  }
+  window.dispatchEvent(new CustomEvent("chillarr:read-live", { detail: items || [] }));
+  // A chapter landed: the reading tab under it shows it (what you follow is
+  // asked again, softly), once things go quiet, and not under an open panel.
+  if ((items || []).some((it) => it.done)) {
+    clearTimeout(landedSoon);
+    landedSoon = setTimeout(function again() {
+      if (document.body.dataset.mode !== "read" || document.hidden) return;
+      if (dlg && dlg.open) { landedSoon = setTimeout(again, 3000); return; }
+      window.dispatchEvent(new Event("chillarr:refresh"));
+    }, 3000);
+  }
+});
 
 /* ---------- deleting downloads (issue #39) ---------- */
 // The series stays followed: deleted chapters can be downloaded again, and

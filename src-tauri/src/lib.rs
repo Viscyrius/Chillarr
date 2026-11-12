@@ -1,6 +1,7 @@
 mod arr;
 mod dubcheck;
 mod seen;
+mod readlive;
 mod asked;
 mod week;
 mod downloads_home;
@@ -1604,6 +1605,8 @@ pub fn run() {
             storage::start_cleanup(app.handle().clone());
             // Dubbed means the dub is in the file (dubcheck.rs), and Jellyfin's pages pick it too.
             dubcheck::start(app.handle().clone());
+            // Chapter downloads pushed to open pages as they move (readlive.rs).
+            readlive::start(app.handle().clone());
             // The catalogs grow quietly in the background.
             let h = app.handle().clone();
             tauri::async_runtime::spawn(async move {
