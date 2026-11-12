@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.20.0 (2026-11-12)
+- Fixed for good: Dubbed now means English voices are really in the file. A release only counts as an English dub when its name says English. Plain "Dual Audio" is no longer taken as proof, and Portuguese dubs ("Dublado", "PT-BR") are refused like other foreign dubs. That is how Mushoku Tensei came in with Japanese and Portuguese only. The rule that refuses foreign dubs had broken characters in Sonarr and Radarr and refused nothing. It is checked and rebuilt now, and when Chillarr can't change it, the log says so.
+- With Dubbed on, Chillarr checks each downloaded episode and film for the dub language. A file without it is replaced when a copy that names it turns up. The same release is never taken twice, and nothing is deleted until a replacement has been found.
+- The player starts in English when you chose Dubbed, also when the track is only named "English" without a language tag. When the file has no English voices, it says so. A language you picked yourself for a show still wins. Jellyfin's own apps now start in your dub language too.
+- Fixed for good: Hide really hides. Hidden titles never show on any page again, and they have their own Hidden tab. The Hidden tab opens with your hidden password, only on the device you typed it on, for 15 minutes. Before, setting the password or unlocking showed every hidden title on every page, on every device of that profile, for an hour that kept starting over. That is why hiding seemed to do nothing.
+- The main profile, in the Chillarr app on the PC, can reset any profile's hidden password with one button in Manage profiles. What they hid stays hidden.
+- Fixed: a film and a show with the same TMDB number could hide each other.
+- Fixed: reading showed chapters from the wrong place as the newest ones, like Swordborne's "Chapter 276" (a different manga) and Reincarnated Murim Lord's 559 and 560 (old chapters with stretched pages). Chillarr now checks that a chapter number fits the rest of that copy's list. These strays had also stopped the real next chapters from downloading by themselves, and that works again.
+- Pages in AVIF format show at the right size instead of stretched.
+- Reading search finds a series when you type its name with an extra "s" or a letter off ("Chronicles of Runes").
+- Activity now counts reading, and phones. It used to look only at Jellyfin plays, so someone reading manhwa on their phone for two days showed as "Last on 2 days ago". It also shows what each profile read last, and "Reading now".
+- Phones can delete downloaded books and chapters. Any profile can delete what only it reads; the main profile can delete anything, and is asked first when someone else reads it too.
+- The chapter range in a series ("Chapters 1 to 20") now has Download and Delete next to Mark read.
+- Chapter downloads move live, without the page redrawing itself. Before, the series panel was rebuilt every 5 seconds, and the Downloads tab every 4, which made pictures blink, moved the scroll and cleared what you were typing. A finished movie download no longer redraws the reading pages either. When the manga downloader can't be reached, the Downloads tab says so instead of "Nothing is downloading".
+- Midnight's Latest updates shows two rows, newest first. A series with a new chapter slides in and the oldest drops off the end.
+- New style: Velvet. Burgundy velvet with brass when dark, claret on rose paper when light, with serif titles. Pick it under the Look button, for watching and reading.
+- Custom colours: next to Dark and Light, Custom lets you pick the page, card, text and accent colours for any style. The page changes as you drag.
+- Fixed: opening another title while a show was still loading could put the show's buttons, Delete included, on the other title's page.
+- Fixed: a crash or blue screen while saving settings could wipe every setting and show setup again. Settings are now saved safely, with the last good copy kept.
+- Fixed: in Webtoon mode, a page that failed to load stayed broken until you reopened the chapter. It now loads again when you scroll back to it.
+- Fixed: Watch together gave up reconnecting after one failed try (after the PC slept, for example), and the party went quiet while still showing you as in it. It keeps trying now.
+- Fixed: a subtitle from the last episode could show up on the next one.
+- Fixed: the book reader could show an error page as if it were the chapter.
+
 ## 0.19.2 (2026-11-11)
 - Reading search finds series AniList doesn't have, and series you know by another name. It now asks MangaUpdates too: Sword God High School: The Talentless Underachiever Becomes the Strongest shows up (AniList doesn't list it at all), and Chronicle of Runes finds Emblem Wars, which is the same manhwa. A series only MangaUpdates knows can be followed and read like any other.
 - Fixed: in reading, clearing the search box sometimes left the search results on screen instead of going back to the tab you were on, so you had to search something else and clear it again.
