@@ -1,4 +1,10 @@
 @font-face {
+  font-family: "Fraunces";
+  src: url("fonts/Fraunces.woff2") format("woff2");
+  font-weight: 300 900;
+  font-display: swap;
+}
+@font-face {
   font-family: "Outfit";
   src: url("fonts/Outfit.woff2") format("woff2");
   font-weight: 300 800;
@@ -2832,6 +2838,54 @@ body[data-rshade="light"] .read-detail .facts dd { color: var(--text); }
 body[data-rshade="light"] .look-pop { box-shadow: 0 0 0 1px var(--line-2), 0 24px 50px rgba(15, 20, 30, 0.18); }
 body[data-rshade="light"] .lk-style:hover, body[data-rshade="light"] .lk-shade { background: rgba(15, 20, 30, 0.05); }
 @media (prefers-reduced-motion: reduce) { .look-pop { transition: none; } }
+
+/* ---------- Velvet (look.js): a theatre and an old library ----------
+   Oxblood velvet with brass light when dark; claret on rose paper when light
+   (a matinee). Titles in Fraunces, a soft old-style serif that suits posters
+   and book covers alike. The layout is Cinema's: only the look changes. One
+   thing stands out, the brass titles over a velvet glow; cards stay quiet. */
+body[data-rstyle="velvet"] {
+  --serif: "Fraunces", Georgia, "Times New Roman", serif;
+  --bg: #170a10; --bg-rgb: 23, 10, 16; --bg-2: #1d0d14; --surface: #241019; --surface-hi: #2a131d; --raised: #331823;
+  --line: rgba(232, 196, 140, 0.1); --line-2: rgba(232, 196, 140, 0.2);
+  --text: #f4e7dc; --muted: #bfa29c; --dim: #8a6f6c;
+  --accent: #d9b26a; --accent-rgb: 217, 178, 106; --accent-hi: #e6c47f; --accent-2: #c7604f; --accent-tint: #f0d9a8; --accent-ink: #2a1608;
+  background: radial-gradient(1400px 700px at 50% -20%, rgba(150, 28, 58, 0.38), transparent 62%), var(--bg);
+  color: var(--text);
+}
+body[data-rstyle="velvet"] .row h2, body[data-rstyle="velvet"] .row-head h2, body[data-rstyle="velvet"] .hero h1,
+body[data-rstyle="velvet"] .fresh-head h2, body[data-rstyle="velvet"] .detail-head h2, body[data-rstyle="velvet"] .hd-head h1,
+body[data-rstyle="velvet"] .read-detail .detail-head h2, body[data-rstyle="velvet"] .cl-h, body[data-rstyle="velvet"] .mn-h {
+  font-family: var(--serif); font-weight: 600; letter-spacing: -0.01em; font-variation-settings: "SOFT" 100, "WONK" 0;
+}
+body[data-rstyle="velvet"] .row h2, body[data-rstyle="velvet"] .row-head h2, body[data-rstyle="velvet"] .fresh-head h2 { color: var(--accent-tint); }
+body[data-rstyle="velvet"] .hero h1 { font-weight: 700; letter-spacing: -0.02em; }
+/* Cards: the picture, a little rounder, and a brass edge only when pointed at. */
+body[data-rstyle="velvet"] .tile .art { border-radius: 10px; }
+body[data-rstyle="velvet"] .tile:hover .art, body[data-rstyle="velvet"] .tile:focus-visible .art { box-shadow: 0 0 0 1px rgba(var(--accent-rgb), 0.85), 0 16px 36px rgba(0, 0, 0, 0.5); }
+body[data-rstyle="velvet"] .tile .badge { background: rgba(23, 10, 16, 0.82); color: var(--accent-tint); }
+body[data-rstyle="velvet"] .topbar.solid { background: rgba(23, 10, 16, 0.92); box-shadow: 0 1px 0 var(--line); }
+/* Velvet, light: a matinee. */
+body[data-rstyle="velvet"][data-rshade="light"] {
+  --bg: #f7eeea; --bg-rgb: 247, 238, 234; --bg-2: #f1e5e0; --surface: #fffaf7; --surface-hi: #ffffff; --raised: #efe0da;
+  --line: rgba(110, 20, 45, 0.11); --line-2: rgba(110, 20, 45, 0.2);
+  --text: #2a1118; --muted: #7a5b62; --dim: #a8909a;
+  --accent: #9b1e3d; --accent-rgb: 155, 30, 61; --accent-hi: #b0284b; --accent-tint: #7c1631; --accent-ink: #ffffff;
+  background: radial-gradient(1400px 700px at 50% -20%, rgba(217, 178, 106, 0.28), transparent 62%), var(--bg);
+}
+body[data-rstyle="velvet"][data-rshade="light"] .tile .badge { background: rgba(255, 250, 247, 0.92); color: var(--accent); }
+body[data-rstyle="velvet"][data-rshade="light"] .topbar.solid { background: rgba(255, 250, 247, 0.94); }
+.lk-velvet { background: radial-gradient(60px 40px at 50% -10%, #8e1c3a, #170a10 80%); }
+.lk-velvet i:nth-child(1) { left: 6px; top: 7px; width: 30px; height: 6px; background: #d9b26a; border-radius: 3px; }
+.lk-velvet i:nth-child(2) { left: 6px; top: 17px; width: 18px; height: 3px; background: #f4e7dc; opacity: 0.7; }
+.lk-velvet i:nth-child(3) { left: 6px; bottom: 5px; width: 46px; height: 10px; background: repeating-linear-gradient(90deg, rgba(217, 178, 106, 0.6) 0 9px, transparent 9px 12px); }
+/* Custom colours: the bars a style paints in its own colour take the page's instead. */
+body[data-custom] .topbar, body[data-custom] .topbar.solid { background: rgba(var(--bg-rgb), 0.94) !important; }
+.lk-shade-custom { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+.lk-shade-custom label { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 8px; border-radius: 9px; background: rgba(255, 255, 255, 0.05); color: var(--muted); font: 600 12px var(--display); cursor: pointer; }
+body[data-rshade="light"] .lk-shade-custom label { background: rgba(15, 20, 30, 0.05); }
+.lk-shade-custom input[type="color"] { width: 28px; height: 22px; padding: 0; border: 0; border-radius: 6px; background: none; cursor: pointer; }
+.lk-shade-custom .lk-reset { grid-column: 1 / -1; justify-self: start; border: 0; background: none; padding: 2px 4px; color: var(--muted); font: 600 12px var(--display); text-decoration: underline; cursor: pointer; }
 
 /* ---------- Filters right on Movies, Series and Anime (filter.js inlineFilters) ---------- */
 .fl-tab { margin: 0 0 6px; }
