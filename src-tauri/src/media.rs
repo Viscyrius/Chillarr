@@ -1460,7 +1460,7 @@ pub async fn search(app: &AppHandle, term: &str) -> Found {
 // ---------- Playing ----------
 
 /// What the player needs: a direct file or an HLS stream, tracks, length.
-pub async fn play(app: &AppHandle, jf_id: &str, start: f64, audio_index: Option<i64>, subtitle_index: Option<i64>) -> Result<Value, String> {
+pub async fn play(app: &AppHandle, jf_id: &str, start: f64, audio_index: Option<i64>, subtitle_index: Option<i64>, codecs: &[String]) -> Result<Value, String> {
     let j = jf(app).filter(|j| j.user_id.is_some()).ok_or("Sign in to Jellyfin first (Settings > Account & devices)")?;
     let token = j.token().ok_or("Sign in to Jellyfin first")?.to_string();
     let placeholder = crate::watchnow::is_placeholder(app, jf_id);
@@ -1476,13 +1476,13 @@ pub async fn play(app: &AppHandle, jf_id: &str, start: f64, audio_index: Option<
     };
     let cap = Some(crate::jellyfin::stream_cap(item.as_ref().and_then(crate::jellyfin::source_bitrate)));
     // A title just added can be listed a moment before it opens.
-    let mut asked = j.playback(jf_id, start, audio_index, subtitle_index, direct, within, cap).await;
+    let mut asked = j.playback(jf_id, start, audio_index, subtitle_index, direct, within, cap, codecs).await;
     for _ in 0..3 {
         if !asked.as_ref().is_err_and(|e| e.to_string().contains("404")) {
             break;
         }
         tokio::time::sleep(Duration::from_millis(1500)).await;
-        asked = j.playback(jf_id, start, audio_index, subtitle_index, direct, within, cap).await;
+        asked = j.playback(jf_id, start, audio_index, subtitle_index, direct, within, cap, codecs).await;
     }
     let info = asked.map_err(|e| {
         log(app, Level::Red, format!("Couldn't play {jf_id}: {e}"));
@@ -1562,7 +1562,7 @@ pub async fn play_vlc(app: &AppHandle, jf_id: &str, start: f64, title: &str, wat
     let j = jf(app).filter(|j| j.user_id.is_some()).ok_or("Sign in to Jellyfin first (Settings > Account & devices)")?;
     let token = j.token().ok_or("Sign in to Jellyfin first")?.to_string();
     let within = crate::watchnow::is_placeholder(app, jf_id).then_some(crate::jellyfin::PLACEHOLDER_ASK);
-    let info = j.playback(jf_id, 0.0, None, None, true, within, None).await.map_err(|e| e.to_string())?;
+    let info = j.playback(jf_id, 0.0, None, None, true, within, None, &[]).await.map_err(|e| e.to_string())?;
     let source_id = info["MediaSources"][0]["Id"].as_str().unwrap_or_default().to_string();
     let session = info["PlaySessionId"].as_str().unwrap_or_default().to_string();
     let url = format!("{}/Videos/{jf_id}/stream?static=true&mediaSourceId={source_id}&api_key={token}", j.base);

@@ -498,7 +498,7 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
         "media_episodes" => ok(media::episodes(app, &arg::<String>(a, "seriesId")?).await),
         "media_search" => ok(media::search(app, &arg::<String>(a, "term")?).await),
         "media_search_live" => ok(crate::search::live(app.clone(), arg(a, "term")?, arg(a, "seq")?, arg::<Option<bool>>(a, "adult")?.unwrap_or(false)).await),
-        "media_play" => res(media::play(app, &arg::<String>(a, "id")?, arg(a, "start")?, arg(a, "audio")?, arg(a, "subtitle")?).await),
+        "media_play" => res(media::play(app, &arg::<String>(a, "id")?, arg(a, "start")?, arg(a, "audio")?, arg(a, "subtitle")?, &arg::<Option<Vec<String>>>(a, "codecs")?.unwrap_or_default()).await),
         "media_report" => res(media::report(app, &arg::<String>(a, "what")?, arg(a, "body")?).await),
         "media_forget_resume" => res(media::forget_resume(app, &arg::<String>(a, "id")?).await),
         "media_get" => res(media::get_it(app, arg(a, "tile")?, arg::<Option<String>>(a, "quality")?.as_deref().unwrap_or("best")).await),

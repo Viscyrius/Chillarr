@@ -241,8 +241,8 @@ async fn media_search_live(app: AppHandle, term: String, seq: u64, adult: Option
 }
 
 #[tauri::command]
-async fn media_play(app: AppHandle, id: String, start: f64, audio: Option<i64>, subtitle: Option<i64>) -> Result<serde_json::Value, String> {
-    media::play(&app, &id, start, audio, subtitle).await
+async fn media_play(app: AppHandle, id: String, start: f64, audio: Option<i64>, subtitle: Option<i64>, codecs: Option<Vec<String>>) -> Result<serde_json::Value, String> {
+    media::play(&app, &id, start, audio, subtitle, &codecs.unwrap_or_default()).await
 }
 
 /// Watch together: where the SyncPlay socket connects (see syncplay.rs).
@@ -1613,6 +1613,12 @@ pub fn run() {
             storage::start_cleanup(app.handle().clone());
             // Dubbed means the dub is in the file (dubcheck.rs), and Jellyfin's pages pick it too.
             dubcheck::start(app.handle().clone());
+            // The graphics card decodes every format it can (gpu.rs), brought up to date once.
+            let g = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(90)).await;
+                gpu::refresh(&g).await;
+            });
             // Chapter downloads pushed to open pages as they move (readlive.rs).
             readlive::start(app.handle().clone());
             // The catalogs grow quietly in the background.

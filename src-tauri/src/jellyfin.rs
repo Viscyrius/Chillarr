@@ -33,6 +33,22 @@ pub fn ticks_to_seconds(t: i64) -> f64 {
 /// What the app's web view can play as-is. Everything else (MKV, HEVC, DTS...)
 /// Jellyfin turns into an HLS stream of H.264/AAC on the fly.
 pub fn device_profile() -> Value {
+    device_profile_for(&[])
+}
+
+/// Video formats a player may say it plays besides H.264.
+const EXTRA_VIDEO: [&str; 3] = ["hevc", "av1", "vp9"];
+
+/// What this player can play. `codecs`: the video formats its browser says it
+/// decodes (player.js asks MediaSource). A file already in one of them is
+/// only repackaged, picture untouched, instead of converted: AV1 anime was
+/// being decoded on the CPU and re-encoded (about 40% CPU, 2026-11-12) though
+/// the PC window plays AV1 itself. Repackaging needs fMP4 segments; a player
+/// that only has H.264 (an old TV) keeps the MPEG-TS it always got.
+pub fn device_profile_for(codecs: &[String]) -> Value {
+    let extra: Vec<&str> = EXTRA_VIDEO.iter().copied().filter(|c| codecs.iter().any(|x| x.eq_ignore_ascii_case(c))).collect();
+    let video = std::iter::once("h264").chain(extra.iter().copied()).collect::<Vec<_>>().join(",");
+    let container = if extra.is_empty() { "ts" } else { "mp4" };
     json!({
         "Name": "Chillarr",
         "MaxStreamingBitrate": 120_000_000,
@@ -40,7 +56,7 @@ pub fn device_profile() -> Value {
             { "Container": "mp4,m4v", "Type": "Video", "VideoCodec": "h264", "AudioCodec": "aac,mp3" }
         ],
         "TranscodingProfiles": [
-            { "Container": "ts", "Type": "Video", "Protocol": "hls", "VideoCodec": "h264", "AudioCodec": "aac",
+            { "Container": container, "Type": "Video", "Protocol": "hls", "VideoCodec": video, "AudioCodec": "aac",
               "Context": "Streaming", "MaxAudioChannels": "2", "BreakOnNonKeyFrames": true }
         ],
         "SubtitleProfiles": [
@@ -432,23 +448,16 @@ impl Jf {
     /// over as a file, because Jellyfin only passes a placeholder's bytes through
     /// with no way to seek in them, and an iPhone won't play that.
     /// `max_bitrate`: the stream's ceiling (`stream_cap`), MAX_STREAM when None.
-    pub async fn playback(&self, item_id: &str, start_seconds: f64, audio_index: Option<i64>, subtitle_index: Option<i64>, direct: bool, within: Option<Duration>, max_bitrate: Option<i64>) -> Result<Value, JfError> {
+    #[allow(clippy::too_many_arguments)]
+    pub async fn playback(&self, item_id: &str, start_seconds: f64, audio_index: Option<i64>, subtitle_index: Option<i64>, direct: bool, within: Option<Duration>, max_bitrate: Option<i64>, codecs: &[String]) -> Result<Value, JfError> {
         let uid = self.uid()?;
-        let mut body = json!({
-            "DeviceProfile": device_profile(),
-            "StartTimeTicks": seconds_to_ticks(start_seconds),
-            "AutoOpenLiveStream": true,
-            "MaxStreamingBitrate": max_bitrate.unwrap_or(MAX_STREAM),
-            "EnableDirectPlay": direct,
-            "EnableDirectStream": true,
-            "EnableTranscoding": true
-        });
+        let body = playback_body(item_id, start_seconds, audio_index, subtitle_index, direct, max_bitrate, codecs);
+        // Named on the address too: Jellyfin reads either.
+        let mut q = format!("/Items/{item_id}/PlaybackInfo?userId={uid}&MediaSourceId={item_id}");
         if let Some(a) = audio_index {
-            body["AudioStreamIndex"] = json!(a);
+            q.push_str(&format!("&AudioStreamIndex={a}"));
         }
-        // -1: no track drawn in, or Jellyfin picks the file's default (often the wrong language) and burns it.
-        body["SubtitleStreamIndex"] = json!(subtitle_index.unwrap_or(-1));
-        self.call_within(reqwest::Method::POST, &format!("/Items/{item_id}/PlaybackInfo?userId={uid}"), Some(&body), within.unwrap_or(TIMEOUT)).await
+        self.call_within(reqwest::Method::POST, &q, Some(&body), within.unwrap_or(TIMEOUT)).await
     }
 
     /// Asks about a placeholder with room to wait. Jellyfin reads a `.strm` every
@@ -482,6 +491,30 @@ impl Jf {
     pub fn token(&self) -> Option<&str> {
         self.token.as_deref()
     }
+}
+
+/// What PlaybackInfo is asked. The source is always named: without
+/// MediaSourceId Jellyfin 12.1 ignores the audio and subtitle choice (English
+/// asked, Japanese played; "no subtitle" asked, one burned into the picture,
+/// measured 2026-11-12), which is why the dub never played and the player
+/// kept asking again.
+pub fn playback_body(item_id: &str, start_seconds: f64, audio_index: Option<i64>, subtitle_index: Option<i64>, direct: bool, max_bitrate: Option<i64>, codecs: &[String]) -> Value {
+    let mut body = json!({
+        "DeviceProfile": device_profile_for(codecs),
+        "MediaSourceId": item_id,
+        "StartTimeTicks": seconds_to_ticks(start_seconds),
+        "AutoOpenLiveStream": true,
+        "MaxStreamingBitrate": max_bitrate.unwrap_or(MAX_STREAM),
+        "EnableDirectPlay": direct,
+        "EnableDirectStream": true,
+        "EnableTranscoding": true
+    });
+    if let Some(a) = audio_index {
+        body["AudioStreamIndex"] = json!(a);
+    }
+    // -1: no track drawn in, or Jellyfin picks the file's default (often the wrong language) and burns it.
+    body["SubtitleStreamIndex"] = json!(subtitle_index.unwrap_or(-1));
+    body
 }
 
 /// Jellyfin has no such route (`call` reports any other status as Other).
@@ -557,6 +590,29 @@ mod tests {
         let t = &p["TranscodingProfiles"][0];
         assert_eq!(t["Protocol"], "hls");
         assert_eq!(t["VideoCodec"], "h264");
+    }
+
+    #[test]
+    fn the_track_choice_names_its_source() {
+        // Without MediaSourceId Jellyfin 12.1 ignores AudioStreamIndex and
+        // SubtitleStreamIndex (measured 2026-11-12: English asked, Japanese
+        // played; "no subtitle" asked, one burned into the picture).
+        let b = playback_body("abc", 12.0, Some(2), None, false, None, &[]);
+        assert_eq!(b["MediaSourceId"], "abc");
+        assert_eq!(b["AudioStreamIndex"], 2);
+        assert_eq!(b["SubtitleStreamIndex"], -1);
+    }
+
+    #[test]
+    fn a_player_that_plays_av1_gets_it_unconverted() {
+        let p = device_profile_for(&["av1".to_string(), "hevc".to_string(), "bogus".to_string()]);
+        let t = &p["TranscodingProfiles"][0];
+        let v = t["VideoCodec"].as_str().unwrap();
+        assert!(v.contains("h264") && v.contains("av1") && v.contains("hevc") && !v.contains("bogus"));
+        assert_eq!(t["Container"], "mp4", "copied AV1 and HEVC need fMP4 segments");
+        let plain = device_profile_for(&[]);
+        assert_eq!(plain["TranscodingProfiles"][0]["VideoCodec"], "h264");
+        assert_eq!(plain["TranscodingProfiles"][0]["Container"], "ts", "an old TV keeps what it plays");
     }
 
     #[test]

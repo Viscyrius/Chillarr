@@ -422,6 +422,23 @@ function saveAudioPref(tile, a) {
   const show = showOf(tile);
   if (show) setPref("chillarr-audio", JSON.stringify({ show, lang: a.lang || null }));
 }
+/* What this browser plays itself, 10-bit included (most anime is 10-bit).
+   Jellyfin then only repackages a file in one of these instead of converting
+   the picture (jellyfin.rs device_profile_for). An iPhone's own HLS player
+   has no MediaSource: it says none and keeps getting H.264. */
+let codecsKnown = null;
+function videoCodecs() {
+  if (codecsKnown) return codecsKnown;
+  const ms = window.MediaSource;
+  const can = (t) => { try { return !!ms && ms.isTypeSupported(t); } catch (e) { return false; } };
+  codecsKnown = [
+    can('video/mp4; codecs="hvc1.2.4.L120.90"') && "hevc",
+    can('video/mp4; codecs="av01.0.08M.10"') && "av1",
+    can('video/mp4; codecs="vp09.02.10.10"') && "vp9",
+  ].filter(Boolean);
+  return codecsKnown;
+}
+
 /** The language picked by hand for this show, if any. */
 function handLang(tile) {
   let p = null;
@@ -574,7 +591,7 @@ async function load(tile, playlist, startAt, opts = {}) {
   let info;
   try {
     // `track`: Jellyfin's numbers just moved (a night copy arrived), so the old one means nothing.
-    info = await invoke("media_play", { id: tile.jf_id, start: startAt || 0, audio: opts.track != null ? null : audio, subtitle });
+    info = await invoke("media_play", { id: tile.jf_id, start: startAt || 0, audio: opts.track != null ? null : audio, subtitle, codecs: videoCodecs() });
     if (opts.track != null && audio != null) audio = info.audio.find((a) => a.track === opts.track)?.index ?? null;
   } catch (e) {
     if (seq !== loadSeq) return;
@@ -603,7 +620,7 @@ async function load(tile, playlist, startAt, opts = {}) {
   if (getPref("chillarr-night") === "1" && nightFromServer(info, keptWatch)) {
     const copy = (info.night || []).find((n) => n.track === trackOf(info, audio));
     if (copy) {
-      const got = await invoke("media_play", { id: tile.jf_id, start: startAt || 0, audio: copy.index, subtitle }).catch(() => null);
+      const got = await invoke("media_play", { id: tile.jf_id, start: startAt || 0, audio: copy.index, subtitle, codecs: videoCodecs() }).catch(() => null);
       if (seq !== loadSeq || box.hidden) return;
       if (got) { info = got; info.nightOn = true; }
     }

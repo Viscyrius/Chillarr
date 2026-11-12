@@ -62,20 +62,68 @@ fn admin(app: &AppHandle) -> Result<crate::jellyfin::Jf, String> {
     crate::media::jf_admin(app).filter(|j| j.user_id.is_some()).ok_or_else(|| "Sign in to Jellyfin first.".to_string())
 }
 
+/// The formats this card decodes itself. Everything else Jellyfin decodes on
+/// the CPU: AV1 anime on an RTX 3060 Ti went through the CPU at about 40%
+/// (2026-11-12) because only H.264, HEVC and VC-1 were listed.
+pub fn decode_codecs(kind: &str, card: &str) -> Vec<&'static str> {
+    let n = card.to_ascii_lowercase();
+    let num = |after: &str| n.split(after).nth(1).and_then(|t| t.trim().split(|c: char| !c.is_ascii_digit()).next()).and_then(|d| d.parse::<u32>().ok());
+    let mut out = vec!["h264", "hevc", "vc1"];
+    let (vp9, av1) = match kind {
+        // NVIDIA: VP9 from Pascal (GTX 10), AV1 from Ampere (RTX 30) and the workstation RTX A / Ada cards.
+        "nvenc" => {
+            let rtx = num("rtx ");
+            let gtx = num("gtx ");
+            let av1 = rtx.is_some_and(|m| (3000..10000).contains(&m) || (30..100).contains(&m)) || n.contains("rtx a") || n.contains(" ada");
+            (av1 || rtx.is_some() || gtx.is_some_and(|m| m >= 1000), av1)
+        }
+        // Intel: VP9 from 7th gen, AV1 on Arc and Iris Xe (11th gen on).
+        "qsv" => (true, n.contains("arc") || n.contains("iris(r) xe") || n.contains("iris xe")),
+        // AMD: VP9 from the RX 5000s, AV1 from the RX 6000s.
+        "amf" => {
+            let rx = num("rx ");
+            (rx.is_some_and(|m| m >= 5000), rx.is_some_and(|m| m >= 6000 && m < 10000))
+        }
+        _ => (false, false),
+    };
+    if vp9 {
+        out.push("vp9");
+    }
+    if av1 {
+        out.push("av1");
+    }
+    out
+}
+
 /// Jellyfin's encoding settings with the card turned on or off. Anything else in
 /// them is left as it was.
-fn with_card(mut cfg: Value, kind: Option<&str>) -> Value {
-    match kind {
-        Some(kind) => {
+fn with_card(mut cfg: Value, card: Option<(&str, &str)>) -> Value {
+    match card {
+        Some((kind, name)) => {
             cfg["HardwareAccelerationType"] = json!(kind);
             cfg["EnableHardwareEncoding"] = json!(true);
-            // x265 is what a TV needs converted most, 10-bit too.
-            cfg["HardwareDecodingCodecs"] = json!(["h264", "hevc", "vc1"]);
+            cfg["HardwareDecodingCodecs"] = json!(decode_codecs(kind, name));
             cfg["EnableDecodingColorDepth10Hevc"] = json!(true);
+            cfg["EnableDecodingColorDepth10Vp9"] = json!(true);
         }
         None => cfg["HardwareAccelerationType"] = json!("none"),
     }
     cfg
+}
+
+/// At start, with the card on: what it decodes is brought up to date (cards
+/// switched on before AV1 was added kept decoding AV1 on the CPU).
+pub async fn refresh(app: &AppHandle) {
+    let Ok(j) = admin(app) else { return };
+    let Ok(cfg) = j.get_json("/System/Configuration/encoding").await else { return };
+    if !is_on(&cfg) {
+        return;
+    }
+    let Some((kind, name)) = working_card().await else { return };
+    let next = with_card(cfg.clone(), Some((kind, &name)));
+    if next["HardwareDecodingCodecs"] != cfg["HardwareDecodingCodecs"] && j.post_json("/System/Configuration/encoding", &next).await.is_ok() {
+        crate::log::detail(format!("Graphics card now also decodes: {}", next["HardwareDecodingCodecs"]));
+    }
 }
 
 fn is_on(cfg: &Value) -> bool {
@@ -95,7 +143,7 @@ pub async fn set(app: &AppHandle, on: bool) -> Result<Value, String> {
     let j = admin(app)?;
     let cfg = j.get_json("/System/Configuration/encoding").await.map_err(|e| e.to_string())?;
     let card = if on { Some(working_card().await.ok_or("Your graphics card can't convert video here, so nothing was changed.")?) } else { None };
-    let next = with_card(cfg, card.as_ref().map(|(kind, _)| *kind));
+    let next = with_card(cfg, card.as_ref().map(|(kind, name)| (*kind, name.as_str())));
     j.post_json("/System/Configuration/encoding", &next).await.map_err(|e| format!("Couldn't change that in Jellyfin: {e}"))?;
     crate::log::detail(format!("Graphics card for video: {}", if on { "on" } else { "off" }));
     status(app).await
@@ -116,9 +164,23 @@ mod tests {
     }
 
     #[test]
+    fn each_card_decodes_what_it_can() {
+        let nv = decode_codecs("nvenc", "NVIDIA GeForce RTX 3060 Ti");
+        assert!(nv.contains(&"av1") && nv.contains(&"vp9") && nv.contains(&"hevc"), "Ampere decodes AV1 (it was left to the CPU, 40%)");
+        let old = decode_codecs("nvenc", "NVIDIA GeForce GTX 1660 SUPER");
+        assert!(old.contains(&"vp9") && !old.contains(&"av1"), "Turing GTX has no AV1 decoder");
+        assert!(decode_codecs("nvenc", "NVIDIA GeForce RTX 4070").contains(&"av1"));
+        assert!(!decode_codecs("nvenc", "NVIDIA GeForce RTX 2080").contains(&"av1"));
+        assert!(decode_codecs("qsv", "Intel(R) Arc(TM) A770 Graphics").contains(&"av1"));
+        assert!(decode_codecs("amf", "AMD Radeon RX 6700 XT").contains(&"av1"));
+        assert!(!decode_codecs("amf", "AMD Radeon RX 580").contains(&"av1"));
+    }
+
+    #[test]
     fn only_the_card_settings_change() {
         let cfg = json!({ "HardwareAccelerationType": "none", "EnableThrottling": true, "DownMixAudioBoost": 2 });
-        let on = with_card(cfg, Some("nvenc"));
+        let on = with_card(cfg, Some(("nvenc", "NVIDIA GeForce RTX 3060 Ti")));
+        assert!(on["HardwareDecodingCodecs"].as_array().unwrap().iter().any(|c| c == "av1"));
         assert!(is_on(&on));
         assert_eq!(on["EnableThrottling"], true);
         assert_eq!(on["DownMixAudioBoost"], 2);
