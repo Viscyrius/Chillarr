@@ -1615,7 +1615,11 @@ pub fn toggle_list(app: &AppHandle, card: &Value, on: bool) -> Result<bool, Stri
 
 /// What reading has downloading: each series with chapters queued, and books on their way.
 pub async fn downloads(app: &AppHandle) -> Result<Value, String> {
-    let q = crate::suwayomi::queue().await;
+    // Not readable isn't empty: the page says so instead of "Nothing is downloading".
+    let (q, error) = match crate::suwayomi::queue_checked().await {
+        Ok(q) => (q, None),
+        Err(e) => (vec![], Some(format!("Can't see the chapter downloads right now: {e}"))),
+    };
     let series: Vec<Value> = followed(app)
         .into_iter()
         .filter_map(|f| {
@@ -1624,7 +1628,7 @@ pub async fn downloads(app: &AppHandle) -> Result<Value, String> {
         })
         .collect();
     let books: Vec<Value> = books(app).await?.into_iter().filter(|b| !b.ready).map(|b| json!(b)).collect();
-    Ok(json!({ "series": series, "books": books }))
+    Ok(json!({ "series": series, "books": books, "error": error }))
 }
 
 // ---------- discovery (AniList) ----------

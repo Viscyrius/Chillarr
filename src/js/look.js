@@ -28,7 +28,7 @@ export function shadeNow(style = styleNow(), mode = modeNow()) {
    written for a light page still applies. */
 const CUSTOM_PICKS = [["bg", "Page"], ["surface", "Cards"], ["text", "Words"], ["accent", "Accent"]];
 const VARS = ["--bg", "--bg-rgb", "--bg-2", "--surface", "--surface-hi", "--raised", "--line", "--line-2", "--text", "--muted", "--dim",
-  "--accent", "--accent-rgb", "--accent-hi", "--accent-tint", "--accent-ink", "background", "color"];
+  "--accent", "--accent-rgb", "--accent-hi", "--accent-tint", "--accent-2", "--accent-ink", "background", "color"];
 
 const rgbOf = (hex) => { const n = parseInt(String(hex).replace("#", ""), 16) || 0; return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
 const hexOf = (c) => `#${c.map((v) => Math.round(Math.max(0, Math.min(255, v))).toString(16).padStart(2, "0")).join("")}`;
@@ -69,7 +69,7 @@ export function customVars(c) {
       "--line": `rgba(${rgb(c.text)}, 0.1)`, "--line-2": `rgba(${rgb(c.text)}, 0.18)`,
       "--text": c.text, "--muted": mix(c.text, c.bg, 0.38), "--dim": mix(c.text, c.bg, 0.58),
       "--accent": c.accent, "--accent-rgb": rgb(c.accent), "--accent-hi": mix(c.accent, toward, 0.12),
-      "--accent-tint": mix(c.accent, toward, 0.3), "--accent-ink": lum(c.accent) > 0.35 ? "#14100c" : "#ffffff",
+      "--accent-tint": mix(c.accent, toward, 0.3), "--accent-2": mix(c.accent, toward, 0.2), "--accent-ink": lum(c.accent) > 0.35 ? "#14100c" : "#ffffff",
       background: c.bg, color: c.text,
     },
   };

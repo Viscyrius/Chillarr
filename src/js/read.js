@@ -980,7 +980,7 @@ async function explorePage(view, tab, my) {
       rowsAsked = true;
       remembered(`kr:${kind}`, 30 * 60000, () => invoke("read_kind_rows", { kind })).then((rows) => {
         if (!alive(my)) return;
-        rowsBox.replaceChildren(...rows.map((r) => (r.id === "trending" && styleNow() === "cinema"
+        rowsBox.replaceChildren(...rows.map((r) => (r.id === "trending" && (styleNow() === "cinema" || styleNow() === "velvet")
           ? row(`k.${kind}.top10`, "Top 10 today", r.items.slice(0, 10).map((c, i) => topTen(c, i + 1)), `k.${kind}.trending`)
           : row(`k.${kind}.${r.id}`, r.title, r.items.map((c) => card(c))))));
       }).catch((e) => { rowsAsked = false; if (alive(my)) rowsBox.replaceChildren(note(String(e)), el("button", { class: "btn soft", style: "margin: 0 var(--gutter)", onclick: () => { rowsBox.replaceChildren(...skel()); showMode(); } }, "Try again")); });
@@ -1244,19 +1244,24 @@ async function downloadsPage(view, my) {
     n.set = (x) => { what.textContent = x.problem || (x.progress != null ? `${Math.round(x.progress * 100)}%` : "Starting"); bar.style.width = `${Math.max(3, Math.round((x.progress || 0) * 100))}%`; };
     return n;
   };
+  let again = false;
   const draw = async () => {
-    if (busy) return;
+    // One ask at a time; an event meanwhile asks once more after it (the last one counts).
+    if (busy) { again = true; return; }
     busy = true;
     clearTimeout(timer);
     const d = await invoke("read_downloads").catch((e) => ({ error: String(e), series: [], books: [] }));
     busy = false;
     if (!alive(my)) return;
+    if (again) { again = false; setTimeout(draw, 0); }
     const want = [...d.series.map((x) => ["s" + x.key, x, seriesRow]), ...d.books.map((x) => ["b" + x.key, x, bookRow])];
     const same = want.length === rows.size && want.every(([k]) => rows.has(k));
     if (!same) {
       rows.clear();
       for (const [k, x, make] of want) rows.set(k, make(x));
       body.replaceChildren(...(want.length ? rows.values() : [note(d.error || "Nothing is downloading.")]));
+    } else if (!want.length && d.error) {
+      body.replaceChildren(note(d.error));
     }
     for (const [k, x] of want) rows.get(k).set(x);
     if (d.books.length) timer = setTimeout(function again() { if (!alive(my)) return; if (document.hidden) { timer = setTimeout(again, 4000); return; } draw(); }, 4000);
@@ -1841,17 +1846,39 @@ function chapterRow(key, r, c0) {
    drawn again (it used to be, every 5 seconds, which reloaded its pictures,
    moved the scroll and dropped what was being typed). */
 let landedSoon = 0;
+/** The open panel's rows of `key` asked again, and only the changed ones drawn again. */
+const recheck = new Map();
+function recheckRows(key) {
+  clearTimeout(recheck.get(key));
+  recheck.set(key, setTimeout(async () => {
+    recheck.delete(key);
+    if (!dlg || !dlg.open) return;
+    const d = await invoke("read_detail", { key }).catch(() => null);
+    if (!d || !dlg.open) return;
+    for (const fresh of d.chapters) {
+      const node = dlg.querySelector(`.read-ch[data-ch="${fresh.id}"]`);
+      if (!node || !node._row || node._row.key !== key) continue;
+      const old = node._row.r;
+      if (old.downloaded === fresh.downloaded && old.queued === fresh.queued && old.read === fresh.read) continue;
+      node.replaceWith(chapterRow(key, fresh, node._row.c0));
+    }
+  }, 600));
+}
 listen("read-live", (e) => {
   const { items, error } = e.payload || {};
   if (error) { if (dlg && dlg.open) toast(error, true); return; }
+  const left = new Set();
   for (const it of items || []) {
     const node = dlg && dlg.open ? dlg.querySelector(`.read-ch[data-ch="${it.ch}"]`) : null;
     if (!node || !node._row || node._row.key !== it.key) continue;
+    // Out of the queue isn't proof it downloaded (a Stop, a failed page):
+    // the PC is asked what that chapter is now, once things settle.
+    if (it.done) { left.add(it.key); continue; }
     const { key, r, c0 } = node._row;
-    r.queued = it.done ? null : it.p;
-    if (it.done) r.downloaded = true;
+    r.queued = it.p;
     node.replaceWith(chapterRow(key, r, c0));
   }
+  for (const key of left) recheckRows(key);
   window.dispatchEvent(new CustomEvent("chillarr:read-live", { detail: items || [] }));
   // A chapter landed: the reading tab under it shows it (what you follow is
   // asked again, softly), once things go quiet, and not under an open panel.
