@@ -454,12 +454,12 @@ function freshCards(lib) {
   });
 }
 
-function freshSection(lib, cls = "") {
+function freshSection(lib, cls = "", title = "New chapters") {
   const cards = freshCards(lib);
   if (!cards.length) return null;
   const n = lib.reduce((sum, s) => sum + (s.fresh || 0), 0);
   return el("section", { class: `fresh-block ${cls}` },
-    el("div", { class: "fresh-head" }, el("span", { class: "fresh-dot", "aria-hidden": "true" }), el("h2", { text: "New chapters" }),
+    el("div", { class: "fresh-head" }, el("span", { class: "fresh-dot", "aria-hidden": "true" }), el("h2", { text: title }),
       el("span", { class: "fresh-count", text: `${n} new` })),
     el("div", { class: "fresh-track" }, cards));
 }
@@ -1209,6 +1209,9 @@ async function listPage(view, my) {
   const [{ lib, list }, books] = await Promise.all([know(), invoke("read_books").catch(() => [])]);
   if (!alive(my)) return;
   const out = [];
+  // New for you (#72): what you follow with chapters out since you last read it.
+  const fy = freshSection(lib, "fresh-mylist", "New for you");
+  if (fy) out.push(fy);
   if (list.length) out.push(expandRow(row("saved", "Saved for later", list.map((c) => card(c))), "r-saved"));
   if (lib.length) out.push(withSelect(expandRow(row("following", "Following", lib.map((s) => card(asCard(s), s))), "r-following"), "series"));
   if (books.length) out.push(withSelect(expandRow(row("books", "Books", books.map(bookCard), "mine"), "r-books"), "books"));

@@ -2,6 +2,7 @@ mod arr;
 mod dubcheck;
 mod seen;
 mod readlive;
+mod newep;
 mod asked;
 mod week;
 mod downloads_home;
@@ -1363,6 +1364,7 @@ pub fn run() {
         .manage(read::Reading::default())
         .manage(hidden::Hidden::default())
         .manage(seen::Seen::default())
+        .manage(newep::Cache::default())
         .invoke_handler(tauri::generate_handler![
             read_base,
             read_rows,

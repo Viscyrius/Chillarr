@@ -1202,6 +1202,11 @@ async fn rows_all(app: &AppHandle, tab: &str) -> Result<Vec<Row>, String> {
         async { if lists { my_list_row(app, j.as_ref(), &own).await } else { vec![] } },
         async { if home { anime_row(app, "trending", 1).await } else { vec![] } },
     );
+    // New episodes (#72): at the top of Home (all), Series and Anime.
+    if home || matches!(tab, "series" | "anime") {
+        let fresh: Vec<Tile> = crate::newep::shows(app).await.into_iter().filter(|(_, anime)| match tab { "series" => !*anime, "anime" => *anime, _ => true }).map(|(t, _)| t).collect();
+        out.push(row("new-episodes", "New episodes", keep_lines(own(fresh.clone()), &fresh)));
+    }
     match tab {
         "movies" => {
             out.push(row("continue", "Continue watching", cont.iter().filter(|t| kind_is(t, &["movie"])).cloned().collect()));
@@ -1893,7 +1898,27 @@ async fn my_list_page(app: &AppHandle, j: Option<&Jf>) -> Vec<Row> {
     }
     let tracked = tracked(app).await;
     let own = |v: Vec<Tile>| mark_tracked(crate::catalog::merge_owned(v, &library), &tracked);
-    row("saved", "My List", my_list_row(app, j, &own).await).into_iter().collect()
+    let saved = my_list_row(app, j, &own).await;
+    // New for you (#72): shows on My List with new episodes, and films on it
+    // that are here now and not watched yet. Each leaves once it's watched.
+    let on_list = |t: &Tile| saved.iter().any(|s| (t.tvdb.is_some() && s.tvdb == t.tvdb) || (t.tmdb.is_some() && s.tmdb == t.tmdb));
+    let shows: Vec<Tile> = crate::newep::shows(app).await.into_iter().map(|(t, _)| t).filter(|t| on_list(t)).collect();
+    let mut new_for_you = keep_lines(own(shows.clone()), &shows);
+    new_for_you.extend(saved.iter().filter(|t| t.kind == "movie" && t.jf_id.is_some() && t.played != Some(true)).cloned().map(|mut t| {
+        t.subtitle = Some("Ready to watch".into());
+        t
+    }));
+    let mut out: Vec<Row> = row("new-for-you", "New for you", new_for_you).into_iter().collect();
+    out.extend(row("saved", "My List", saved));
+    out
+}
+
+/// Cards matched to the library keep the line they were made with ("S2 E7 · 3 new · today").
+fn keep_lines(mut owned: Vec<Tile>, made: &[Tile]) -> Vec<Tile> {
+    for (o, m) in owned.iter_mut().zip(made) {
+        o.subtitle = m.subtitle.clone();
+    }
+    owned
 }
 
 /// The keys and Jellyfin ids on My List, for its button in the detail panel.

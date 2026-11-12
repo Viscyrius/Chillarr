@@ -475,7 +475,22 @@ function rowEl(r, i = 0) {
   watchFits(track);
   const head = el("div", { class: "row-head" }, el("h2", { text: r.title }),
     r.explore ? el("a", { class: "explore", href: exploreHref(r) }, "Explore all", icon(ICON.right)) : el("span", { class: "count", text: String(r.tiles.length) }));
-  return el("section", { class: "row", dataset: { row: r.id }, id: `row-${r.id}`, style: `--i:${Math.min(i, 6)}` }, head, el("div", { class: "track-wrap" }, prev, track, next));
+  // New episodes and New for you stand out (#72); New episodes counts on the Home tab.
+  const fresh = r.id === "new-episodes" || r.id === "new-for-you";
+  if (r.id === "new-episodes") homeBubble(r.tiles.length);
+  if (fresh) head.prepend(el("span", { class: "fresh-dot", "aria-hidden": "true" }));
+  return el("section", { class: `row${fresh ? " row-fresh" : ""}`, dataset: { row: r.id }, id: `row-${r.id}`, style: `--i:${Math.min(i, 6)}` }, head, el("div", { class: "track-wrap" }, prev, track, next));
+}
+
+/** The Home tab's bubble: how many shows have new episodes for this profile. */
+function homeBubble(n) {
+  const a = document.querySelector('[data-tab="home"]');
+  if (!a) return;
+  let b = a.querySelector(".tab-bubble");
+  if (!n) { if (b) b.remove(); return; }
+  if (!b) { b = el("span", { class: "tab-bubble" }); a.append(b); }
+  b.textContent = n > 9 ? "9+" : String(n);
+  b.setAttribute("aria-label", `${n} show${n === 1 ? "" : "s"} with new episodes`);
 }
 
 /** Filters (Home's opens them as a page; Movies, Series and Anime have them on

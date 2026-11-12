@@ -531,6 +531,8 @@ pub async fn sync(app: &AppHandle) {
             }
         }
     }
+    // What's new for each profile follows what was just watched (newep.rs).
+    crate::newep::forget(app);
 }
 
 /// Held while a log is read, changed and saved back, so a sync and a Start

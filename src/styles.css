@@ -2772,6 +2772,13 @@ body[data-rshade="light"] .rp-dialog { box-shadow: 0 30px 80px rgba(20, 30, 50, 
 .rp-lock svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; }
 .rp-note { position: fixed; left: 50%; bottom: 72px; transform: translateX(-50%); z-index: var(--z-overlay); z-index: calc(var(--z-player) + 1); padding: 8px 16px; border-radius: 999px; background: rgba(0, 0, 0, 0.72); color: #fff; font: 600 14px var(--display); pointer-events: none; }
 .rp-note[hidden] { display: none; }
+/* New episodes and New for you (#72): the same glow as reading's New chapters. */
+.row.row-fresh .row-head { gap: 10px; }
+.row.row-fresh .track { padding-top: 6px; }
+.row.row-fresh .tile .art { box-shadow: 0 0 0 1px rgba(var(--accent-rgb), 0.55), 0 10px 28px rgba(var(--accent-rgb), 0.16); }
+.row.row-fresh .tile .cap { color: var(--accent-tint); }
+.tab-bubble { display: inline-grid; place-items: center; min-width: 18px; height: 18px; margin-left: 6px; padding: 0 5px; border-radius: 9px; background: var(--accent); color: var(--accent-ink); font: 700 11px/18px var(--display); vertical-align: 1px; }
+@media (max-width: 700px) { .tabs a .tab-bubble { position: absolute; top: 2px; left: calc(50% + 6px); margin: 0; } .tabs a { position: relative; } }
 /* Read Party chat (readparty.js): on the right of the page on a wide screen,
    the reader made narrower so nothing is covered; a small bottom sheet on phones. */
 .rp-chat-btn { position: fixed; right: 18px; bottom: 18px; z-index: calc(var(--z-player) + 2); width: 46px; height: 46px; border: 0; border-radius: 50%; display: grid; place-items: center; background: var(--accent); color: var(--accent-ink); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45); cursor: pointer; }
