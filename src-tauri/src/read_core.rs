@@ -173,19 +173,28 @@ pub fn keep_mask(list: &[(Option<f64>, Option<i64>)], backing: Option<f64>) -> V
         }
     }
     let backed = |n: f64| backing.is_some_and(|b| n <= b);
+    // Sites that give every chapter the same date (the day it was fetched)
+    // can't be judged by dates.
+    let dated: Vec<i64> = runs.iter().flatten().filter_map(|c| c.1).collect();
+    let same_day = dated.iter().min().zip(dated.iter().max()).is_none_or(|(a, b)| b - a < DAY_MS);
+    let last = runs.len().saturating_sub(1);
     let mut trusted: Vec<(f64, Option<i64>)> = Vec::new();
     for (i, r) in runs.into_iter().enumerate() {
-        if i == 0 || r.len() >= REAL_RUN {
+        // A short run at the very end, every chapter in it dated after
+        // everything before it, is the newest chapters (MANGA Plus lists the
+        // first 3 and the newest 3). A stray is older, or has no real date.
+        let newest_tail = i == last && !same_day && {
+            let before = trusted.iter().filter_map(|c| c.1).max();
+            r.iter().all(|c| c.1.zip(before).is_some_and(|(d, b)| d > b))
+        };
+        if i == 0 || r.len() >= REAL_RUN || newest_tail {
             trusted.extend(r);
         } else {
             trusted.extend(r.into_iter().filter(|c| backed(c.0)));
         }
     }
     // The newest few: one uploaded long before the chapters just under it is
-    // an old chapter under a new number. Sites that give every chapter the
-    // same date (the day it was fetched) can't be judged this way.
-    let dated: Vec<i64> = trusted.iter().filter_map(|c| c.1).collect();
-    let same_day = dated.iter().min().zip(dated.iter().max()).is_none_or(|(a, b)| b - a < DAY_MS);
+    // an old chapter under a new number.
     if !same_day {
         for _ in 0..3 {
             let Some(&(n, Some(d))) = trusted.last() else { break };
@@ -450,6 +459,14 @@ mod tests {
         // The same MANGA Plus copy alone: six newer chapters in a row are a real run.
         let mut l = weekly(1, 6, 1_000_000_000_000);
         l.extend(weekly(1193, 1198, 1_000_000_000_000));
+        assert_eq!(trusted_top(&l, None), Some(1198.0));
+    }
+
+    #[test]
+    fn lone_short_tail_with_newer_dates_is_kept() {
+        // MANGA Plus alone: the first 3 and the newest 3, the newest dated after the first.
+        let mut l = weekly(1, 3, 1_000_000_000_000);
+        l.extend(weekly(1196, 1198, 1_000_000_000_000));
         assert_eq!(trusted_top(&l, None), Some(1198.0));
     }
 

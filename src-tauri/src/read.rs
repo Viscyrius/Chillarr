@@ -296,20 +296,39 @@ pub fn clean_copies(lists: Vec<Vec<crate::suwayomi::Chapter>>) -> Vec<Vec<crate:
 /// A saved mark ("known up to", "told") above what the list can be trusted
 /// with comes down to it: a stray 276 or 560 saved before kept every real
 /// chapter after the true newest from being fetched or told.
-pub fn lowered_mark(mark: Option<f64>, top: Option<f64>) -> Option<f64> {
+/// Only when every copy answered: a copy that didn't looks like a short list.
+pub fn lowered_mark(mark: Option<f64>, top: Option<f64>, complete: bool) -> Option<f64> {
     match (mark, top) {
-        (Some(m), Some(t)) if m > t => Some(t),
+        (Some(m), Some(t)) if complete && m > t => Some(t),
         _ => mark,
     }
 }
 
 /// A followed series' chapters across its copies. The main copy must answer.
 pub async fn chapters_of(f: &Followed) -> Result<Vec<(crate::suwayomi::Chapter, usize)>, String> {
+    Ok(chapters_checked(f).await?.0)
+}
+
+/// The same, and whether every copy answered (a fill copy that didn't is left out).
+pub async fn chapters_checked(f: &Followed) -> Result<(Vec<(crate::suwayomi::Chapter, usize)>, bool), String> {
     let mut lists = vec![crate::suwayomi::chapters(f.manga_id).await?];
+    let mut complete = true;
     for x in &f.fill {
-        lists.push(crate::suwayomi::chapters(x.manga_id).await.unwrap_or_default());
+        match crate::suwayomi::chapters(x.manga_id).await {
+            Ok(l) => lists.push(l),
+            Err(_) => {
+                complete = false;
+                lists.push(vec![]);
+            }
+        }
     }
-    Ok(merge_copies(clean_copies(lists)))
+    Ok((merge_copies(clean_copies(lists)), complete))
+}
+
+/// Chapters across copies, and whether every copy answered.
+pub async fn chapter_list_checked(f: &Followed) -> Result<(Vec<crate::suwayomi::Chapter>, bool), String> {
+    let (all, complete) = chapters_checked(f).await?;
+    Ok((all.into_iter().map(|x| x.0).collect(), complete))
 }
 
 async fn chapter_list(f: &Followed) -> Result<Vec<crate::suwayomi::Chapter>, String> {
@@ -1476,10 +1495,10 @@ async fn fetch_new_once(app: &AppHandle) {
     let profiles = all_spots(app);
     let queued: std::collections::HashSet<i64> = crate::suwayomi::queue().await.into_iter().map(|q| q.1).collect();
     for f in list.into_iter().filter(|f| f.new_too) {
-        let Ok(chs) = chapter_list(&f).await else { continue };
+        let Ok((chs, complete)) = chapter_list_checked(&f).await else { continue };
         let top = top_number(chs.iter());
         // A mark saved from a stray number comes down, so what follows the real newest is fetched.
-        let lowered = lowered_mark(f.known_upto, top);
+        let lowered = lowered_mark(f.known_upto, top, complete);
         if lowered != f.known_upto {
             update_followed(app, &f.key, |x| x.known_upto = lowered);
         }
@@ -2281,10 +2300,11 @@ mod tests {
 
     #[test]
     fn a_mark_above_what_can_be_trusted_comes_down() {
-        assert_eq!(lowered_mark(Some(276.0), Some(120.0)), Some(120.0));
-        assert_eq!(lowered_mark(Some(100.0), Some(120.0)), Some(100.0));
-        assert_eq!(lowered_mark(None, Some(120.0)), None);
-        assert_eq!(lowered_mark(Some(276.0), None), Some(276.0), "nothing listed: left alone");
+        assert_eq!(lowered_mark(Some(276.0), Some(120.0), true), Some(120.0));
+        assert_eq!(lowered_mark(Some(276.0), Some(3.0), false), Some(276.0), "a copy didn't answer: never lowered on a short list");
+        assert_eq!(lowered_mark(Some(100.0), Some(120.0), true), Some(100.0));
+        assert_eq!(lowered_mark(None, Some(120.0), true), None);
+        assert_eq!(lowered_mark(Some(276.0), None, true), Some(276.0), "nothing listed: left alone");
     }
 
     fn ch(id: i64, n: f64, downloaded: bool) -> Chapter {
