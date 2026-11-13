@@ -59,6 +59,7 @@ pub mod model;
 mod tiles;
 mod vlc;
 mod waiting;
+mod stalled;
 mod search_schedule;
 mod pick;
 mod profiles;

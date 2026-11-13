@@ -1146,6 +1146,7 @@ pub fn spawn(app: AppHandle) {
                 crate::trickplay::ensure(&app).await;
             }
             tidy_imported(&app).await;
+            crate::stalled::tick(&app).await;
             crate::books::tick(&app).await;
             crate::watchnow::tick(&app).await;
             // Nobody on it and nothing coming in: new releases are looked for every 10 minutes.

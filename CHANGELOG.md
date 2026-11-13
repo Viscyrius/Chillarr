@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+- Fixed: My List stays on a manga or manhwa after you download chapters. It used to vanish once you followed the series.
+- A download nobody is sharing no longer sits at 0% forever. When a film or episode has no seeders and gets nothing for 15 minutes (45 when the site still lists seeders), Chillarr drops that copy, makes sure it's never taken again, and finds another one. After 4 dead copies in a row it keeps the next one and the log says so.
+
 ## 0.20.2 (2026-11-12)
 - Fixed for good: picking Dubbed, or English in the player's audio menu, really plays English now. Jellyfin was ignoring the choice and played the file's first track (Japanese), and Chillarr never told it which copy of the file it meant. VLC never had this problem because it picks the track itself.
 - Much less CPU while watching. When your PC (or phone) can play the file's own picture format, AV1 included, Chillarr now has Jellyfin only repackage it instead of converting the picture. Mushoku Tensei season 3 went from about 40% CPU to almost nothing. Subtitles are no longer drawn into the picture either; Chillarr shows them itself.

@@ -1833,7 +1833,8 @@ async function showFollowed(key, mine, c0) {
       showFollowed(key, ++panelSeq, c0);
     } catch (e) { toast(String(e), true); live.disabled = false; }
   });
-  actions.append(live, el("button", { class: "btn soft", onclick: (e) => unfollow(f, e.currentTarget) }, "Stop following"));
+  // My List stays once chapters are downloaded: following and listing are separate.
+  actions.append(...[live, el("button", { class: "btn soft", onclick: (e) => unfollow(f, e.currentTarget) }, "Stop following"), listButton(c)].filter(Boolean));
   hideOn();
   const hidden = !!(d.spot && d.spot.hide_week);
   actions.append(el("button", { class: "btn soft read-hideweek" + (hidden ? " on" : ""), "aria-pressed": String(hidden),
