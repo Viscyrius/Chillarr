@@ -27,6 +27,8 @@ ManifestDPIAwareness PerMonitorV2
 !include "FileAssociation.nsh"
 !include "Win\COM.nsh"
 !include "Win\Propkey.nsh"
+; Newer tauri-cli keeps the macros CheckIfAppIsRunning needs in this file; older ones don't have it.
+!include /NONFATAL "Win\RestartManager.nsh"
 !include "StrFunc.nsh"
 ${StrCase}
 ${StrLoc}
