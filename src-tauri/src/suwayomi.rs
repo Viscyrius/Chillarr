@@ -231,12 +231,46 @@ pub fn is_zeroed(path: &Path) -> bool {
 /// can be zeros without harm, so they aren't listed.
 pub fn damaged_files(data: &Path) -> Vec<PathBuf> {
     let mut found: Vec<PathBuf> = ["server.conf", "database.mv.db"].iter().map(|n| data.join(n)).filter(|p| is_zeroed(p)).collect();
+    let db = data.join("database.mv.db");
+    if !found.contains(&db) && db.is_file() && log_says_db_corrupt(data) {
+        found.push(db);
+    }
     if let Ok(rd) = std::fs::read_dir(data.join("settings")) {
         let mut xml: Vec<PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "xml") && is_zeroed(p)).collect();
         xml.sort();
         found.extend(xml);
     }
     found
+}
+
+/// A database the crash damaged without zeroing it: H2 can't find a valid set
+/// of chunks, so every start fails before the port opens and the downloader sits
+/// on "starting" forever (2026-11-15: a 70 MB database.mv.db, 30+ failed starts).
+/// Only Suwayomi's own log can tell, so read its tail: the database is judged
+/// corrupt when H2's corruption error comes after the last good start.
+pub fn log_says_db_corrupt(data: &Path) -> bool {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut f) = std::fs::File::open(data.join("logs").join("application.log")) else { return false };
+    let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+    let _ = f.seek(SeekFrom::Start(len.saturating_sub(256 * 1024)));
+    let mut buf = Vec::new();
+    if f.read_to_end(&mut buf).is_err() {
+        return false;
+    }
+    db_corrupt_after_last_start(&String::from_utf8_lossy(&buf))
+}
+
+fn db_corrupt_after_last_start(log: &str) -> bool {
+    let bad = ["File corrupted while reading record", "File is corrupted - unable to recover", "Store header is corrupt"]
+        .iter()
+        .filter_map(|m| log.rfind(m))
+        .max();
+    let good = log.rfind("Javalin started");
+    match (bad, good) {
+        (Some(b), Some(g)) => b > g,
+        (Some(_), None) => true,
+        _ => false,
+    }
 }
 
 /// Renames each damaged file to `<name>.damaged-<stamp>` so Suwayomi makes a
@@ -861,6 +895,27 @@ mod tests {
         assert_eq!(kept, 1, "set aside, not deleted");
         assert!(damaged_files(&d).is_empty(), "a second start finds nothing more to move");
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_corrupt_database_in_the_log_is_set_aside_but_a_recovered_one_is_not() {
+        let err = "ERROR DBManager - Failed to setup Database
+Caused by: org.h2.mvstore.MVStoreException: File is corrupted - unable to recover a valid set of chunks
+";
+        let ok = "INFO io.javalin.Javalin - Javalin started in 188ms
+";
+        assert!(db_corrupt_after_last_start(err));
+        assert!(db_corrupt_after_last_start(&format!("{ok}{err}")));
+        assert!(!db_corrupt_after_last_start(&format!("{err}{ok}")), "a later good start means it recovered");
+        assert!(!db_corrupt_after_last_start(ok));
+
+        let d = scratch("corrupt-db");
+        std::fs::create_dir_all(d.join("logs")).unwrap();
+        std::fs::write(d.join("database.mv.db"), b"H:2,block:5,not zeros but broken").unwrap();
+        std::fs::write(d.join("logs").join("application.log"), format!("{ok}{err}")).unwrap();
+        assert_eq!(set_aside_damaged(&d), vec!["database.mv.db".to_string()]);
+        assert!(!d.join("database.mv.db").exists());
+        assert!(damaged_files(&d).is_empty(), "no database left to move, so the next start is clean");
     }
 
     #[test]
