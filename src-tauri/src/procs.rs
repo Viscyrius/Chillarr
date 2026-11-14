@@ -35,6 +35,31 @@ pub struct Procs {
     job: Option<Job>,
     flare: Mutex<Option<Child>>,
     suwa: Mutex<Option<Child>>,
+    /// When the Suwayomi above was started: a Java that is alive but has not
+    /// opened its port long after that is stuck, not still starting.
+    suwa_since: Mutex<Option<std::time::Instant>>,
+}
+
+/// What to do about Suwayomi when its port is closed.
+#[derive(Debug, PartialEq, Eq)]
+pub enum SuwaAction {
+    /// Ours isn't running: start it.
+    Start,
+    /// Ours was started a moment ago and is still coming up.
+    Wait,
+    /// Ours has been up for longer than it needs to answer and hasn't: close it and start again.
+    Restart,
+}
+
+/// 2026-11-14: a crash-damaged config made Suwayomi's Java give up at start and
+/// stay alive without ever listening. Chillarr counted it as "ours, running"
+/// and never started another, so every later Fix everything did nothing.
+pub fn suwayomi_action(owned: bool, age: Option<Duration>, start_wait: Duration) -> SuwaAction {
+    match (owned, age) {
+        (false, _) => SuwaAction::Start,
+        (true, Some(a)) if a > start_wait + Duration::from_secs(30) => SuwaAction::Restart,
+        (true, _) => SuwaAction::Wait,
+    }
 }
 
 /// Spawn FlareSolverr only when we don't own one and nothing answers on its port.
@@ -84,7 +109,7 @@ impl Procs {
                 Job(h)
             })
         };
-        Procs { job, flare: Mutex::new(None), suwa: Mutex::new(None) }
+        Procs { job, flare: Mutex::new(None), suwa: Mutex::new(None), suwa_since: Mutex::new(None) }
     }
 
     /// True while the FlareSolverr we started is still alive.
@@ -147,6 +172,12 @@ impl Procs {
             let _ = c.kill();
             let _ = c.wait();
         }
+        *self.suwa_since.lock().unwrap() = None;
+    }
+
+    /// How long ago the Suwayomi we started was started.
+    pub fn suwayomi_age(&self) -> Option<Duration> {
+        self.suwa_since.lock().unwrap().map(|t| t.elapsed())
     }
 
     /// Suwayomi's Java, hidden, in the kill-on-close job like FlareSolverr:
@@ -170,6 +201,7 @@ impl Procs {
             }
         }
         *self.suwa.lock().unwrap() = Some(child);
+        *self.suwa_since.lock().unwrap() = Some(std::time::Instant::now());
         Ok(())
     }
 }
@@ -458,6 +490,16 @@ pub fn run_elevated_for(script: &str, wait_ms: u32) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_stuck_suwayomi_is_restarted_but_one_still_starting_is_left_alone() {
+        let wait = Duration::from_secs(120);
+        assert_eq!(suwayomi_action(false, None, wait), SuwaAction::Start);
+        assert_eq!(suwayomi_action(true, Some(Duration::from_secs(5)), wait), SuwaAction::Wait);
+        assert_eq!(suwayomi_action(true, Some(Duration::from_secs(150)), wait), SuwaAction::Wait, "the wait plus a margin");
+        assert_eq!(suwayomi_action(true, Some(Duration::from_secs(151)), wait), SuwaAction::Restart);
+        assert_eq!(suwayomi_action(true, None, wait), SuwaAction::Wait, "no start time is never a reason to kill it");
+    }
 
     #[tokio::test]
     async fn port_open_detects_listener() {

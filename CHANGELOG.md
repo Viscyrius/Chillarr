@@ -1,6 +1,9 @@
 # Changelog
 
 ## Unreleased
+- Fixed: a crash or blue screen during setup no longer leaves the manga downloader dead. The crash had left its settings file, settings and database as blank (all-zero) files; Suwayomi then gave up at start but its Java stayed running without ever listening, and Chillarr counted that as "running" and never started another one, so reading said "The manga downloader didn't start" for good. Chillarr now sets blank files aside (renamed `.damaged-<time>`, never deleted) before it starts the downloader, closes a downloader that is running but hasn't answered after about 2.5 minutes and starts it again, and closes one that never answered so the next try starts clean.
+- Fixed: Jellyfin set to "Manual" start but still running as a Windows service (a switch to "run as you" that stopped halfway) was treated as already switched. Jellyfin kept its own pages and ran as NETWORK SERVICE, and Fix everything skipped it without a word. Chillarr now sees it and switches it (one Windows prompt) like any other Jellyfin service.
+- Fixed: when Chillarr isn't signed in to Jellyfin (setup was cut short), every Jellyfin call it made got a 401 that only the detail log showed, and Fix everything said nothing. The log and Fix everything now say it plainly: sign in under Settings > Account & devices. Chillarr no longer retries the restart onto its own pages every few minutes while signed out.
 - Fixed: My List stays on a manga or manhwa after you download chapters. It used to vanish once you followed the series.
 - A download nobody is sharing no longer sits at 0% forever. When a film or episode has no seeders and gets nothing for 15 minutes (45 when the site still lists seeders), Chillarr drops that copy, makes sure it's never taken again, and finds another one. After 4 dead copies in a row it keeps the next one and the log says so.
 

@@ -292,11 +292,23 @@ async fn start_if_down(app: &AppHandle, cfg: &AppConfig, trigger: Trigger, rep: 
             None => return log(app, Level::Red, "FlareSolverr isn't running and Chillarr can't find flaresolverr.exe. Pick it in Settings."),
         },
         AppId::Suwayomi => match &cfg.exe {
-            Some(exe) if !core.procs.owns_suwayomi() => match crate::suwayomi::launch_args(app, exe) {
-                Ok(args) => (core.procs.start_suwayomi(exe, &args), crate::suwayomi::START_WAIT_SECS),
-                Err(e) => return log(app, Level::Amber, e),
-            },
-            _ => return,
+            Some(exe) => {
+                match procs::suwayomi_action(core.procs.owns_suwayomi(), core.procs.suwayomi_age(), Duration::from_secs(crate::suwayomi::START_WAIT_SECS)) {
+                    procs::SuwaAction::Wait => return,
+                    // Alive, yet its port has stayed shut well past the time it needs:
+                    // stuck (a damaged file made it give up at start). Close it and go again.
+                    procs::SuwaAction::Restart => {
+                        core.procs.stop_suwayomi();
+                        log(app, Level::Amber, "The manga downloader was running but not answering, so Chillarr closed it to start it again.");
+                    }
+                    procs::SuwaAction::Start => {}
+                }
+                match crate::suwayomi::launch_args(app, exe) {
+                    Ok(args) => (core.procs.start_suwayomi(exe, &args), crate::suwayomi::START_WAIT_SECS),
+                    Err(e) => return log(app, Level::Amber, e),
+                }
+            }
+            None => return,
         },
         AppId::QBittorrent => match &cfg.exe {
             // Open but not answering: its Web UI is off. Starting it again only
@@ -381,6 +393,11 @@ async fn start_if_down(app: &AppHandle, cfg: &AppConfig, trigger: Trigger, rep: 
                     None
                 }
                 .unwrap_or_default();
+                if cfg.id == AppId::Suwayomi {
+                    // Don't leave a Java that never listened sitting there: the next try
+                    // (this button, or the background guard) starts a clean one.
+                    core.procs.stop_suwayomi();
+                }
                 log(app, Level::Red, format!("Started {name}, but it didn't answer within {wait} seconds.{why}"));
             }
         }
@@ -1035,8 +1052,10 @@ async fn allowed_hosts_step(app: &AppHandle, rep: &mut FixReport) {
 async fn jellyfin_as_user_step(app: &AppHandle, rep: &mut FixReport) {
     let core = app.state::<Core>();
     let Some(cfg) = core.config(AppId::Jellyfin) else { return };
-    let (Some(svc), Some(exe)) = (cfg.service.clone(), cfg.exe.clone()) else { return };
-    let locked = crate::imports::service_account(&svc).and_then(|a| crate::imports::service_sid(&a)).is_some();
+    let Some(exe) = cfg.exe.clone() else { return };
+    // Also a service set to Manual but still running: a switch that stopped halfway.
+    let Some(svc) = crate::discover::jellyfin_service_to_switch(cfg.service.as_deref(), procs::service_running("JellyfinServer")) else { return };
+    let locked =crate::imports::service_account(&svc).and_then(|a| crate::imports::service_sid(&a)).is_some();
     if !locked {
         return;
     }
@@ -1075,6 +1094,25 @@ async fn jellyfin_as_user_step(app: &AppHandle, rep: &mut FixReport) {
     let msg = "Jellyfin now runs as you, so it can play everything in your library. Chillarr starts it when you sign in.".to_string();
     log(app, Level::Ok, &msg);
     rep.actions.push(msg);
+}
+
+/// Button only: Chillarr can use Jellyfin (its libraries, its own pages) only
+/// once it is signed in, and the sign-in is made with the password the person
+/// types, in setup or in Settings. Fix everything doesn't know it, so it can't
+/// repair this, but it must say so: after a crash cut setup short (2026-11-14)
+/// Jellyfin showed "Running" and every background call got a 401 that only the
+/// detail log recorded.
+async fn jellyfin_signin_step(app: &AppHandle, rep: &mut FixReport) {
+    let core = app.state::<Core>();
+    let Some(cfg) = core.config(AppId::Jellyfin) else { return };
+    if !crate::discover::is_installed(&cfg) || crate::media::signed_in(app) || !procs::port_open(&cfg.base_url).await {
+        return;
+    }
+    let msg = "Chillarr isn't signed in to Jellyfin, so it can't add your libraries or put its own pages on Jellyfin. Fix everything doesn't know your Jellyfin password: sign in under Settings > Account & devices.".to_string();
+    log(app, Level::Amber, &msg);
+    if !rep.needs_button.contains(&msg) {
+        rep.needs_button.push(msg);
+    }
 }
 
 /// Button only: Radarr or Sonarr installed as a Windows service runs as LOCAL
@@ -1313,6 +1351,7 @@ pub async fn fix_all(app: &AppHandle, trigger: Trigger) -> FixReport {
         allowed_hosts_step(app, &mut rep).await;
         run_as_user_step(app, &mut rep).await;
         jellyfin_as_user_step(app, &mut rep).await;
+        jellyfin_signin_step(app, &mut rep).await;
         import_finished_step(app, &mut rep).await;
         // Downloads nothing will bring into the library: say so, and where to stop them.
         let orphans = crate::waiting::orphans(app).await;

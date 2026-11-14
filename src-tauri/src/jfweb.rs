@@ -668,18 +668,21 @@ pub fn spawn(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(Duration::from_secs(90)).await;
         let mut said_service = false;
+        let mut said_signin = false;
         let mut tried = String::new();
         loop {
-            check(&app, &mut said_service, &mut tried).await;
+            check(&app, &mut said_service, &mut said_signin, &mut tried).await;
             crate::activity::nap(false, Duration::from_secs(5 * 60), Duration::from_secs(30 * 60)).await;
         }
     });
 }
 
-async fn check(app: &AppHandle, said_service: &mut bool, tried: &mut String) {
+async fn check(app: &AppHandle, said_service: &mut bool, said_signin: &mut bool, tried: &mut String) {
     let Some(cfg) = app.state::<crate::fix::Core>().config(AppId::Jellyfin) else { return };
     let Some(exe) = cfg.exe.clone() else { return };
-    if cfg.service.is_some() {
+    // Also a service set to Manual but still running (a switch that stopped
+    // halfway): restarting that would only have its wrapper start it again.
+    if crate::discover::jellyfin_service_to_switch(cfg.service.as_deref(), crate::procs::service_running("JellyfinServer")).is_some() {
         if !*said_service {
             log(app, Level::Amber, "Jellyfin runs as a Windows service, so its own pages keep Jellyfin's look and per-library search. Press Fix everything to run it as you, and Chillarr's version takes over.");
             *said_service = true;
@@ -701,6 +704,15 @@ async fn check(app: &AppHandle, said_service: &mut bool, tried: &mut String) {
     }
     // Something else answering on Jellyfin's port isn't ours to restart.
     if !tokio::task::spawn_blocking(|| crate::procs::process_running("jellyfin.exe")).await.unwrap_or(false) {
+        return;
+    }
+    // Without Chillarr's own Jellyfin sign-in every call is a 401, and the
+    // restart below would never happen: say so once instead of knocking forever.
+    if !crate::media::signed_in(app) {
+        if !*said_signin {
+            log(app, Level::Amber, "Chillarr isn't signed in to Jellyfin, so it can't restart it onto Chillarr's pages. Sign in under Settings > Account & devices.");
+            *said_signin = true;
+        }
         return;
     }
     let Some(j) = crate::media::jf_admin(app) else { return };

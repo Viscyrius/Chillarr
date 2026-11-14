@@ -390,6 +390,12 @@ pub(crate) fn tailscale_self() -> Option<(Option<String>, Option<String>)> {
     Some((name, ip))
 }
 
+/// Whether Chillarr holds a Jellyfin sign-in (the owner's, in jellyfin.json).
+/// Without one every Jellyfin call it makes is answered 401.
+pub(crate) fn signed_in(app: &AppHandle) -> bool {
+    app.try_state::<Media>().is_some_and(|m| m.session.lock().unwrap().is_some())
+}
+
 pub async fn status(app: &AppHandle) -> MediaStatus {
     let installed = app.state::<Core>().config(AppId::Jellyfin).as_ref().is_some_and(crate::discover::is_installed);
     let session = app.state::<Media>().session.lock().unwrap().clone();

@@ -208,6 +208,52 @@ pub fn data_dir() -> PathBuf {
     PathBuf::from(std::env::var_os("LOCALAPPDATA").unwrap_or_default()).join("Chillarr").join("Suwayomi-data")
 }
 
+/// A file the PC's crash left as zeros. Windows sets a file's length before it
+/// writes the bytes, so a crash or blue screen mid-write leaves the whole
+/// length as NULs (2026-11-14, a fresh install: server.conf, the settings, the
+/// database and the log were all zeros). Only the head is read: a real config,
+/// settings file or H2 database never begins with 4 KB of NULs.
+pub fn is_zeroed(path: &Path) -> bool {
+    use std::io::Read;
+    let Ok(meta) = std::fs::metadata(path) else { return false };
+    if !meta.is_file() || meta.len() == 0 {
+        return false;
+    }
+    let mut buf = [0u8; 4096];
+    let Ok(mut f) = std::fs::File::open(path) else { return false };
+    let n = f.read(&mut buf).unwrap_or(0);
+    n > 0 && buf[..n].iter().all(|&b| b == 0)
+}
+
+/// The files Suwayomi can't start with when they are zeros: its config parser
+/// throws on a NUL key (and the Java process then stays up, never opening its
+/// port), and H2 stops with "Store header is corrupt". The backups and the log
+/// can be zeros without harm, so they aren't listed.
+pub fn damaged_files(data: &Path) -> Vec<PathBuf> {
+    let mut found: Vec<PathBuf> = ["server.conf", "database.mv.db"].iter().map(|n| data.join(n)).filter(|p| is_zeroed(p)).collect();
+    if let Ok(rd) = std::fs::read_dir(data.join("settings")) {
+        let mut xml: Vec<PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "xml") && is_zeroed(p)).collect();
+        xml.sort();
+        found.extend(xml);
+    }
+    found
+}
+
+/// Renames each damaged file to `<name>.damaged-<stamp>` so Suwayomi makes a
+/// fresh one (every setting that matters is given on the command line). Nothing
+/// is deleted. Returns the names set aside.
+pub fn set_aside_damaged(data: &Path) -> Vec<String> {
+    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+    let mut moved = Vec::new();
+    for p in damaged_files(data) {
+        let Some(name) = p.file_name().map(|n| n.to_string_lossy().to_string()) else { continue };
+        if std::fs::rename(&p, p.with_file_name(format!("{name}.damaged-{stamp}"))).is_ok() {
+            moved.push(name);
+        }
+    }
+    moved
+}
+
 pub fn config() -> AppConfig {
     let exe = installed_java();
     AppConfig {
@@ -228,7 +274,15 @@ pub fn launch_args(app: &AppHandle, java: &Path) -> Result<Vec<String>, String> 
     std::fs::create_dir_all(&comics).map_err(|e| format!("Couldn't make {}: {e}", comics.display()))?;
     let data = data_dir();
     std::fs::create_dir_all(&data).map_err(|e| format!("Couldn't make {}: {e}", data.display()))?;
-    let flare = app.state::<crate::fix::Core>().config(AppId::FlareSolverr).map(|c| c.base_url).unwrap_or_else(|| "http://localhost:8191".into());
+    let moved = set_aside_damaged(&data);
+    if !moved.is_empty() {
+        crate::log::log(
+            app,
+            crate::model::Level::Amber,
+            format!("The manga downloader's files were damaged when the PC crashed ({}). Chillarr set them aside and it starts fresh.", moved.join(", ")),
+        );
+    }
+    let flare =app.state::<crate::fix::Core>().config(AppId::FlareSolverr).map(|c| c.base_url).unwrap_or_else(|| "http://localhost:8191".into());
     let password = new_password();
     *PASSWORD.lock().unwrap() = Some(password.clone());
     // Everything it downloads goes through Chillarr's relay, so Limit downloads covers it.
@@ -774,6 +828,54 @@ pub async fn delete_chapters(ids: &[i64]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn scratch(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("chillarr-suwa-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("settings")).unwrap();
+        d
+    }
+
+    /// 2026-11-14: a blue screen left Suwayomi's config, settings and database as
+    /// zeros. Its Java stayed up and never opened the port, so Chillarr said
+    /// "The manga downloader didn't start" until the files were replaced.
+    #[test]
+    fn crash_zeroed_files_are_found_and_set_aside_but_good_ones_are_kept() {
+        let d = scratch("zeroed");
+        std::fs::write(d.join("server.conf"), vec![0u8; 8105]).unwrap();
+        std::fs::write(d.join("database.mv.db"), vec![0u8; 77_824]).unwrap();
+        std::fs::write(d.join("settings").join("a.xml"), vec![0u8; 172]).unwrap();
+        std::fs::write(d.join("settings").join("b.xml"), b"<map/>").unwrap();
+        // Zeros in the log or a backup do no harm, so they are left alone.
+        std::fs::create_dir_all(d.join("logs")).unwrap();
+        std::fs::write(d.join("logs").join("application.log"), vec![0u8; 8161]).unwrap();
+
+        let names: Vec<String> = damaged_files(&d).iter().map(|p| p.file_name().unwrap().to_string_lossy().to_string()).collect();
+        assert_eq!(names, ["server.conf", "database.mv.db", "a.xml"]);
+
+        let moved = set_aside_damaged(&d);
+        assert_eq!(moved, ["server.conf", "database.mv.db", "a.xml"]);
+        assert!(!d.join("server.conf").exists(), "Suwayomi must find no file there, so it makes a new one");
+        assert!(d.join("settings").join("b.xml").exists());
+        let kept = std::fs::read_dir(&d).unwrap().flatten().filter(|e| e.file_name().to_string_lossy().starts_with("server.conf.damaged-")).count();
+        assert_eq!(kept, 1, "set aside, not deleted");
+        assert!(damaged_files(&d).is_empty(), "a second start finds nothing more to move");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_real_config_or_a_missing_file_is_not_damage() {
+        let d = scratch("good");
+        std::fs::write(d.join("server.conf"), "server.port = 4567\n").unwrap();
+        // A database that starts with its header, then has long runs of zeros, is fine.
+        let mut db = b"H:2,block:2,blockSize:1000,format:1,fletcher:ab".to_vec();
+        db.extend(vec![0u8; 9000]);
+        std::fs::write(d.join("database.mv.db"), db).unwrap();
+        std::fs::write(d.join("settings").join("empty.xml"), b"").unwrap();
+        assert!(damaged_files(&d).is_empty());
+        assert!(!is_zeroed(&d.join("nothing-here")));
+        let _ = std::fs::remove_dir_all(&d);
+    }
 
     #[test]
     fn adult_sources_only_for_adult_searches() {

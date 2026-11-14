@@ -73,6 +73,18 @@ pub fn counts_as_service(start: Option<u32>) -> bool {
     start == Some(2)
 }
 
+/// The Jellyfin Windows service Chillarr still has to switch to "run as you":
+/// the one discovery found (Automatic), or one set to Manual that is *running*.
+/// Chillarr's own switch ends with the service stopped and Manual, so Manual
+/// alone means "already switched". A Manual service that is running is a
+/// switch that stopped halfway (2026-11-14: a blue screen during setup): it
+/// still serves Jellyfin's stock pages as NETWORK SERVICE, holds the port so
+/// Chillarr's own copy can't start, and nothing noticed, because the card only
+/// checks that the port answers.
+pub fn jellyfin_service_to_switch(found: Option<&str>, service_running: Option<bool>) -> Option<String> {
+    found.map(String::from).or_else(|| (service_running == Some(true)).then(|| "JellyfinServer".to_string()))
+}
+
 /// qBittorrent's default download folder from its ini.
 pub fn parse_qbit_save_path(ini: &str) -> Option<String> {
     let mut section = "";
@@ -302,6 +314,17 @@ mod tests {
         assert!(!counts_as_service(Some(3)));
         assert!(!counts_as_service(Some(4)));
         assert!(!counts_as_service(None));
+    }
+
+    #[test]
+    fn a_manual_jellyfin_service_that_is_still_running_is_a_half_done_switch() {
+        // Found Automatic: that one.
+        assert_eq!(jellyfin_service_to_switch(Some("JellyfinServer"), Some(true)).as_deref(), Some("JellyfinServer"));
+        // Manual and stopped: switched already, nothing to do.
+        assert_eq!(jellyfin_service_to_switch(None, Some(false)), None);
+        assert_eq!(jellyfin_service_to_switch(None, None), None, "no such service");
+        // Manual but running: still serving stock pages as NETWORK SERVICE.
+        assert_eq!(jellyfin_service_to_switch(None, Some(true)).as_deref(), Some("JellyfinServer"));
     }
 
     #[test]
