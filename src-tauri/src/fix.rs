@@ -1054,13 +1054,36 @@ async fn jellyfin_as_user_step(app: &AppHandle, rep: &mut FixReport) {
     let Some(cfg) = core.config(AppId::Jellyfin) else { return };
     let Some(exe) = cfg.exe.clone() else { return };
     // Also a service set to Manual but still running: a switch that stopped halfway.
-    let Some(svc) = crate::discover::jellyfin_service_to_switch(cfg.service.as_deref(), procs::service_running("JellyfinServer")) else { return };
+    let data = std::env::var_os("ProgramData").map(std::path::PathBuf::from).unwrap_or_default().join("Jellyfin").join("Server");
+    let account = format!("{}\\{}", std::env::var("USERDOMAIN").unwrap_or_default(), std::env::var("USERNAME").unwrap_or_default());
+    let Some(svc) = crate::discover::jellyfin_service_to_switch(cfg.service.as_deref(), procs::service_running("JellyfinServer")) else {
+        // Switch cut off after the service went Manual and stopped (2026-11-14,
+        // blue screen) but before the user got write access to the data folder:
+        // Jellyfin run as the user dies saving its config, while Chillarr logs
+        // "Started it". Grant access now; the service is already out of the way.
+        if crate::winsvc::start_type("JellyfinServer") == Some(3)
+            && procs::service_running("JellyfinServer") == Some(false)
+            && data.join("config").is_dir()
+            && !crate::imports::user_can_write(&data.join("config").join("system.xml"))
+        {
+            busy(app, AppId::Jellyfin, "Letting Jellyfin save its settings...");
+            let line = crate::imports::grant_user_line(&data.to_string_lossy(), &account);
+            let script = procs::ps_all(&[line]);
+            let done = tokio::task::spawn_blocking(move || procs::run_elevated_for(&script, 300_000)).await.unwrap_or_else(|e| Err(e.to_string()));
+            if crate::imports::user_can_write(&data.join("config").join("system.xml")) {
+                let msg = "Jellyfin's data folder is now writable by you, so it can start as you.".to_string();
+                log(app, Level::Ok, &msg);
+                rep.actions.push(msg);
+            } else {
+                log(app, Level::Red, done.err().unwrap_or_else(|| "Couldn't give you write access to Jellyfin's data folder".into()));
+            }
+        }
+        return;
+    };
     let locked =crate::imports::service_account(&svc).and_then(|a| crate::imports::service_sid(&a)).is_some();
     if !locked {
         return;
     }
-    let data = std::env::var_os("ProgramData").map(std::path::PathBuf::from).unwrap_or_default().join("Jellyfin").join("Server");
-    let account = format!("{}\\{}", std::env::var("USERDOMAIN").unwrap_or_default(), std::env::var("USERNAME").unwrap_or_default());
     busy(app, AppId::Jellyfin, "Switching to run as you...");
     let data = data.to_string_lossy().to_string();
     // Grant first: if the service is already stopped, `net stop` fails and would skip it.

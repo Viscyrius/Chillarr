@@ -54,6 +54,13 @@ pub fn grant_user_line(path: &str, account: &str) -> String {
     ps_tool("icacls.exe", &[path, "/grant", &format!("{account}:(OI)(CI)M"), "/T", "/Q"])
 }
 
+/// Whether the signed-in user can write this existing file (opens it for
+/// append; nothing is written). Used to spot a data folder whose "run as you"
+/// grant never happened.
+pub fn user_can_write(file: &std::path::Path) -> bool {
+    std::fs::OpenOptions::new().append(true).open(file).is_ok()
+}
+
 /// Takes that grant away again. A data folder the user can write, loaded by a
 /// service running as NETWORK SERVICE, would let anything the user runs put
 /// code into that service.
