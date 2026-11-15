@@ -55,6 +55,8 @@
 - Setup and repair: a Jellyfin that is slow to answer after switching to run as you is given 30 seconds before its service is put back. When the service is put back, the copy run as you is closed first, so the two don't fight over the same folder. The same for Sonarr, Radarr and Prowlarr.
 - Settings: an action that takes a while (saving folders, signing in, Find again) no longer draws Settings over the page you have moved to.
 - Settings on a phone or browser: the reading folder shows what's in it and says it is set on the PC, instead of controls that did nothing.
+- Fixed: after Sonarr, Radarr or Prowlarr updated itself, it came back in a console window next to Chillarr. Their updater starts the new version that way. Chillarr now starts it again out of sight, once it is between tasks, so an import is never cut off.
+- Fixed: Chillarr could break an update of Sonarr, Radarr or Prowlarr. While the updater had the app closed to swap its files, Chillarr saw it down and started it, and the update gave up ("restarted prematurely by external process"). Chillarr now waits for the update to finish.
 
 ## 0.20.2 (2026-11-12)
 - Fixed for good: picking Dubbed, or English in the player's audio menu, really plays English now. Jellyfin was ignoring the choice and played the file's first track (Japanese), and Chillarr never told it which copy of the file it meant. VLC never had this problem because it picks the track itself.

@@ -402,6 +402,14 @@ impl Arr {
         let c: CommandRef = self.get(&format!("command/{id}")).await?;
         Ok(matches!(c.status.as_str(), "completed" | "failed" | "aborted" | "cancelled" | "orphaned"))
     }
+
+    /// True while the app is in the middle of a task: an import, a refresh, a
+    /// search. Its list also holds queued tasks and ones finished a while ago;
+    /// only a started one counts.
+    pub async fn busy(&self) -> Result<bool, ArrError> {
+        let list: Vec<CommandRef> = self.get("command").await?;
+        Ok(list.iter().any(|c| c.status == "started"))
+    }
 }
 
 #[cfg(test)]
@@ -441,6 +449,34 @@ mod tests {
         a.update("movie/1", &serde_json::json!({})).await.unwrap();
         a.list("movie").await.unwrap();
         assert_eq!(hits.load(SeqCst), 5, "a change means the next read asks again");
+    }
+
+    /// Answers every request with this JSON body.
+    async fn answering(body: &'static str) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            while let Ok((mut sock, _)) = listener.accept().await {
+                let mut buf = [0u8; 2048];
+                let _ = sock.read(&mut buf).await;
+                let head = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
+                let _ = sock.write_all(format!("{head}{body}").as_bytes()).await;
+            }
+        });
+        base
+    }
+
+    #[tokio::test]
+    async fn busy_only_while_a_task_has_started() {
+        let arr = |base| Arr { http: client(), base, key: "k".into(), ver: "v3" };
+        // As Sonarr lists them: queued and long finished ones stay in the list.
+        let idle = answering(r#"[{"id":1,"name":"RefreshMonitoredDownloads","status":"completed"},{"id":2,"name":"RssSync","status":"queued"}]"#).await;
+        assert_eq!(arr(idle).busy().await.ok(), Some(false));
+        let importing = answering(r#"[{"id":1,"status":"completed"},{"id":3,"name":"DownloadedEpisodesScan","status":"started"}]"#).await;
+        assert_eq!(arr(importing).busy().await.ok(), Some(true));
+        // Not answering is not "idle": the caller leaves the app alone.
+        assert!(arr("http://127.0.0.1:1".into()).busy().await.is_err());
     }
     use crate::model::AppConfig;
 

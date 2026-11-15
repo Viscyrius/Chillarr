@@ -364,6 +364,12 @@ async fn start_if_down(app: &AppHandle, cfg: &AppConfig, trigger: Trigger, rep: 
                 (r, WAIT_ARR_SECS)
             }
             (None, Some(exe)) => {
+                // Down because it is updating itself: its updater starts it again
+                // when done, and a copy started now would make the update give up.
+                if cfg.id.is_arr() && procs::arr_updating(name) {
+                    log(app, Level::Ok, format!("{name} is installing an update. It starts again by itself."));
+                    return;
+                }
                 if !unlock_data(app, cfg.id, trigger, rep).await {
                     return;
                 }
@@ -382,7 +388,8 @@ async fn start_if_down(app: &AppHandle, cfg: &AppConfig, trigger: Trigger, rep: 
             } else {
                 // One more try: an old copy stuck without answering holds the app's lock.
                 // Safe from the background too: it hasn't answered for this whole wait.
-                if cfg.id.is_arr() && cfg.service.is_none() {
+                // Not while its updater runs: that copy is the updater's to close.
+                if cfg.id.is_arr() && cfg.service.is_none() && !procs::arr_updating(name) {
                     if let Some(exe) = cfg.exe.clone() {
                         let (a, b) = (format!("{name}.exe"), format!("{name}.Console.exe"));
                         let _ = tokio::task::spawn_blocking(move || {
@@ -614,7 +621,7 @@ fn restart_allowed(id: AppId, now: Instant) -> bool {
 
 /// Closes an app Chillarr starts itself, gently, then for sure. Its own restart
 /// stays in the same process and piles its logging up (arr.rs `restart`).
-async fn close_arr(cfg: &AppConfig, arr: &Arr) {
+pub(crate) async fn close_arr(cfg: &AppConfig, arr: &Arr) {
     let _ = arr.shutdown().await;
     let (a, b) = (format!("{}.exe", cfg.id.label()), format!("{}.Console.exe", cfg.id.label()));
     let _ = tokio::task::spawn_blocking(move || {

@@ -84,6 +84,8 @@ pub fn spawn(app: AppHandle) {
             }
             // Not a fix, so not behind "Fix automatically": without it Jellyfin's search finds nothing.
             crate::meili::keep_alive(&app).await;
+            // Not a fix either: an app its own updater started again sits in a console window.
+            crate::onboard::hide_arr_consoles(&app).await;
             if !app.state::<AutoFix>().0.load(Ordering::Relaxed) {
                 continue;
             }

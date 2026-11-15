@@ -232,6 +232,45 @@ pub fn start_arr(exe: &Path, name: &str) -> Result<(), String> {
         .map_err(|e| format!("Couldn't start {name}: {e}"))
 }
 
+/// True while an `*arr` app's own updater (`Sonarr.Update.exe`, run from
+/// %TEMP%) is swapping its files. It closes the app to do it and starts it
+/// again itself when done, which takes a few minutes. A copy started in
+/// between makes the update give up: on 2026-11-15 the guard did exactly that
+/// to Sonarr's 4.0.20 update ("Sonarr was restarted prematurely by external
+/// process").
+pub fn arr_updating(name: &str) -> bool {
+    process_running(&format!("{name}.Update.exe"))
+}
+
+/// Every running process as (pid, parent pid, exe name), from one snapshot.
+pub fn process_list() -> Vec<(u32, u32, String)> {
+    use windows::Win32::System::Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS};
+    let mut out = Vec::new();
+    unsafe {
+        let Ok(snap) = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) else { return out };
+        let mut e = PROCESSENTRY32W { dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32, ..Default::default() };
+        let mut ok = Process32FirstW(snap, &mut e).is_ok();
+        while ok {
+            let len = e.szExeFile.iter().position(|&c| c == 0).unwrap_or(e.szExeFile.len());
+            out.push((e.th32ProcessID, e.th32ParentProcessID, String::from_utf16_lossy(&e.szExeFile[..len])));
+            ok = Process32NextW(snap, &mut e).is_ok();
+        }
+        let _ = CloseHandle(snap);
+    }
+    out
+}
+
+/// Whether a process named `exe_name` has a console of its own, which on the
+/// desktop is a window (in Windows Terminal, when that is the default).
+/// Windows gives every console a `conhost.exe` started as the app's child.
+/// `start_arr` starts the apps with no console at all, so an app with one was
+/// started by something else: its own updater, or a restart from its own page.
+pub fn has_console(list: &[(u32, u32, String)], exe_name: &str) -> bool {
+    list.iter()
+        .filter(|(_, _, n)| n.eq_ignore_ascii_case(exe_name))
+        .any(|(pid, _, _)| list.iter().any(|(_, parent, n)| parent == pid && n.eq_ignore_ascii_case("conhost.exe")))
+}
+
 /// Jellyfin's server without its console, using the same data folder the
 /// Windows service uses so the library and accounts are the same. `webdir`
 /// is Chillarr's copy of its web pages (jfweb.rs); without it Jellyfin serves
@@ -584,5 +623,29 @@ mod tests {
         assert_eq!(host_port("http://localhost:8191"), Some("localhost:8191".into()));
         assert_eq!(host_port("http://localhost:7878/radarr"), Some("localhost:7878".into()));
         assert_eq!(host_port("http://localhost"), None);
+    }
+
+    #[test]
+    fn a_console_is_a_conhost_child() {
+        // As seen on 2026-11-15: Sonarr started by its updater has a conhost;
+        // Radarr and Prowlarr started by Chillarr have none.
+        let list: Vec<(u32, u32, String)> = vec![
+            (30960, 32204, "Sonarr.Console.exe".into()),
+            (16088, 30960, "conhost.exe".into()),
+            (29672, 17208, "Radarr.Console.exe".into()),
+            (20048, 17208, "Prowlarr.Console.exe".into()),
+            (500, 20048, "dotnet.exe".into()),
+        ];
+        assert!(has_console(&list, "Sonarr.Console.exe"));
+        assert!(has_console(&list, "sonarr.console.exe"));
+        assert!(!has_console(&list, "Radarr.Console.exe"));
+        assert!(!has_console(&list, "Prowlarr.Console.exe"), "only a conhost counts as a console");
+        assert!(!has_console(&list, "Lidarr.Console.exe"), "not running");
+    }
+
+    #[test]
+    fn the_snapshot_sees_this_process() {
+        let me = std::process::id();
+        assert!(process_list().iter().any(|(pid, _, _)| *pid == me));
     }
 }

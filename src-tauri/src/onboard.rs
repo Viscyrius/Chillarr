@@ -1093,6 +1093,45 @@ pub async fn one_tray_icon(app: &AppHandle) {
     }
 }
 
+/// No console windows. Sonarr, Radarr and Prowlarr update themselves, and
+/// their updater starts the new version with a console window of its own
+/// (2026-11-15: Sonarr's, in Windows Terminal, beside Chillarr). A restart
+/// from the app's own page does the same. Such a copy is closed and started
+/// again out of sight, but only while it is between tasks, so an import is
+/// never cut off; a busy one waits for the next look. Every guard tick.
+pub async fn hide_arr_consoles(app: &AppHandle) {
+    let core = app.state::<Core>();
+    // Never in the middle of a Fix everything or an install; it can wait a tick.
+    let Ok(_busy) = core.fixer.running.try_lock() else { return };
+    let list = tokio::task::spawn_blocking(crate::procs::process_list).await.unwrap_or_default();
+    for id in [AppId::Sonarr, AppId::Radarr, AppId::Prowlarr] {
+        let Some(cfg) = core.config(id) else { continue };
+        let (Some(exe), None, true) = (cfg.exe.clone(), cfg.service.as_ref(), cfg.managed) else { continue };
+        let Some(console) = crate::procs::console_of(&exe) else { continue };
+        let Some(file) = console.file_name().map(|f| f.to_string_lossy().to_string()) else { continue };
+        if !crate::procs::has_console(&list, &file) {
+            continue;
+        }
+        let name = id.label();
+        if tokio::task::spawn_blocking(move || crate::procs::arr_updating(name)).await.unwrap_or(true) {
+            continue;
+        }
+        let Some(arr) = crate::arr::Arr::new(&cfg) else { continue };
+        // Busy, or not answering yet: leave it be until the next look.
+        if !matches!(arr.busy().await, Ok(false)) {
+            continue;
+        }
+        fix::close_arr(&cfg, &arr).await;
+        match crate::procs::start_arr(&exe, name) {
+            Ok(()) => {
+                crate::procs::wait_until(&cfg.base_url, 30).await;
+                log(app, Level::Ok, format!("{name} was open in a window. Started it again out of sight."));
+            }
+            Err(e) => log(app, Level::Red, e),
+        }
+    }
+}
+
 /// The tray's Stop everything: with one icon, this is the way to close them all.
 pub async fn stop_everything(app: &AppHandle) {
     let core = app.state::<Core>();
