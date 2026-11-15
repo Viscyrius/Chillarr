@@ -1245,7 +1245,7 @@ html.no-grid .wt-list > * + * { margin-top: 8px; }
 /* Subtitles on Download and in the detail panel (subpick.js) */
 .subs-pick { position: relative; display: inline-flex; }
 .subs-pop { position: absolute; top: calc(100% + 8px); left: 0; z-index: 5; width: 280px; padding: 12px; border-radius: 12px; background: var(--raised); border: 1px solid var(--line-2); box-shadow: 0 24px 60px rgba(0,0,0,0.55); transform-origin: top left; animation: subs-in 0.18s var(--ease); }
-.ep-get .subs-pop { top: auto; bottom: calc(100% + 8px); left: auto; right: 0; transform-origin: bottom right; }
+.ep-get .subs-pop { top: auto; bottom: calc(100% + 8px); left: 0; right: auto; transform-origin: bottom left; }
 @keyframes subs-in { from { opacity: 0; transform: translateY(-6px) scale(0.97); } }
 .subs-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 2px 4px 10px; }
 .subs-head b { font: 600 15px var(--display); }
