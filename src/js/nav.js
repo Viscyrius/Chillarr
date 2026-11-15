@@ -101,27 +101,31 @@ export function back() {
   }
   const search = $("#search");
   if (document.activeElement === search || search.value) { search.value = ""; search.dispatchEvent(new Event("input")); search.blur(); return; }
-  if (/^#(explore|filter|settings)/.test(location.hash)) goBack();
+  if (BACK_PAGES.test(location.hash)) goBack();
 }
 
 /* Back from a phone app or a TV remote: the top layer, search, then Home.
    The Jellyfin iOS and Android apps ask window.Emby.Page (jellyfin-web's
    router) and close themselves when there's nowhere to go; a TV's Back key
    lands here (remoteBack) and asks the TV app to close the same way. */
-const atHome = () => /^#?(home)?$/.test(location.hash);
+/* Pages Back steps out of (to where they were opened from), reading ones too. */
+const BACK_PAGES = /^#(explore|filter|settings|maker|r-all|r-author|r-maker)/;
+/* In reading mode, Home is the reading Home: a TV remote's Back used to land on watching Home. */
+const homeHash = () => (document.body.dataset.mode === "read" ? "r-home" : "home");
+const atHome = () => /^#?(home)?$/.test(location.hash) || (document.body.dataset.mode === "read" && location.hash === "#r-home");
 const canGoBack = () => layer() !== document.body || !$("#profiles").hidden || !!$("#search").value || !atHome();
 function appBack() {
   if (!$("#profiles").hidden) { closeProfiles(); return; }
   const was = [layer(), location.hash, $("#search").value];
-  if (was[0] !== document.body || was[2] || /^#(explore|filter|settings)/.test(location.hash)) back();
+  if (was[0] !== document.body || was[2] || BACK_PAGES.test(location.hash)) back();
   // Something back() doesn't know closed nothing: never a dead button.
   if (layer() === was[0] && location.hash === was[1] && $("#search").value === was[2]) {
     if (was[0] !== document.body && was[0].tagName === "DIALOG") closeDialog(was[0]);
     else if (was[0].id === "player") $("#p-back").click();
-    else location.hash = "home";
+    else location.hash = homeHash();
   }
 }
-if (WEB && !window.Emby) window.Emby = { Page: { canGoBack, back: appBack, goHome: () => (location.hash = "home") } };
+if (WEB && !window.Emby) window.Emby = { Page: { canGoBack, back: appBack, goHome: () => (location.hash = homeHash()) } };
 
 /** A TV remote's Back (LG 461, Samsung 10009): at Home with nothing open, the TV app closes. */
 const BACK_KEYS = new Set([461, 10009]);

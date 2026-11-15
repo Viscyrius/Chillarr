@@ -109,7 +109,7 @@ async fn from_wikidata(app: &AppHandle, tmdb_person: i64, adult: bool) -> Result
     if !movies.is_empty() {
         if let Ok(r) = http().post(format!("{RADARR_META}/bulk")).json(&movies.iter().take(MAX).collect::<Vec<_>>()).send().await {
             let list: Vec<Value> = r.json().await.unwrap_or_default();
-            out.extend(list.iter().filter(|m| adult || !crate::catalog::adult_cert(m["certification"].as_str().unwrap_or_default())).map(crate::catalog::from_meta));
+            out.extend(list.iter().filter(|m| adult || !crate::catalog::adult_cert(&crate::catalog::Facts::of_movie(m).cert)).map(crate::catalog::from_meta));
         }
     }
     // Shows not known here are looked up all at once, not one after another.

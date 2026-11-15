@@ -108,7 +108,10 @@ async fn similar_all(app: &AppHandle, tile: &Tile) -> Vec<Tile> {
         None => {
             let me = resolve(app, tile).await;
             let t = picks(app, &me).await;
-            CACHE.lock().unwrap().insert(key, (Instant::now(), me.clone(), t.clone()));
+            // Nothing found is often a source that didn't answer: ask again next time.
+            if !t.is_empty() {
+                CACHE.lock().unwrap().insert(key, (Instant::now(), me.clone(), t.clone()));
+            }
             (me, t)
         }
     };

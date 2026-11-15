@@ -3,18 +3,34 @@
 
 /** Languages offered for dubs, with how a file's audio track names them. */
 export const AUDIO_LANGS = [
-  ["eng", "English", /^en/i], ["spa", "Spanish", /^(es|spa)/i], ["fre", "French", /^(fr)/i], ["ger", "German", /^(de|ger)/i],
-  ["ita", "Italian", /^it/i], ["por", "Portuguese", /^(pt|por)/i], ["rus", "Russian", /^ru/i], ["hin", "Hindi", /^hi/i],
-  ["ara", "Arabic", /^ar/i], ["tur", "Turkish", /^tr|^tur/i], ["jpn", "Japanese", /^(ja|jp)/i], ["kor", "Korean", /^ko/i], ["zho", "Chinese", /^(zh|ch[is])/i],
+  ["eng", "English", code("en|eng")], ["spa", "Spanish", code("es|spa|esp")], ["fre", "French", code("fr|fre|fra")], ["ger", "German", code("de|ger|deu")],
+  ["ita", "Italian", code("it|ita")], ["por", "Portuguese", code("pt|por")], ["rus", "Russian", code("ru|rus")], ["hin", "Hindi", code("hi|hin")],
+  ["ara", "Arabic", code("ar|ara")], ["tur", "Turkish", code("tr|tur")], ["jpn", "Japanese", code("ja|jp|jpn")], ["kor", "Korean", code("ko|kor")], ["zho", "Chinese", code("zh|zho|chi|chs|cht")],
 ];
 
-export const isEnglish = (lang) => !lang || /^en/i.test(lang);
+/**
+ * A whole language code ("ru", "rus", "ru-RU"), never the start of another
+ * one: "rum" is Romanian, "est" Estonian, "arm" Armenian.
+ */
+function code(codes) {
+  return new RegExp(`^(${codes})(?![a-z])`, "i");
+}
+
+/** Tags that say nothing about the language: the track's name is asked instead. */
+const NO_TAG = /^(und|mis|mul|zxx)$/i;
+const tagOf = (track) => (NO_TAG.test(track.lang || "") ? "" : track.lang || "");
+
+export const isEnglish = (lang) => !lang || AUDIO_LANGS[0][2].test(lang);
+
+/** The dub language's name for a message: "English". */
+export const dubName = (lang) => AUDIO_LANGS.find(([c]) => c === (lang || "eng"))?.[1] || "dubbed";
 
 /** True when a track is in `code`: by its language tag, or by its name when it has no tag. */
-export function speaks(track, code) {
-  const row = AUDIO_LANGS.find(([c]) => c === code);
-  if (!row) return (track.lang || "") === code;
-  if (track.lang) return row[2].test(track.lang);
+export function speaks(track, lang) {
+  const row = AUDIO_LANGS.find(([c]) => c === lang);
+  const tag = tagOf(track);
+  if (!row) return tag === lang;
+  if (tag) return row[2].test(tag);
   return new RegExp(`(^|[^a-z])${row[1]}([^a-z]|$)`, "i").test(track.label || "");
 }
 
@@ -42,6 +58,6 @@ export function chooseAudio(tracks, settings, handLang) {
   // Original voices: only languages films are rarely dubbed into, so an English
   // film with an extra Hindi or French track stays in English.
   if (!isEnglish(def.lang)) return { index: null, missing: false };
-  const t = tracks.find((a) => /^(ja|jp|ko|zh|ch[is])/i.test(a.lang || ""));
+  const t = tracks.find((a) => /^(ja|jp|jpn|ko|kor|zh|zho|chi|chs|cht)(?![a-z])/i.test(a.lang || ""));
   return { index: t ? t.index : null, missing: false };
 }

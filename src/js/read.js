@@ -1152,7 +1152,8 @@ async function explorePage(view, tab, my) {
       // already showing): the watcher won't fire again, so ask for the next now.
       if (!done) setTimeout(() => { if (alive(my) && mine === run && more.getBoundingClientRect().top < innerHeight + 900) next(); }, 0);
     } catch (e) {
-      if (alive(my) && mine === run) { more.replaceChildren(note(String(e))); done = true; }
+      // Held until Try again: one failed page used to end the list for good.
+      if (alive(my) && mine === run) { pageNo--; done = true; more.replaceChildren(note(String(e)), retry(() => { done = false; next(); })); }
     } finally { if (mine === run) busy = false; }
   }
   function restart() {
@@ -1209,7 +1210,7 @@ async function allPage(view, my) {
       more.replaceChildren(done ? note(grid.childElementCount ? "That's everything." : "Nothing here right now.") : "");
       if (!done) setTimeout(() => { if (alive(my) && more.getBoundingClientRect().top < innerHeight + 900) next(); }, 0);
     } catch (e) {
-      if (alive(my)) { more.replaceChildren(note(String(e))); done = true; }
+      if (alive(my)) { pageNo--; done = true; more.replaceChildren(note(String(e)), retry(() => { done = false; next(); })); }
     } finally { busy = false; }
   }
   const io = new IntersectionObserver((e) => { if (e[0].isIntersecting) next(); }, { rootMargin: "900px" });
@@ -1601,7 +1602,8 @@ export async function openSeries({ key = null, card: c = null }) {
   state.about = about;
   // Follow: new chapters come in from now on, nothing older is downloaded unless picked below.
   const followBtn = el("button", { class: "btn primary", disabled: true, title: "Finding the chapters first" }, icon(ICON.plus), "Follow");
-  followBtn.addEventListener("click", () => state.follow && state.follow([], followBtn));
+  // The header button means "follow it": new chapters come by themselves.
+  followBtn.addEventListener("click", () => state.follow && state.follow([], true));
   state.followBtn = followBtn;
   actions.append(followBtn, listButton(c));
   hideOn();
@@ -1751,11 +1753,11 @@ async function pickChapters(c, x, state, list, mine, found, fill) {
     chs.forEach((ch, i) => set(i, f == null || (ch.number ?? Infinity) >= f));
     paint();
   });
-  const follow = async (ids) => {
+  const follow = async (ids, newTooOn = false) => {
     goBtn.disabled = true;
     justFollow.disabled = true;
     if (state.followBtn) state.followBtn.disabled = true;
-    const sel = { ids, from: null, new_too: newToo.checked };
+    const sel = { ids, from: null, new_too: newTooOn || newToo.checked };
     try {
       toast(await invoke("read_follow", { meta: meta(c), pick: x, fill, sel, lang: state.lang }));
       await know();
@@ -2178,7 +2180,9 @@ export async function openBookPanel(c, mine = null) {
       again.addEventListener("click", () => bookCopies(c, list, again, my));
     } else {
       actions.append(el("span", { class: "status-pill", text: mine.problem || (mine.progress != null ? `Downloading ${Math.round(mine.progress * 100)}%` : "Starting the download") }));
-      poll = setTimeout(() => { if (my === panelSeq && dlg && dlg.open) openBookPanel(c); }, 4000);
+      // A problem doesn't go away by itself: asking again every 4 s only restarted
+      // the search for another copy before its list could show.
+      if (!mine.problem) poll = setTimeout(() => { if (my === panelSeq && dlg && dlg.open) openBookPanel(c); }, 4000);
     }
     actions.append(el("button", { class: "btn soft", onclick: () => removeBook(mine) }, "Remove"), ...bookNotify(c));
     hideOn();
@@ -2227,4 +2231,9 @@ async function removeBook(x) {
   if (!(await ask(`Remove ${x.title}?`, `The ${x.comic ? "comic" : "book"}'s file is deleted from your PC. You can download it again.`, [], "Remove", "Cancel"))) return;
   try { toast(await invoke("read_book_remove", { key: x.key })); if (dlg) dlg.close(); window.dispatchEvent(new Event("chillarr:refresh")); }
   catch (e) { toast(String(e), true); }
+}
+
+/** A Try again button for a list page that didn't load. */
+function retry(again) {
+  return el("button", { class: "btn small soft", onclick: again }, "Try again");
 }

@@ -1120,11 +1120,13 @@ pub fn anilist_args(category: &str, page: u32, year: i32, month: u32) -> String 
 /// Recommendations with anything you already own swapped for your copy, so it
 /// shows as playable instead of "Download".
 pub fn merge_owned(recs: Vec<Tile>, library: &[Tile]) -> Vec<Tile> {
+    // TMDB numbers films and shows separately: film 1396 is not show 1396.
+    let cross = |a: &str, b: &str| (a == "movie") != (b == "movie") && a != "anime" && b != "anime";
     recs.into_iter()
         .map(|r| {
             library
                 .iter()
-                .find(|l| (r.tmdb.is_some() && l.tmdb == r.tmdb) || (r.tvdb.is_some() && l.tvdb == r.tvdb))
+                .find(|l| (r.tmdb.is_some() && l.tmdb == r.tmdb && !cross(&l.kind, &r.kind)) || (r.tvdb.is_some() && l.tvdb == r.tvdb))
                 .map(|l| Tile { genres: r.genres.clone(), trailer: r.trailer.clone(), ..l.clone() })
                 .unwrap_or(r)
         })

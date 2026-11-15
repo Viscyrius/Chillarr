@@ -763,8 +763,17 @@ async fn capped(resp: reqwest::Response) -> Option<Vec<u8>> {
     if resp.content_length().is_some_and(|n| n > MAX_DOWNLOAD) {
         return None;
     }
-    let b = resp.bytes().await.ok()?;
-    (b.len() as u64 <= MAX_DOWNLOAD).then(|| b.to_vec())
+    // Read a piece at a time: a server that sends no length (or lies about it)
+    // used to have its whole answer held in memory before the cap was checked.
+    let mut resp = resp;
+    let mut out = Vec::new();
+    while let Some(chunk) = resp.chunk().await.ok()? {
+        if out.len() as u64 + chunk.len() as u64 > MAX_DOWNLOAD {
+            return None;
+        }
+        out.extend_from_slice(&chunk);
+    }
+    Some(out)
 }
 
 /// Picks the best OpenSubtitles.org result: timed to this file (hash), then

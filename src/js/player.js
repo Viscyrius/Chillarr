@@ -1,7 +1,7 @@
 // The in-app player. Jellyfin decides how to send each file: as-is when the
 // app can play it, or converted on the fly into an HLS stream (played with hls.js).
-import { $, ask, AUDIO_LANGS, el, fmtTime, getPref, icon, invoke, listen, screenMode, setPref, store, toast, windowFull } from "./api.js";
-import { chooseAudio, isEnglish, speaks } from "./audiopick.js";
+import { $, ask, el, fmtTime, getPref, icon, invoke, listen, screenMode, setPref, store, toast, windowFull } from "./api.js";
+import { chooseAudio, dubName, isEnglish, speaks } from "./audiopick.js";
 import { SubRenderer, parseAss, parseVtt, setSubScale, subScale } from "./subrender.js";
 import { buffering, caughtUp, inGroup, leftPlayer, loadedHere, openTogether, requestPause, requestPlay, requestSeek, startedHere, toggleChat } from "./syncplay.js";
 
@@ -229,7 +229,7 @@ function body(extra = {}) {
     MediaSourceId: session.info.mediaSourceId,
     PlaySessionId: session.info.playSessionId,
     PlayMethod: session.info.playMethod,
-    PositionTicks: Math.round((video.currentTime + (session.offset || 0)) * 1e7),
+    PositionTicks: Math.round(now() * 1e7),
     IsPaused: video.paused,
     ...extra,
   };
@@ -606,7 +606,7 @@ async function load(tile, playlist, startAt, opts = {}) {
   // A new episode of a show you picked another language for: asked again in it.
   if (audio == null && session?.tile.jf_id !== tile.jf_id) {
     const pick = chooseAudio(info.audio, store.settings, handLang(tile));
-    if (pick.missing) toast(`This copy has no ${dubName()} voices.`);
+    if (pick.missing) toast(`This copy has no ${dubName(store.settings?.audio_lang)} voices.`);
     if (pick.index != null) return load(tile, playlist, startAt, { ...opts, audio: pick.index });
   }
   if (info.hls && !window.Hls) {
@@ -636,7 +636,7 @@ async function load(tile, playlist, startAt, opts = {}) {
   // simply played from startAt.
   // A reload for another audio or subtitle track keeps the episode's segments.
   const same = session?.tile.jf_id === tile.jf_id ? session : null;
-  session = { tile, info, playlist, offset: 0, audio, burn: subtitle, sub: null, segments: same?.segments || [], upnextDone: same?.upnextDone || false, watchKey: watchKey || same?.watchKey || null, next: same?.next };
+  session = { tile, info, playlist, offset: 0, startAt: startAt || 0, shown: false, audio, burn: subtitle, sub: null, segments: same?.segments || [], upnextDone: same?.upnextDone || false, watchKey: watchKey || same?.watchKey || null, next: same?.next };
   if (session.watchKey) {
     // The waiting screen stays up until the picture does.
     video.addEventListener("playing", () => endWait(), { once: true });
@@ -768,7 +768,18 @@ function close(sendStop = true) {
 }
 
 const total = () => (session?.info.duration || video.duration || 0);
-const now = () => video.currentTime + (session?.offset || 0);
+/**
+ * Where the title is. Until the picture has reached the spot it resumes from,
+ * the video still says 0: closing or changing track then must not tell
+ * Jellyfin "0:00" and lose the place.
+ */
+function now() {
+  if (session && !session.shown) {
+    if (video.currentTime > 0.05 || !session.startAt) session.shown = true;
+    else return session.startAt;
+  }
+  return video.currentTime + (session?.offset || 0);
+}
 
 function seekTo(t, fromGroup = false) {
   if (!session) return;
@@ -903,7 +914,7 @@ function showUpnext(n) {
   const bar = el("i", { class: "un-fill" });
   const label = el("span", { text: `Next episode in ${UPNEXT_SECONDS}` });
   let left = UPNEXT_SECONDS;
-  const playBtn = el("button", { class: "un-play", type: "button", onclick: () => { hideUpnext(); playNext(); } }, bar, label);
+  const playBtn = el("button", { class: "un-play", type: "button", onclick: () => { session.upnextDone = true; hideUpnext(); playNext(); } }, bar, label);
   upnext.replaceChildren(
     el("div", { class: "un-art", style: pic ? `background-image:url("${pic.replace(/"/g, "%22")}")` : "" }),
     el("div", { class: "un-body" },
@@ -921,7 +932,9 @@ function showUpnext(n) {
     left--;
     label.textContent = left > 0 ? `Next episode in ${left}` : "Starting...";
     bar.style.width = `${Math.min(100, ((UPNEXT_SECONDS - left + 1) / UPNEXT_SECONDS) * 100)}%`;
-    if (left <= 0) { hideUpnext(); playNext(); }
+    // Marked done first: the old episode plays on while the next one loads,
+    // and must not bring the card (and a second countdown) back.
+    if (left <= 0) { if (session) session.upnextDone = true; hideUpnext(); playNext(); }
   }, 1000);
 }
 

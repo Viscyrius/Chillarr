@@ -256,6 +256,10 @@ pub async fn details(app: &AppHandle, tile: &Tile) -> Details {
         (None, false, _, Some(t)) => show(t).await,
         _ => None,
     };
+    // An outside source that was asked and didn't answer is asked again next
+    // time, not remembered as "nothing known" until the app restarts.
+    let asked = anilist.is_some() || (is_movie && tmdb.is_some()) || (!is_movie && tvdb.is_some());
+    let keep = found.is_some() || !asked;
     let mut d = match (found, lib) {
         (Some(mut f), Some(l)) => {
             // Outside data is richer; Jellyfin fills in a cast it lacks.
@@ -269,7 +273,9 @@ pub async fn details(app: &AppHandle, tile: &Tile) -> Details {
         (None, None) => Details::default(),
     };
     d.cast.retain(|p| !p.name.is_empty());
-    app.state::<Media>().details.lock().unwrap().insert(key, d.clone());
+    if keep {
+        app.state::<Media>().details.lock().unwrap().insert(key, d.clone());
+    }
     d
 }
 

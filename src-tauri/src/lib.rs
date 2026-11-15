@@ -1275,22 +1275,26 @@ async fn set_settings(app: AppHandle, mut s: settings::Settings) -> Result<Vec<A
             let cur = st.current.lock().unwrap();
             s.reading_dir = cur.reading_dir.clone();
             s.read_cleanup_days = cur.read_cleanup_days;
+            s.read_cleanup_whole = cur.read_cleanup_whole;
             s.reading_ready = cur.reading_ready;
         }
         settings::save(&st.path, &s)?;
         let remux_changed = st.current.lock().unwrap().skip_remux != s.skip_remux;
         let dubs_changed = st.current.lock().unwrap().skip_dubs != s.skip_dubs || st.current.lock().unwrap().audio_pref != s.audio_pref || st.current.lock().unwrap().audio_lang != s.audio_lang;
         *st.current.lock().unwrap() = s.clone();
-        if remux_changed {
-            let a = app.clone();
-            tauri::async_runtime::spawn(async move { crate::pick::no_disc_copies(&a).await });
-        }
-        if dubs_changed {
+        if remux_changed || dubs_changed {
+            // One after the other: both rewrite the same quality profiles, and
+            // side by side the later save put the other's change back.
             let a = app.clone();
             tauri::async_runtime::spawn(async move {
-                crate::pick::no_dubs(&a).await;
-                crate::dubcheck::sync_jellyfin(&a).await;
-                crate::dubcheck::pass(&a).await;
+                if remux_changed {
+                    crate::pick::no_disc_copies(&a).await;
+                }
+                if dubs_changed {
+                    crate::pick::no_dubs(&a).await;
+                    crate::dubcheck::sync_jellyfin(&a).await;
+                    crate::dubcheck::pass(&a).await;
+                }
             });
         }
     }

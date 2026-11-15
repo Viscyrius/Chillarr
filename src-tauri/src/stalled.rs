@@ -98,7 +98,18 @@ pub fn again(owner: AppId, rows: &[&Value]) -> Option<(Value, String)> {
 /// One look at qBittorrent; run from the downloads tick (every 2 minutes while anything downloads).
 pub async fn tick(app: &AppHandle) {
     let Some(q) = crate::waiting::qbit(app) else { return };
-    let Ok(all) = q.list().await else { return };
+    // What was seen before a gap says nothing about now: start the clocks again.
+    let forget = || {
+        if let Some(st) = STATE.lock().unwrap().as_mut() {
+            st.watch.clear();
+        }
+    };
+    let Ok(all) = q.list().await else { return forget() };
+    // Offline (the internet or the VPN is down), every download looks dead.
+    // None of them is: nothing is switched, and the wait starts over.
+    if q.transfer().await.is_ok_and(|t| t["connection_status"] == "disconnected") {
+        return forget();
+    }
     let now = Instant::now();
     let watch_now = app.state::<crate::watchnow::WatchNow>().owned_set();
     let mut ripe: Vec<(String, String)> = Vec::new();

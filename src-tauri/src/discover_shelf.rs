@@ -1826,7 +1826,6 @@ pub fn spawn(app: AppHandle) {
             log(&app, Level::Amber, "The Discover shelf's saved list couldn't be read, so it starts over. The old file is kept as discover.json.bad.");
         }
         let mut last_refresh: Option<std::time::Instant> = None;
-        let mut tick = 0u64;
         loop {
             let on = app.state::<Shelf>().saved.lock().unwrap().on;
             if on && jf(&app).is_some_and(|j| j.user_id.is_some()) {
@@ -1843,7 +1842,6 @@ pub fn spawn(app: AppHandle) {
                     unmark_placeholder_plays(&app).await;
                 }
             }
-            tick += 1;
             crate::activity::nap(false, FAVOURITE_EVERY, Duration::from_secs(10 * 60)).await;
         }
     });

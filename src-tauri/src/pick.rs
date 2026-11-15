@@ -223,13 +223,36 @@ pub async fn no_disc_copies(app: &AppHandle) {
 /// the patterns below can be `concat!`ed at compile time.
 macro_rules! foreign_dub {
     () => {
-        "hindi|tamil|telugu|malayalam|kannada|bengali|ita|italian|french|truefrench|vff|vfq|german|ger|spanish|latino|castellano|portuguese|dublado|pt-?br|ptbr|russian|rus|ukrainian|ukr|polish|czech|hungarian|turkish|thai|vietnamese|persian"
+        "hindi|tamil|telugu|malayalam|kannada|bengali|ita|italian|french|truefrench|fre|vff|vfq|vf|german|ger|deu|deutsch|spanish|spa|esp|latino|lat|castellano|portuguese|portugues|por|dublado|pt-?br|ptbr|russian|rus|ukrainian|ukr|polish|czech|hungarian|turkish|thai|vietnamese|persian"
     };
 }
 /// One of those words, as a whole word ("ger" not inside "Danger").
 macro_rules! foreign_word {
     () => {
         concat!(r"(?<![a-z0-9])(", foreign_dub!(), r")(?![a-z0-9])")
+    };
+}
+/// The word for subtitles in a release name: "SUB", "Subs", "Multiple
+/// Subtitle", "Multi-Sub". Not "SubsPlease" (a group).
+macro_rules! sub_word {
+    () => {
+        r"(?<![a-z])(multi[ ._-]?)?sub(s|titles?|bed)?(?![a-z])"
+    };
+}
+/// Walks a release name from its start, stepping over subtitle lists whole:
+/// a `[SUB ...]` group and the bracket groups right after it
+/// ("[Multiple Subtitle] [ENG][POR-BR][SPA]"). A word found after this walk
+/// is outside every subtitle list. Measured: "[DUAL JAP POR] [SUB POR ENG]"
+/// counted as an English dub and Erai-raws' subtitle list as a foreign dub.
+macro_rules! outside_subs {
+    () => {
+        concat!(r"(?:(?>\[[^\]]*", sub_word!(), r"[^\]]*\](?:\s*\[[^\]]*\])*)|\[(?![^\]]*", sub_word!(), r")|[^\[])*?")
+    };
+}
+/// A foreign dub word outside the subtitle lists, from the name's start.
+macro_rules! foreign_dub_named {
+    () => {
+        concat!(r"^", outside_subs!(), foreign_word!())
     };
 }
 const DUB_FORMAT: &str = "Chillarr: extra dub";
@@ -247,7 +270,7 @@ const DUB_SCORE: i64 = -10000;
 pub(crate) fn dub_format(_options: &[Value]) -> Value {
     json!({ "name": DUB_FORMAT, "includeCustomFormatWhenRenaming": false, "specifications": [
         { "name": "A dub in the name", "implementation": "ReleaseTitleSpecification", "negate": false, "required": true,
-          "fields": [{ "name": "value", "value": concat!("(?i)", foreign_word!()) }] },
+          "fields": [{ "name": "value", "value": concat!("(?i)", foreign_dub_named!()) }] },
         { "name": "Not only the film's own language", "implementation": "LanguageSpecification", "negate": false, "required": true,
           "fields": [{ "name": "value", "value": -2 }, { "name": "exceptLanguage", "value": true }] }
     ]})
@@ -293,15 +316,15 @@ const ONLY_DUB_FORMAT: &str = "Chillarr: dub only";
 /// "Dual Audio" alone isn't proof (that's `MAYBE_DUB`), English subtitles
 /// ("ENG SUB") aren't a dub, and a name with a foreign dub in it never counts.
 const HAS_DUB: &str = concat!(
-    r"(?i)^(?!.*", foreign_word!(), r")",
-    r".*((?<![a-z0-9])((dual|multi)([ ._-]?audio)?|dub(bed|s)?)(?![a-z0-9]).*(?<![a-z0-9])(?<!sub )(?<!sub\.)(?<!sub_)(?<!sub-)eng(lish)?(?![a-z0-9])(?![ ._-]?sub)",
+    r"(?i)(?!", foreign_dub_named!(), r")^", outside_subs!(),
+    r"((?<![a-z0-9])((dual|multi)([ ._-]?audio)?|dub(bed|s)?)(?![a-z0-9])", outside_subs!(), r"(?<![a-z0-9])(?<!sub )(?<!sub\.)(?<!sub_)(?<!sub-)eng(lish)?(?![a-z0-9])(?![ ._-]?sub)",
     r"|(?<![a-z0-9])eng(lish)?(?![a-z0-9])(?![ ._-]?sub).*(?<![a-z0-9])(dual|multi)[ ._-]?audio(?![a-z0-9])",
     r"|(?<![a-z0-9])eng(lish)?[ ._-]?dub(bed|s)?(?![a-z0-9]))"
 );
 const MAYBE_DUB_FORMAT: &str = "Chillarr: maybe a dub";
 /// "Dual Audio" with no language named and no foreign dub word: usually
 /// Japanese + English for anime, but only worth a little.
-const MAYBE_DUB: &str = concat!(r"(?i)^(?!.*", foreign_word!(), r").*(?<![a-z0-9])(dual|multi)[ ._-]?audio(?![a-z0-9])");
+const MAYBE_DUB: &str = concat!(r"(?i)(?!", foreign_dub_named!(), r")^.*(?<![a-z0-9])(dual|multi)[ ._-]?audio(?![a-z0-9])");
 /// A release that says it's dubbed and not that it carries the original too.
 const ONLY_DUB: &str = r"(?i)^(?!.*(dual|multi)[ ._-]?audio)(?!.*(?<![a-z0-9])dual(?![a-z0-9])).*(?<![a-z0-9])(dubbed|eng(lish)?[ ._-]?dub)(?![a-z0-9])";
 /// Words release names use for a dub in each language Chillarr offers. None: not one of them.
@@ -573,6 +596,10 @@ fn describe(pick: &Pick) -> String {
 /// Gets only what was picked. A show Sonarr doesn't have yet is added with
 /// nothing monitored first, so it doesn't start on everything.
 pub async fn get_picked(app: &AppHandle, tile: Tile, quality: &str, pick: Pick) -> Result<String, String> {
+    // Same rule as Watch now: a kids' profile can't download what it isn't shown.
+    if crate::profiles::viewer_kids(app) && crate::media::not_for_kids(app, &tile) {
+        return Err("That one isn't for kids' profiles.".into());
+    }
     let whole = pick.seasons.is_empty() && pick.episodes.is_empty();
     let (a, lookup, anime, _) = series_lookup(app, &tile).await?;
     // Who asked (asked.rs), under Sonarr's names for it too. A show not in
@@ -1540,6 +1567,34 @@ mod tests {
         assert!(hits(&extra(), ANITSU), "PT-BR is a Portuguese dub");
         assert!(!hits(&has_dub_pattern("eng"), ANITSU), "ENG here is the subtitles");
         assert!(!hits(MAYBE_DUB, ANITSU));
+    }
+
+    // Issue #81: these came in as English dubs.
+    const ANITSU_POR: &str = "[Anitsu] Mushoku Tensei - 13 [DUAL JAP POR] [SUB POR ENG]";
+    const ANITSU_ESP: &str = "[Anitsu] Mushoku Tensei - 13 [DUAL JAP ESP] [SUB ESP ENG]";
+    // A subtitle list, not a dub: it used to score -10000.
+    const ERAI: &str = "[Erai-raws] Show - 03 [1080p][Multiple Subtitle] [ENG][POR-BR][SPA-LA][SPA][ARA][FRE][GER][ITA][RUS]";
+
+    #[test]
+    fn por_and_esp_duals_are_foreign_dubs() {
+        for n in [ANITSU_POR, ANITSU_ESP, "Show S01E01 1080p Dual Audio Deutsch", "Film 2020 VF 1080p"] {
+            assert!(hits(&extra(), n), "{n}");
+            assert!(!hits(&has_dub_pattern("eng"), n), "{n}");
+            assert!(!hits(MAYBE_DUB, n), "{n}");
+        }
+    }
+
+    #[test]
+    fn a_subtitle_list_is_not_a_dub() {
+        assert!(!hits(&extra(), ERAI), "only subtitles are named");
+        assert!(!hits(&has_dub_pattern("eng"), ERAI));
+        // English named only in the subtitles is not an English dub.
+        assert!(!hits(&has_dub_pattern("eng"), "[Group] Show - 03 [DUAL JAP] [SUB POR ENG]"));
+        // A real English dual, with a foreign subtitle list beside it, still is one.
+        assert!(hits(&has_dub_pattern("eng"), "[Group] Show - 03 [Dual Audio JAP ENG] [SUB POR SPA]"));
+        assert!(!hits(&extra(), "[Group] Show - 03 [Dual Audio JAP ENG] [SUB POR SPA]"));
+        // A group named Subs-something isn't a subtitle list.
+        assert!(hits(&extra(), "[SubsPlease] Show - 03 [Dual Audio POR]"));
     }
 
     #[test]

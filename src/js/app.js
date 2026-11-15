@@ -132,6 +132,16 @@ function runSearch(term) {
     route();
   }
 }
+// With search results up, the tab you searched from (or the logo) leaves them:
+// the address doesn't change, so no hashchange came and the click did nothing.
+document.addEventListener("click", (e) => {
+  const a = e.target.closest?.("a[data-tab], a.brand");
+  if (!a || current !== "search" || a.getAttribute("href") !== (location.hash || "#home")) return;
+  e.preventDefault();
+  clearTimeout(searchTimer);
+  $("#search").value = "";
+  runSearch("");
+});
 // Recent searches, in Chillarr's own dropdown (the browser's is off).
 const searched = recentSearches($("#search"), (term) => { clearTimeout(searchTimer); runSearch(term); });
 $("#search").addEventListener("input", (e) => {

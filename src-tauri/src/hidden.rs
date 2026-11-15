@@ -152,6 +152,10 @@ fn is_open(app: &AppHandle, uid: &str) -> bool {
 
 /// Counts a try: Err while waiting after too many wrong ones.
 fn gate(app: &AppHandle, uid: &str, ok: impl FnOnce() -> bool) -> Result<(), String> {
+    // One try at a time: tries sent together used to all pass the wait check
+    // before any of them was counted.
+    static ONE: Mutex<()> = Mutex::new(());
+    let _one = ONE.lock().unwrap_or_else(|e| e.into_inner());
     let h = app.state::<Hidden>();
     if let Some((_, Some(until))) = h.tries.lock().unwrap().get(uid) {
         if *until > Instant::now() {

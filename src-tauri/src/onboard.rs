@@ -343,7 +343,8 @@ async fn fetch_once(app: &AppHandle, id: AppId, http: &reqwest::Client, url: &st
     if have > 0 {
         req = req.header("Range", format!("bytes={have}-"));
     }
-    let resp = req.send().await.map_err(|e| e.to_string())?;
+    // The wait for the first answer has a limit too, not only the body's chunks.
+    let resp = tokio::time::timeout(STALL, req.send()).await.map_err(|_| "the connection stalled".to_string())?.map_err(|e| e.to_string())?;
     // A kept file as long as this version or longer (an older version's): start clean.
     if resp.status().as_u16() == 416 {
         let _ = tokio::fs::remove_file(path).await;
@@ -1112,7 +1113,10 @@ pub async fn stop_everything(app: &AppHandle) {
 /// Settings' Install button: the same one prompt and meter for just these apps.
 pub async fn install_only(app: &AppHandle, ids: Vec<AppId>) -> Vec<(AppId, String)> {
     let st = app.state::<Onboard>();
-    let Ok(_one) = st.busy.try_lock() else { return vec![] };
+    // Busy with another install: that is not "installed", so each app says why.
+    let Ok(_one) = st.busy.try_lock() else {
+        return ids.iter().map(|id| (*id, "Another install is running. Try again when it's done.".to_string())).collect();
+    };
     {
         let rows: Vec<AppRow> = rows_for(app, &ids).into_iter().filter(|r| ids.contains(&r.id)).collect();
         *st.meter.lock().unwrap() = Meter { running: true, stage: "resolve".into(), apps: rows, has_downloads: true, installing_only: true, ..Default::default() };

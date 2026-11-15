@@ -153,7 +153,7 @@ fn missing_card(cfg: &AppConfig) -> CardState {
     }
 }
 
-async fn card_for(core: &Core, cfg: &AppConfig) -> CardState {
+async fn card_for(app: &AppHandle, core: &Core, cfg: &AppConfig) -> CardState {
     if !crate::discover::is_installed(cfg) && !procs::port_open(&cfg.base_url).await {
         return missing_card(cfg);
     }
@@ -187,6 +187,19 @@ async fn card_for(core: &Core, cfg: &AppConfig) -> CardState {
             c.notes.push("Started by Chillarr, hidden".into());
         }
         c
+    } else if cfg.id == AppId::Suwayomi && crate::read::comics_dir(app).is_none() {
+        // It can't start without a reading folder, so Fix can't help: a red
+        // "fixable" card here made the guard run Fix everything every tick.
+        CardState {
+            id: cfg.id,
+            level: Level::Amber,
+            line: "Waiting for a reading folder (Settings > Library & storage)".into(),
+            notes: vec![],
+            open_url: None,
+            fixable: false,
+            missing: false,
+            update: None,
+        }
     } else {
         CardState {
             id: cfg.id,
@@ -225,7 +238,7 @@ pub async fn refresh_cards(app: &AppHandle) -> Vec<CardState> {
         let app = app.clone();
         set.spawn(async move {
             let core = app.state::<Core>();
-            let card = card_for(&core, &cfg).await;
+            let card = card_for(&app, &core, &cfg).await;
             set_card(&app, card.clone());
             (i, card)
         });
@@ -1074,6 +1087,8 @@ async fn jellyfin_as_user_step(app: &AppHandle, rep: &mut FixReport) {
                 let msg = "Jellyfin's data folder is now writable by you, so it can start as you.".to_string();
                 log(app, Level::Ok, &msg);
                 rep.actions.push(msg);
+                // Access alone left it down until the next check: start it now.
+                start_if_down(app, &cfg, Trigger::Button, rep).await;
             } else {
                 log(app, Level::Red, done.err().unwrap_or_else(|| "Couldn't give you write access to Jellyfin's data folder".into()));
             }
@@ -1088,7 +1103,8 @@ async fn jellyfin_as_user_step(app: &AppHandle, rep: &mut FixReport) {
     let data = data.to_string_lossy().to_string();
     // Grant first: if the service is already stopped, `net stop` fails and would skip it.
     let params = crate::imports::jellyfin_as_user_command(&svc, &data, &account);
-    let done = tokio::task::spawn_blocking(move || procs::run_elevated(&params)).await.unwrap_or_else(|e| Err(e.to_string()));
+    // Five minutes, like the other switches: the grant walks the whole data folder.
+    let done = tokio::task::spawn_blocking(move || procs::run_elevated_for(&params, 300_000)).await.unwrap_or_else(|e| Err(e.to_string()));
     // What counts is the end state: stopped and Manual (net stop fails on an already stopped service).
     let stopped = procs::service_running(&svc) == Some(false) && crate::winsvc::start_type(&svc) == Some(3);
     if !stopped {
@@ -1447,6 +1463,17 @@ pub(crate) async fn first_starts(app: &AppHandle) -> bool {
         if procs::process_running(&format!("{name}.exe")) || procs::process_running(&format!("{name}.Console.exe")) {
             continue;
         }
+        // A config.xml the PC's crash left as zeros: the app can't start with
+        // it and never writes a new one. Set aside, it makes a fresh one.
+        if let Some(pd) = std::env::var_os("ProgramData") {
+            let xml = std::path::PathBuf::from(pd).join(name).join("config.xml");
+            if crate::suwayomi::is_zeroed(&xml) {
+                let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+                if std::fs::rename(&xml, xml.with_file_name(format!("config.xml.damaged-{stamp}"))).is_ok() {
+                    log(app, Level::Amber, format!("{name}'s settings file was damaged when the PC crashed. Chillarr set it aside so {name} makes a new one."));
+                }
+            }
+        }
         busy(app, cfg.id, "Starting for the first time...");
         match procs::start_arr(cfg.exe.as_ref().unwrap(), name) {
             Ok(()) => {
@@ -1483,7 +1510,8 @@ pub(crate) async fn ensure_running(app: &AppHandle, id: AppId) -> bool {
         let mut rep = FixReport::default();
         start_if_down(app, &cfg, Trigger::Button, &mut rep).await;
     }
-    procs::port_open(&cfg.base_url).await
+    // Another task may have started it seconds ago and left it to come up.
+    procs::port_open(&cfg.base_url).await || procs::wait_until(&cfg.base_url, 30).await
 }
 
 /// Install buttons: one prompt and one meter, however many apps (onboard.rs).

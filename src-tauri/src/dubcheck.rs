@@ -49,6 +49,11 @@ pub fn lacks(audio_languages: &str, want: &str) -> bool {
     !langs.is_empty() && !untagged && !langs.iter().any(|l| same_lang(l, want))
 }
 
+/// The file names its languages and the wanted one is among them.
+pub fn has_lang(audio_languages: &str, want: &str) -> bool {
+    audio_languages.split('/').map(str::trim).any(|l| !l.is_empty() && same_lang(l, want))
+}
+
 /// A release from an interactive search that may be taken: it carries the
 /// "has a dub" format and is only refused for not being an upgrade (profiles
 /// don't allow upgrades, so with the old file there every release says so).
@@ -129,6 +134,10 @@ struct Item {
     remove: String,
     /// The command that searches for it as missing.
     missing: Value,
+    /// (PUT path, body) that marks it wanted again: deleting its file
+    /// unmonitors it (pick.rs keep_deleted_gone), and nothing would ever fetch
+    /// it again if the replacement died.
+    monitor: (String, Value),
 }
 
 async fn items(a: &crate::arr::Arr, id: AppId) -> Vec<Item> {
@@ -155,6 +164,7 @@ async fn items(a: &crate::arr::Arr, id: AppId) -> Vec<Item> {
                         search: format!("release?episodeId={eid}"),
                         remove: format!("episodefile/{fid}"),
                         missing: json!({ "name": "EpisodeSearch", "episodeIds": [eid] }),
+                        monitor: ("episode/monitor".into(), json!({ "episodeIds": [eid], "monitored": true })),
                     });
                 }
             }
@@ -170,6 +180,7 @@ async fn items(a: &crate::arr::Arr, id: AppId) -> Vec<Item> {
                     search: format!("release?movieId={mid}"),
                     remove: format!("moviefile/{fid}"),
                     missing: json!({ "name": "MoviesSearch", "movieIds": [mid] }),
+                    monitor: ("movie/editor".into(), json!({ "movieIds": [mid], "monitored": true })),
                 });
             }
         }
@@ -208,8 +219,12 @@ pub async fn pass(app: &AppHandle) {
         let Some(a) = crate::media::arr(app, id) else { continue };
         for it in items(&a, id).await {
             if !lacks(&it.langs, &want) {
-                if let Some(t) = book.get_mut(&it.key) {
-                    t.done = true;
+                // Only a file that names its languages and has the wanted one is
+                // done for good; none or "und" could be anything.
+                if has_lang(&it.langs, &want) {
+                    if let Some(t) = book.get_mut(&it.key) {
+                        t.done = true;
+                    }
                 }
                 continue;
             }
@@ -218,7 +233,9 @@ pub async fn pass(app: &AppHandle) {
             }
             searches += 1;
             let mut t = book.get(&it.key).cloned().unwrap_or_default();
-            let releases: Vec<Value> = a.list(&it.search).await.unwrap_or_default();
+            // A search asks every site and can take a minute. One that didn't
+            // answer is not "no copy": it doesn't count as a try.
+            let Ok(releases) = a.list_slow(&it.search).await else { continue };
             let best = releases
                 .iter()
                 .filter(|r| usable_release(r) && r["guid"].as_str().is_some_and(|g| may_grab(&t, g)))
@@ -237,9 +254,13 @@ pub async fn pass(app: &AppHandle) {
                 book.insert(it.key, after_miss(Some(&t), now));
                 continue;
             }
+            if let Err(e) = a.update(&it.monitor.0, &it.monitor.1).await {
+                log(app, Level::Amber, format!("{} may not be fetched again if its new copy fails: couldn't mark it wanted ({e:?}).", it.name));
+            }
             let grab = json!({ "guid": guid, "indexerId": r["indexerId"] });
             took(&mut t, &guid, now);
-            match a.create("release", &grab).await {
+            // A grab can take a while to send on; the usual 20 s cut it off.
+            match a.create_tested("release", &grab).await {
                 Ok(_) => log(app, Level::Ok, format!("{} had no {want} voices ({}). Getting a copy that has them: {}", it.name, it.langs, r["title"].as_str().unwrap_or(""))),
                 Err(e) => {
                     // Never left without a file: it's searched for as missing right away.
@@ -273,7 +294,9 @@ pub fn start(app: AppHandle) {
 /// Original voices only undo what Dubbed set (a user's own choices stay).
 pub fn audio_config(cfg: &mut Value, pref: &str, lang: &str) -> bool {
     if pref != "dub" {
-        if cfg["AudioLanguagePreference"].is_null() {
+        // Only what Dubbed set (its language with the default track off): a
+        // user's own choice in Jellyfin used to be wiped on every start.
+        if cfg["AudioLanguagePreference"] != json!(lang) || cfg["PlayDefaultAudioTrack"] != json!(false) {
             return false;
         }
         cfg["AudioLanguagePreference"] = Value::Null;
@@ -310,6 +333,23 @@ pub async fn sync_jellyfin(app: &AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_named_wanted_language_is_done() {
+        assert!(has_lang("jpn/eng", "eng"));
+        assert!(!has_lang("", "eng"));
+        assert!(!has_lang("und", "eng"));
+    }
+
+    #[test]
+    fn original_voices_leave_a_users_own_choice() {
+        let mut own = json!({ "AudioLanguagePreference": "fre", "PlayDefaultAudioTrack": true });
+        assert!(!audio_config(&mut own, "sub", "eng"));
+        assert_eq!(own["AudioLanguagePreference"], "fre");
+        let mut ours = json!({ "AudioLanguagePreference": "eng", "PlayDefaultAudioTrack": false });
+        assert!(audio_config(&mut ours, "sub", "eng"));
+        assert!(ours["AudioLanguagePreference"].is_null());
+    }
 
     #[test]
     fn portuguese_and_japanese_lack_english() {

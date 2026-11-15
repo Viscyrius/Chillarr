@@ -1,7 +1,7 @@
 // Run: node --test tests/js
 import test from "node:test";
 import assert from "node:assert/strict";
-import { chooseAudio } from "../../src/js/audiopick.js";
+import { chooseAudio, dubName, speaks } from "../../src/js/audiopick.js";
 
 const jpnEng = [{ index: 1, lang: "jpn", label: "Japanese - AAC", default: true }, { index: 2, lang: "eng", label: "English - AAC", default: false }];
 const dub = { audio_pref: "dub", audio_lang: "eng" };
@@ -41,4 +41,17 @@ test("original voices: an English film with a Hindi track stays English", () => 
 
 test("one track: nothing to choose, nothing missing in sub mode", () => {
   assert.deepEqual(chooseAudio([jpnEng[0]], sub, null), { index: null, missing: false });
+});
+
+test("a track tagged 'und' is found by its name", () => {
+  const a = [{ index: 1, lang: "por", label: "Portuguese", default: true }, { index: 2, lang: "und", label: "English - AAC", default: false }];
+  assert.deepEqual(chooseAudio(a, dub, null), { index: 2, missing: false });
+});
+
+test("a language code is matched whole: Romanian is not Russian", () => {
+  const a = [{ index: 1, lang: "pol", label: "Polish", default: true }, { index: 2, lang: "rum", label: "Romanian", default: false }, { index: 3, lang: "rus", label: "Russian", default: false }];
+  assert.deepEqual(chooseAudio(a, { audio_pref: "dub", audio_lang: "rus" }, null), { index: 3, missing: false });
+  assert.equal(speaks({ lang: "en-US" }, "eng"), true);
+  assert.equal(speaks({ lang: "enm" }, "eng"), false);
+  assert.equal(dubName("spa"), "Spanish");
 });

@@ -41,7 +41,9 @@ pub fn norm(s: &str) -> String {
 
 /// Words with a plural "s" taken off, so "Chronicles" finds "Chronicle".
 fn stem(s: &str) -> String {
-    norm(s)
+    let n = norm(s);
+    // A leading "The" is often left off one side: "The Beginning After the End".
+    n.strip_prefix("the ").unwrap_or(&n)
         .split(' ')
         .map(|w| if w.chars().count() > 3 && w.ends_with('s') && !w.ends_with("ss") { &w[..w.len() - 1] } else { w })
         .collect::<Vec<_>>()
@@ -182,6 +184,12 @@ pub fn card(h: &Hit) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_leading_the_is_ignored() {
+        assert!(matches("Beginning After the End", "The Beginning After the End"));
+        assert!(matches("The Beginning After the End", "Beginning After the End"));
+    }
 
     #[test]
     fn plural_s_dropped() {

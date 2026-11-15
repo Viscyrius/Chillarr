@@ -93,8 +93,10 @@ fn parse_directory(dir: &[u8], count: u64) -> Result<Vec<Entry>, String> {
             let (id, n) = (u16le(dir, x), u16le(dir, x + 2) as usize);
             if id == 0x0001 {
                 let mut p = x + 4;
+                // The field's own length can lie: never read past the extra block.
+                let field_end = (x + 4 + n).min(extra_end);
                 for v in [&mut size, &mut compressed, &mut header_at] {
-                    if *v == 0xFFFF_FFFF && p + 8 <= x + 4 + n {
+                    if *v == 0xFFFF_FFFF && p + 8 <= field_end {
                         *v = u64le(dir, p);
                         p += 8;
                     }

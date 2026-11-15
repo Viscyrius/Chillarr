@@ -152,11 +152,31 @@ fn save_json<T: Serialize>(path: &Path, v: &T) -> Result<(), String> {
     let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let tmp = path.with_extension(format!("json.{}-{n}.tmp", std::process::id()));
     let text = serde_json::to_string(v).map_err(|e| e.to_string())?;
+    safe_to_overwrite(path)?;
     std::fs::write(&tmp, text).and_then(|_| std::fs::rename(&tmp, path)).map_err(|e| format!("Couldn't save it: {e}"))
 }
 
-fn load_json<T: for<'de> Deserialize<'de> + Default>(path: &Path) -> T {
-    std::fs::read_to_string(path).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
+/// A save backs out while the file it would replace can't be read: whoever
+/// loaded it just now got an empty list, and saving that would wipe the real one.
+pub(crate) fn safe_to_overwrite(path: &Path) -> Result<(), String> {
+    match std::fs::read(path) {
+        Ok(_) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(format!("Couldn't read {} just now ({e}), so nothing was saved. Try again in a moment.", path.file_name().unwrap_or_default().to_string_lossy())),
+    }
+}
+
+/// Reads a saved list. Missing or unreadable: empty (saving backs out on an
+/// unreadable one). Damaged: set aside as .bad-<time> so it is kept, then empty.
+pub(crate) fn load_json<T: for<'de> Deserialize<'de> + Default>(path: &Path) -> T {
+    let Ok(text) = std::fs::read_to_string(path) else { return T::default() };
+    match serde_json::from_str(&text) {
+        Ok(v) => v,
+        Err(_) => {
+            let _ = std::fs::rename(path, path.with_extension(format!("json.bad-{}", now())));
+            T::default()
+        }
+    }
 }
 
 // ---------- what's followed (shared by every profile) ----------
@@ -311,9 +331,17 @@ pub async fn chapters_of(f: &Followed) -> Result<Vec<(crate::suwayomi::Chapter, 
 
 /// The same, and whether every copy answered (a fill copy that didn't is left out).
 pub async fn chapters_checked(f: &Followed) -> Result<(Vec<(crate::suwayomi::Chapter, usize)>, bool), String> {
+    if !same_copy(f.manga_id, &f.source, &f.source_title).await? {
+        return Err(format!("The manga downloader no longer has the copy of {} that was followed. Follow it again to pick a copy.", f.title));
+    }
     let mut lists = vec![crate::suwayomi::chapters(f.manga_id).await?];
     let mut complete = true;
     for x in &f.fill {
+        if !same_copy(x.manga_id, &x.source, &x.source_title).await.unwrap_or(false) {
+            complete = false;
+            lists.push(vec![]);
+            continue;
+        }
         match crate::suwayomi::chapters(x.manga_id).await {
             Ok(l) => lists.push(l),
             Err(_) => {
@@ -323,6 +351,37 @@ pub async fn chapters_checked(f: &Followed) -> Result<(Vec<(crate::suwayomi::Cha
         }
     }
     Ok((merge_copies(clean_copies(lists)), complete))
+}
+
+/// Manga ids already checked to still be the copy that was followed.
+static CHECKED_COPIES: Mutex<Option<std::collections::HashSet<i64>>> = Mutex::new(None);
+
+/// Forgets every check: the manga downloader's database was set aside, and a
+/// fresh one hands the same ids to other series.
+pub fn forget_checked_copies() {
+    *CHECKED_COPIES.lock().unwrap_or_else(|e| e.into_inner()) = None;
+}
+
+/// The saved (source, title) of a copy against what the downloader says now.
+pub fn copy_matches(saved: (&str, &str), now: (&str, &str)) -> bool {
+    read_core::norm_title(saved.0) == read_core::norm_title(now.0) && read_core::norm_title(saved.1) == read_core::norm_title(now.1)
+}
+
+/// Whether manga id `id` is still the series saved with it. Once per id per run.
+async fn same_copy(id: i64, source: &str, source_title: &str) -> Result<bool, String> {
+    if CHECKED_COPIES.lock().unwrap_or_else(|e| e.into_inner()).as_ref().is_some_and(|s| s.contains(&id)) {
+        return Ok(true);
+    }
+    let ok = match crate::suwayomi::folder_names(id).await {
+        Ok((s, t)) => copy_matches((source, source_title), (&s, &t)),
+        // The id is gone from the database: not the same copy. Other errors (it's down) pass up.
+        Err(e) if e.contains("odd name") => false,
+        Err(e) => return Err(e),
+    };
+    if ok {
+        CHECKED_COPIES.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(Default::default).insert(id);
+    }
+    Ok(ok)
 }
 
 /// Chapters across copies, and whether every copy answered.
@@ -482,6 +541,71 @@ fn all_spots(app: &AppHandle) -> Vec<HashMap<String, Spot>> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// One chapter id of the old copy as the new copy's id for the same number.
+fn carried_id(id: i64, old_nums: &HashMap<i64, f64>, new_ids: &[(f64, i64)]) -> Option<i64> {
+    let n = old_nums.get(&id)?;
+    new_ids.iter().find(|(m, _)| (m - n).abs() < 1e-9).map(|x| x.1)
+}
+
+/// A place in the old copy as a place in the new one: the chapter and the
+/// finished ones mapped by number. A finished chapter the new copy lacks is
+/// dropped; the open chapter stays as it was when the new copy lacks it.
+pub fn carry_spot(s: &Spot, old_nums: &HashMap<i64, f64>, new_ids: &[(f64, i64)]) -> Spot {
+    let mut out = s.clone();
+    if let Some(id) = carried_id(s.chapter, old_nums, new_ids) {
+        out.chapter = id;
+    }
+    out.read = s.read.iter().filter_map(|(id, at)| carried_id(*id, old_nums, new_ids).map(|n| (n, *at))).collect();
+    out
+}
+
+/// Two places in one series: the newer one, with what either finished.
+fn join_spots(a: Spot, b: Spot) -> Spot {
+    let (mut keep, other) = if b.at > a.at { (b, a) } else { (a, b) };
+    for (id, at) in other.read {
+        keep.read.entry(id).or_insert(at);
+    }
+    keep.mode = keep.mode.or(other.mode);
+    keep.hide_week |= other.hide_week;
+    keep
+}
+
+/// After a change of copy, every profile's place in the old ones moves to the new key.
+fn move_spots(app: &AppHandle, old_keys: &[String], new_key: &str, old_nums: &HashMap<i64, f64>, new_ids: &[(f64, i64)]) {
+    let Ok(dir) = data_dir(app) else { return };
+    let Ok(it) = std::fs::read_dir(&dir) else { return };
+    for e in it.filter_map(|e| e.ok()) {
+        let name = e.file_name().to_string_lossy().to_string();
+        if !(name.starts_with("read-") && name.ends_with(".json")) {
+            continue;
+        }
+        let mut all: HashMap<String, Spot> = load_json(&e.path());
+        if !moved_spots(&mut all, old_keys, new_key, old_nums, new_ids) {
+            continue;
+        }
+        if let Err(err) = save_json(&e.path(), &all) {
+            crate::log::log(app, crate::model::Level::Amber, &format!("A reading place didn't move to the new copy: {err}"));
+        }
+    }
+}
+
+/// The work of move_spots on one profile's places. True when anything moved.
+pub fn moved_spots(all: &mut HashMap<String, Spot>, old_keys: &[String], new_key: &str, old_nums: &HashMap<i64, f64>, new_ids: &[(f64, i64)]) -> bool {
+    let mut moved = false;
+    for k in old_keys {
+        if let Some(s) = all.remove(k) {
+            let s = carry_spot(&s, old_nums, new_ids);
+            let joined = match all.remove(new_key) {
+                Some(cur) => join_spots(cur, s),
+                None => s,
+            };
+            all.insert(new_key.to_string(), joined);
+            moved = true;
+        }
+    }
+    moved
 }
 
 // ---------- chapters on disk ----------
@@ -867,6 +991,8 @@ pub struct Shelf {
     pub title: String,
     pub cover: Option<String>,
     pub country: Option<String>,
+    /// The translation followed ("es"), for the badge on its cover.
+    pub lang: Option<String>,
     pub status: Option<String>,
     pub source: String,
     pub width: u32,
@@ -952,6 +1078,7 @@ pub fn shelf_of(f: &Followed, chs: &[crate::suwayomi::Chapter], spot: Option<&Sp
     Shelf {
         key: f.key.clone(),
         anilist: f.anilist,
+        lang: f.lang.clone(),
         title: f.title.clone(),
         cover: f.cover.clone(),
         country: f.country.clone(),
@@ -1246,6 +1373,8 @@ pub async fn follow(app: &AppHandle, meta: Meta, pick: crate::suwayomi::Candidat
     }
     let merged = merge_copies(clean_copies(lists));
     let known_upto = top_number(merged.iter().map(|x| &x.0));
+    // The new copy's chapter ids by number: each profile's place moves over to them.
+    let new_ids: Vec<(f64, i64)> = merged.iter().filter_map(|x| x.0.number.map(|n| (n, x.0.id))).collect();
     let wanted: Vec<i64> = merged
         .into_iter()
         .map(|x| x.0)
@@ -1269,6 +1398,13 @@ pub async fn follow(app: &AppHandle, meta: Meta, pick: crate::suwayomi::Candidat
     let key = format!("m{}", pick.manga_id);
     // The same series from another source: the old one stops.
     let old: Vec<Followed> = all.iter().filter(|f| f.key != key && meta.anilist.is_some() && f.anilist == meta.anilist).cloned().collect();
+    // The old copies' chapter numbers, read before they're unfollowed.
+    let mut old_nums: HashMap<i64, f64> = HashMap::new();
+    for o in &old {
+        if let Ok(list) = chapters_of(o).await {
+            old_nums.extend(list.into_iter().filter_map(|(c, _)| c.number.map(|n| (c.id, n))));
+        }
+    }
     for o in &old {
         for (id, _, _) in o.copies() {
             if id != pick.manga_id && !fill.iter().any(|x| x.manga_id == id) {
@@ -1317,6 +1453,11 @@ pub async fn follow(app: &AppHandle, meta: Meta, pick: crate::suwayomi::Candidat
         removed: vec![],
     });
     save_followed(app, &all)?;
+    drop(_held);
+    if !old.is_empty() {
+        let old_keys: Vec<String> = old.iter().map(|o| o.key.clone()).collect();
+        move_spots(app, &old_keys, &format!("m{}", pick.manga_id), &old_nums, &new_ids);
+    }
     let msg = match queued {
         0 if sel.new_too => format!("Following {}. New chapters download by themselves.", meta.title),
         0 => format!("{} is on your list.", meta.title),
@@ -1349,7 +1490,15 @@ pub async fn unfollow(app: &AppHandle, key: &str, delete: bool) -> Result<String
         all.retain(|x| x.key != key);
         save_followed(app, &all)?;
     }
-    let copies: Vec<i64> = f.copies().into_iter().map(|c| c.0).collect();
+    // Only ids still holding this series: after the downloader's database was
+    // set aside, an old id can be another series, and deleting it would take
+    // someone else's chapters.
+    let mut copies: Vec<i64> = Vec::new();
+    for (id, s, t) in f.copies() {
+        if same_copy(id, &s, &t).await.unwrap_or(true) {
+            copies.push(id);
+        }
+    }
     let left = let_go(&copies, delete).await;
     if left.is_empty() {
         return Ok(format!("Stopped following {}.", f.title));
@@ -1556,9 +1705,18 @@ pub async fn clean_up(app: &AppHandle) {
     if days == 0 {
         return;
     }
-    let profiles = all_spots(app);
+    let Ok(dir) = data_dir(app) else { return };
+    let pc_owner = crate::profiles::owner_id(app);
     for f in followed(app) {
-        let readers: Vec<&Spot> = profiles.iter().filter_map(|p| p.get(&f.key)).collect();
+        // The readers are who follows it: a profile that left (or was deleted)
+        // no longer holds chapters back, and one that follows but hasn't opened
+        // it yet holds every chapter (it has read none).
+        let owners = owners_of(&f.owners, pc_owner.as_deref());
+        if owners.is_empty() {
+            continue;
+        }
+        let spots: Vec<Spot> = owners.iter().map(|o| load_json::<HashMap<String, Spot>>(&spots_file(&dir, o)).remove(&f.key).unwrap_or_default()).collect();
+        let readers: Vec<&Spot> = spots.iter().collect();
         let Ok(chs) = chapter_list(&f).await else { continue };
         let doomed = cleanup_pick(&chs, &readers, days, now(), whole);
         if !doomed.is_empty() && crate::suwayomi::delete_chapters(&doomed).await.is_ok() {
@@ -2291,6 +2449,51 @@ fn search_args(adult: bool, porn: bool) -> &'static str {
 mod tests {
     use super::*;
     use crate::suwayomi::Chapter;
+
+    #[test]
+    fn a_reused_manga_id_is_not_the_followed_copy() {
+        assert!(copy_matches(("Weeb Central (EN)", "Solo Leveling"), ("Weeb Central (EN)", "Solo Leveling")));
+        assert!(copy_matches(("Weeb Central (EN)", "Re:Zero"), ("Weeb Central (EN)", "Re_Zero")));
+        assert!(!copy_matches(("Weeb Central (EN)", "Solo Leveling"), ("Weeb Central (EN)", "Blue Lock")));
+        assert!(!copy_matches(("Weeb Central (EN)", "Solo Leveling"), ("MangaDex", "Solo Leveling")));
+    }
+
+    #[test]
+    fn changed_copy_keeps_the_place_and_what_was_read() {
+        // Old copy m10: chapters 1, 2, 3 are ids 101..103. New copy m20: 201..203 plus 4 = 204.
+        let old_nums: HashMap<i64, f64> = [(101, 1.0), (102, 2.0), (103, 3.0)].into();
+        let new_ids = vec![(1.0, 201), (2.0, 202), (3.0, 203), (4.0, 204)];
+        let mut spots: HashMap<String, Spot> = HashMap::new();
+        spots.insert("m10".into(), Spot { chapter: 103, page: 7, pages: 20, at: 50, read: [(101, 10), (102, 20)].into(), ..Default::default() });
+        spots.insert("m99".into(), Spot { chapter: 5, ..Default::default() });
+        assert!(moved_spots(&mut spots, &["m10".to_string()], "m20", &old_nums, &new_ids));
+        assert!(!spots.contains_key("m10"));
+        let s = &spots["m20"];
+        assert_eq!((s.chapter, s.page), (203, 7));
+        assert_eq!(s.read, [(201, 10), (202, 20)].into());
+        assert_eq!(spots["m99"].chapter, 5);
+        // A profile with no place in the old copy is left alone.
+        let mut none: HashMap<String, Spot> = HashMap::new();
+        assert!(!moved_spots(&mut none, &["m10".to_string()], "m20", &old_nums, &new_ids));
+    }
+
+    #[test]
+    fn a_damaged_list_is_set_aside_and_an_unreadable_one_is_not_overwritten() {
+        let dir = std::env::temp_dir().join(format!("chillarr-load-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let p = dir.join("reading.json");
+        std::fs::write(&p, "{ not json").unwrap();
+        let v: Vec<Followed> = load_json(&p);
+        assert!(v.is_empty());
+        assert!(!p.exists());
+        let bad = std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok()).any(|e| e.file_name().to_string_lossy().starts_with("reading.json.bad-"));
+        assert!(bad);
+        // A folder where the file should be cannot be read as one: saving backs out.
+        std::fs::create_dir_all(dir.join("x.json")).unwrap();
+        assert!(safe_to_overwrite(&dir.join("x.json")).is_err());
+        assert!(safe_to_overwrite(&dir.join("missing.json")).is_ok());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     fn dated(id: i64, n: f64, ms: i64) -> Chapter {
         Chapter { uploaded: Some(ms.to_string()), ..ch(id, n, false) }

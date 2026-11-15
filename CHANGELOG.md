@@ -1,11 +1,47 @@
 # Changelog
 
 ## Unreleased
+- Fixed: with Dubbed on, a file without your dub language left the player stuck on its spinner. It now plays and says "This copy has no English voices."
+- Fixed: a voice track tagged "unknown" but named English is found by its name. Russian no longer picks a Romanian track, nor Spanish an Estonian one.
+- Fixed: closing the player, or changing voice or subtitles, before the picture reached the spot you resumed from no longer loses your place.
+- Fixed: Up next no longer comes back with a second countdown while the next episode loads.
+- Kids' profiles: "Explore all", a director's page, the Filters panel's Ecchi genre and the Download button now follow the same rule as the rows. The Anime tab's genre rows are back for kids (all of them had gone missing), without Ecchi.
+- Fixed: "Only what I have" could show another profile's library for a minute after they used the same filter.
+- Fixed: a film and a show with the same TMDB number no longer stand in for each other as "yours" in rows and lists.
+- New episodes: watching one of several new episodes leaves the others new. Before, the card vanished as soon as you watched anything.
+- Fixed: when Sonarr, AniList or the film catalog didn't answer, the empty answer was kept: New episodes for 10 minutes, "Similar to this" for 30, a title's details until Chillarr restarted. A failed ask is now asked again.
+- Fixed: changing any other setting could quietly put reading clean-up back from "When finished" to "As you read", so chapters were deleted early.
+- Fixed: pressing Install while another install was running said "Installed" though nothing was. It now says another install is running.
+- Fixed: a download site that connected but never answered could hold up setup and Fix everything until a restart.
+- Switching Jellyfin to run as you now gets 5 minutes for a large data folder, like the other apps, instead of 90 seconds.
+- Dead downloads: when the internet or the VPN is down, every download looks dead. Chillarr no longer swaps them for other copies; the wait starts over when the connection is back.
+- Dub check: a search that took longer than 20 seconds counted as "no copy with English". It now waits up to 90 seconds, and a search that didn't answer doesn't use up a try.
+- Fixed: changing the huge-copies switch and the audio choice together could undo one of them in Sonarr and Radarr.
+- Hidden password: wrong tries sent at the same moment are now counted one by one, so the wait after three wrong tries can't be skipped.
+- Reading: a book with "no ebook in it" keeps that message and its list of other copies. The panel used to restart the search every 4 seconds and the message changed to "Couldn't find its download".
+- Reading: the language badge on a followed series' cover shows now. Closing the reader in the moment between two chapters no longer marks the next chapter as read.
+- Reading: an EPUB with a % in a file name, or a damaged zip, no longer fails with "task panicked". A chapter listed once per group with equal counts no longer flips between the two copies.
 - Fixed: a crash or blue screen during setup no longer leaves the manga downloader dead. The crash had left its settings file, settings and database as blank (all-zero) files; Suwayomi then gave up at start but its Java stayed running without ever listening, and Chillarr counted that as "running" and never started another one, so reading said "The manga downloader didn't start" for good. Chillarr now sets blank files aside (renamed `.damaged-<time>`, never deleted) before it starts the downloader, closes a downloader that is running but hasn't answered after about 2.5 minutes and starts it again, and closes one that never answered so the next try starts clean.
 - Fixed: Jellyfin set to "Manual" start but still running as a Windows service (a switch to "run as you" that stopped halfway) was treated as already switched. Jellyfin kept its own pages and ran as NETWORK SERVICE, and Fix everything skipped it without a word. Chillarr now sees it and switches it (one Windows prompt) like any other Jellyfin service.
 - Fixed: when Chillarr isn't signed in to Jellyfin (setup was cut short), every Jellyfin call it made got a 401 that only the detail log showed, and Fix everything said nothing. The log and Fix everything now say it plainly: sign in under Settings > Account & devices. Chillarr no longer retries the restart onto its own pages every few minutes while signed out.
 - Fixed: My List stays on a manga or manhwa after you download chapters. It used to vanish once you followed the series.
 - A download nobody is sharing no longer sits at 0% forever. When a film or episode has no seeders and gets nothing for 15 minutes (45 when the site still lists seeders), Chillarr drops that copy, makes sure it's never taken again, and finds another one. After 4 dead copies in a row it keeps the next one and the log says so.
+- Reading: changing a series to another site keeps where every profile was and which chapters they read. It used to start everyone over.
+- Reading: after the manga downloader's database was set aside, a followed series could show another series' chapters as new (#82). Chillarr now checks each series is still the one followed and says "Follow it again to pick a copy" when it isn't. Stopping a series never deletes another series' chapters this way.
+- Reading: a profile that stopped following a series, or was removed, no longer keeps its read chapters from being cleaned up. A profile that follows a series but hasn't opened it yet keeps all of it.
+- Reading: the Follow button at the top of a series turns on new chapters. Before, nothing new ever downloaded after it.
+- Reading: a list page that fails to load shows Try again instead of ending the list.
+- Reading: other names for a series (like "Only I Level Up") are now searched on English sites. The native-script name used to take their place (#78). "The" at the start of a name no longer stops a match.
+- Books: two books with the same author and title get two files ("(2)"). The second used to replace the first.
+- Fixed: a reading list, profile place or books list that Windows couldn't read for a moment could be saved over as empty. Chillarr now leaves the file alone, and a damaged one is kept as `.bad-<time>`.
+- Dubbed: "[DUAL JAP POR] [SUB POR ENG]" and "[DUAL JAP ESP] [SUB ESP ENG]" are refused as foreign dubs (#81). English named only in the subtitles no longer counts as an English dub. A subtitle list like Erai-raws' "[Multiple Subtitle] [ENG][POR-BR][SPA]..." is no longer taken for a foreign dub.
+- Dubbed: when a file without the dub is replaced, the episode or film stays wanted. If the new copy failed, nothing used to fetch it again. The grab now gets 90 seconds. A file with no language tags is checked again later instead of counting as done.
+- Original voices no longer wipe a Jellyfin user's own audio language every time Chillarr starts.
+- Phones and browsers: when the PC isn't signed in to Jellyfin, a phone sees only what it asked for, and profile PINs still ask. Before, any phone could stop or delete anyone's downloads. Changing a profile's PIN now locks every browser that had typed the old one.
+- "My movies" and the library rows read up to 5000 titles. Big libraries lost titles past 500, and owned ones said "Adding to library".
+- Setup and repair: after giving you access to Jellyfin's data folder, Chillarr starts Jellyfin. A Sonarr, Radarr or Prowlarr settings file left blank by a crash is set aside so the app makes a new one. A manga downloader just started by another task is waited for instead of "didn't start". With no reading folder picked, the manga downloader's card waits quietly instead of running Fix everything every few seconds. A FlareSolverr or manga downloader unpack that fails no longer leaves a half-installed folder.
+- Back on a TV remote in reading mode goes to reading Home, and steps out of an author's or "All" page. With search results up, pressing the tab you searched from (or the logo) leaves them.
+- Subtitles: a download too big is stopped as it comes in, not after all of it arrived.
 
 ## 0.20.2 (2026-11-12)
 - Fixed for good: picking Dubbed, or English in the player's audio menu, really plays English now. Jellyfin was ignoring the choice and played the file's first track (Japanese), and Chillarr never told it which copy of the file it meant. VLC never had this problem because it picks the track itself.

@@ -907,6 +907,9 @@ function saveSoon() {
 function saveNow() {
   if (!r?.o) return;
   clearTimeout(r.saveT);
+  // Between chapters the page number is still the old chapter's: saving it
+  // under the new one could mark a chapter read that was never opened.
+  if (r.fading) return;
   const o = r.o;
   // The last page (or the last spread) counts as the chapter read.
   const last = r.mode !== "webtoon" && r.spreads?.length && r.spreads[r.spreads.length - 1].includes(r.page) ? o.pages.length - 1 : r.page;

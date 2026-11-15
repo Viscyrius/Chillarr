@@ -915,13 +915,15 @@ pub fn unlock_fresh(at: i64, now: i64) -> bool {
 }
 
 /// The PIN (stored hash) of the profile a Jellyfin user is, if it has one.
+/// Read straight from the saved profiles: it used to need the owner's
+/// session first, so with nobody signed in on the PC every web PIN was off.
 fn pin_of(app: &AppHandle, user_id: &str) -> Option<String> {
-    let me = owner(app)?;
-    find(app, &me, user_id).ok()?.pin
+    find_in(&app.state::<Profiles>().store.lock().unwrap().list, user_id)?.pin.clone()
 }
 
-fn unlock_key(user_id: &str, token: &str) -> String {
-    trust_hash(&format!("{user_id}|{token}"))
+/// The PIN's stored hash is part of it: a new PIN locks every browser again.
+fn unlock_key(user_id: &str, token: &str, pin: &str) -> String {
+    trust_hash(&format!("{user_id}|{token}|{pin}"))
 }
 
 pub fn web_unlocked(app: &AppHandle, key: &str) -> bool {
@@ -931,35 +933,36 @@ pub fn web_unlocked(app: &AppHandle, key: &str) -> bool {
 
 /// This sign-in is a profile with a PIN that hasn't been typed on it yet.
 pub fn web_locked(app: &AppHandle, user_id: &str, token: &str) -> bool {
-    pin_of(app, user_id).is_some() && !web_unlocked(app, &unlock_key(user_id, token))
+    pin_of(app, user_id).is_some_and(|pin| !web_unlocked(app, &unlock_key(user_id, token, &pin)))
 }
 
 /// The PIN typed on the web for the profile it's signed in as.
 pub async fn web_unlock(app: &AppHandle, user_id: &str, token: &str, pin: String) -> Result<(), String> {
     let Some(stored) = pin_of(app, user_id) else { return Ok(()) };
-    let (h, key) = (app.clone(), web_key(user_id));
+    let (h, key, held) = (app.clone(), web_key(user_id), stored.clone());
     blocking(move || {
         let profiles = h.state::<Profiles>();
         let before = profiles.try_state(&key);
-        let r = pin_gate(&profiles.tries, &key, Some(&stored), Some(&pin), Instant::now());
+        let r = pin_gate(&profiles.tries, &key, Some(&held), Some(&pin), Instant::now());
         profiles.counted(&key, before);
         r
     })
     .await?;
     let now = now_secs();
-    let text = with_unlocked(app, |m| {
+    let file = unlocked_file(app);
+    with_unlocked(app, |m| {
         m.retain(|_, at| unlock_fresh(*at, now));
-        m.insert(unlock_key(user_id, token), now);
+        m.insert(unlock_key(user_id, token, &stored), now);
         // Never more than a few hundred sign-ins kept: the oldest go.
         while m.len() > 400 {
             let Some(old) = m.iter().min_by_key(|(_, at)| **at).map(|(k, _)| k.clone()) else { break };
             m.remove(&old);
         }
-        serde_json::to_string(m).unwrap_or_default()
+        // Saved while the list is held, so an older copy can't land last.
+        if let Some(p) = &file {
+            let _ = crate::seal::write(p, &serde_json::to_string(m).unwrap_or_default());
+        }
     });
-    if let Some(p) = unlocked_file(app) {
-        let _ = crate::seal::write(&p, &text);
-    }
     Ok(())
 }
 

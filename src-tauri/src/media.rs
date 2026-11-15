@@ -1066,9 +1066,18 @@ async fn rows_now(app: &AppHandle, tab: &str) -> Result<Vec<Row>, String> {
         for r in &mut rows {
             kids_only(app, &mut r.tiles);
         }
-        rows.retain(|r| !r.tiles.is_empty());
+        rows.retain(|r| kids_keep_row(r));
     }
     Ok(rows)
+}
+
+/// A kids' profile keeps a row that still has titles, and a row the page
+/// fills itself (empty until then), but never the Ecchi one.
+fn kids_keep_row(r: &Row) -> bool {
+    if r.style.as_deref() == Some("lazy") {
+        return !r.explore.as_deref().is_some_and(|e| e.eq_ignore_ascii_case("anime:genre:Ecchi"));
+    }
+    !r.tiles.is_empty()
 }
 
 /// A title a kids' profile never gets offered: an R, NC-17 or 18 film by the
@@ -1093,14 +1102,16 @@ async fn rows_all(app: &AppHandle, tab: &str) -> Result<Vec<Row>, String> {
     let (mut lib_movies, mut lib_series, mut lib_anime, mut cont, mut latest) = (vec![], vec![], vec![], vec![], vec![]);
     if let Some(j) = &j {
         // Side by side: the wait is Jellyfin's slowest answer, not all of them added up.
+        // Up to 5000 titles, as the filter page reads: 500 lost titles from
+        // "My movies" and showed owned ones as "Adding to library".
         let lib = |q: String| async move { j.items(&q).await.map(|v| v.iter().map(|v| tiles::from_jf(v, &j.base)).collect::<Vec<Tile>>()) };
         let (anime_ids, resume, next, fresh, movies, series) = tokio::join!(
             anime_library_ids(j),
             j.resume(),
             j.next_up(),
             j.latest(),
-            lib("recursive=true&includeItemTypes=Movie&sortBy=SortName&limit=500".into()),
-            lib("recursive=true&includeItemTypes=Series&sortBy=SortName&limit=500".into()),
+            lib("recursive=true&includeItemTypes=Movie&sortBy=SortName&limit=5000".into()),
+            lib("recursive=true&includeItemTypes=Series&sortBy=SortName&limit=5000".into()),
         );
         cont = resume.unwrap_or_default().iter().map(|v| tiles::from_jf(v, &j.base)).collect();
         let next: Vec<Tile> = next.unwrap_or_default().iter().map(|v| tiles::from_jf(v, &j.base)).collect();
@@ -1115,7 +1126,7 @@ async fn rows_all(app: &AppHandle, tab: &str) -> Result<Vec<Row>, String> {
         lib_movies = keep(movies);
         lib_series = keep(series);
         for id in &anime_ids {
-            lib_anime.extend(keep(lib(format!("parentId={id}&recursive=true&includeItemTypes=Series,Movie&sortBy=SortName&limit=500")).await));
+            lib_anime.extend(keep(lib(format!("parentId={id}&recursive=true&includeItemTypes=Series,Movie&sortBy=SortName&limit=5000")).await));
         }
         if let (Some(e), "downloads") = (failed, tab) {
             return Err(format!("Couldn't get your library from Jellyfin. {e}."));
@@ -1286,11 +1297,15 @@ async fn rows_all(app: &AppHandle, tab: &str) -> Result<Vec<Row>, String> {
 /// One page of "Explore all": "movie:<cat>", "series:<cat>", "anime:<cat>".
 pub async fn explore(app: &AppHandle, category: &str, page: usize) -> Vec<Tile> {
     let (kind, cat) = category.split_once(':').unwrap_or(("movie", "popular"));
-    let tiles = match kind {
+    let mut tiles = match kind {
         "series" => app.state::<Media>().shows.lock().unwrap().page(cat, page, 40),
         "anime" => anime_row(app, cat, page as u32 + 1).await,
         _ => app.state::<Media>().catalog.lock().unwrap().page(cat, page, 40),
     };
+    // The rows are filtered for a kids' profile; the full list behind them is too.
+    if crate::profiles::viewer_kids(app) {
+        kids_only(app, &mut tiles);
+    }
     crate::catalog::merge_owned(tiles, &explore_library(app).await)
 }
 
@@ -1321,6 +1336,9 @@ pub fn filter_genres(app: &AppHandle, kind: &str) -> Vec<String> {
         "series" => app.state::<Media>().shows.lock().unwrap().genres(3),
         _ => app.state::<Media>().catalog.lock().unwrap().genres(3),
     };
+    if crate::profiles::viewer_kids(app) {
+        out.retain(|g| !g.eq_ignore_ascii_case("Ecchi"));
+    }
     tiles::sort_genres(&mut out, |g| g);
     out
 }
@@ -1365,15 +1383,20 @@ async fn owned_matching(app: &AppHandle, f: &crate::catalog::Filter) -> Vec<Tile
 /// otherwise movies and series come from the saved catalogs and anime from AniList.
 pub async fn filter(app: &AppHandle, mut f: crate::catalog::Filter, page: usize) -> Vec<Tile> {
     // A kids' profile: no 18+, and picking R under Age rating doesn't ask for it either.
-    if crate::profiles::viewer_kids(app) {
+    let kids = crate::profiles::viewer_kids(app);
+    if kids {
         f.adult = None;
         f.porn = None;
         f.certs.retain(|c| !crate::catalog::adult_cert(c));
+        // Nor does picking the Ecchi genre.
+        f.genres.retain(|g| !g.eq_ignore_ascii_case("Ecchi"));
+        f.genre = f.genre.filter(|g| !g.eq_ignore_ascii_case("Ecchi"));
     }
     if f.owned {
         // Scrolling asks for page after page of the same filter: the library is read once.
         static OWNED: std::sync::Mutex<Option<(String, Instant, Vec<Tile>)>> = std::sync::Mutex::new(None);
-        let key = format!("{f:?}");
+        // Per profile: each one sees its own library, played marks and progress.
+        let key = format!("{:?} {f:?}", active_user(app));
         let hit = OWNED.lock().unwrap().as_ref().filter(|(k, at, _)| *k == key && at.elapsed() < Duration::from_secs(60)).map(|(_, _, t)| t.clone());
         let tiles = match hit {
             Some(t) => t,
@@ -1385,11 +1408,14 @@ pub async fn filter(app: &AppHandle, mut f: crate::catalog::Filter, page: usize)
         };
         return tiles.into_iter().skip(page * 40).take(40).collect();
     }
-    let tiles = match f.kind.as_str() {
+    let mut tiles = match f.kind.as_str() {
         "anime" => anime_row(app, &crate::catalog::anilist_filter(&f), page as u32 + 1).await,
         "series" => app.state::<Media>().shows.lock().unwrap().filtered(&f, page, 40),
         _ => app.state::<Media>().catalog.lock().unwrap().filtered(&f, page, 40),
     };
+    if kids {
+        kids_only(app, &mut tiles);
+    }
     crate::catalog::merge_owned(tiles, &explore_library(app).await)
 }
 
@@ -1716,6 +1742,10 @@ pub struct Added {
 }
 
 pub async fn get_it(app: &AppHandle, tile: Tile, quality: &str) -> Result<String, String> {
+    // Same rule as Watch now: a kids' profile can't download what it isn't shown.
+    if crate::profiles::viewer_kids(app) && crate::media::not_for_kids(app, &tile) {
+        return Err("That one isn't for kids' profiles.".into());
+    }
     let added = add(app, &tile, quality).await?;
     crate::asked::note_with(app, &tile, &[format!("{}:{}", if added.app == AppId::Radarr { "radarr" } else { "sonarr" }, added.id)]);
     follow(app.clone(), added.app, added.id, tile.key.clone(), tile.title.clone());

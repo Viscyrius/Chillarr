@@ -110,12 +110,23 @@ pub fn note_with(app: &AppHandle, t: &Tile, extra: &[String]) {
 fn mine(app: &AppHandle) -> Option<HashSet<String>> {
     let (owner, uid) = who(app);
     let uid = uid?;
-    // Without an owner yet (not signed in) there's nothing to hide behind.
-    if owner.is_none() || owner.as_deref() == Some(uid.as_str()) {
+    let web = crate::viewer::current().map(|v| v.admin);
+    if sees_everything(owner.as_deref(), &uid, web) {
         return None;
     }
     let s = store(app).lock().unwrap();
     Some(s.by_key.iter().filter(|(_, ids)| ids.contains(&uid)).map(|(k, _)| k.clone()).collect())
+}
+
+/// Whether `uid` sees every title. `web`: Some(is a Jellyfin admin) for a
+/// request from the web pages. Without a known owner (signed out, or
+/// jellyfin.json unreadable) the window still sees all, but a phone on the
+/// web used to as well, and could stop or delete anyone's downloads.
+pub fn sees_everything(owner: Option<&str>, uid: &str, web: Option<bool>) -> bool {
+    match owner {
+        Some(o) => o == uid,
+        None => web.is_none_or(|admin| admin),
+    }
 }
 
 fn shows(mine: &HashSet<String>, t: &Tile) -> bool {
@@ -184,6 +195,15 @@ pub fn forget_user(app: &AppHandle, uid: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_phone_sees_only_its_own_asks_when_no_owner_is_known() {
+        assert!(sees_everything(None, "u1", None), "the window");
+        assert!(!sees_everything(None, "u1", Some(false)), "a phone on the web");
+        assert!(sees_everything(None, "u1", Some(true)), "a Jellyfin admin");
+        assert!(sees_everything(Some("u1"), "u1", Some(false)));
+        assert!(!sees_everything(Some("u0"), "u1", None));
+    }
 
     fn tile(key: &str, title: &str, tmdb: Option<i64>, tvdb: Option<i64>) -> Tile {
         Tile { key: key.into(), title: title.into(), tmdb, tvdb, ..Default::default() }

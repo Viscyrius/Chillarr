@@ -69,8 +69,12 @@ pub fn read_raw(path: &Path) -> std::io::Result<Option<String>> {
 pub fn write(path: &Path, text: &str) -> std::io::Result<()> {
     use std::io::Write;
     let sealed = seal(text).ok_or_else(|| std::io::Error::other("Windows couldn't seal it"))?;
+    // A temp name of its own per write: two saves at once shared one, and the
+    // second rename failed or swapped in a half-written file.
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let mut name = path.file_name().ok_or_else(|| std::io::Error::other("no file name"))?.to_os_string();
-    name.push(".tmp");
+    name.push(format!(".{}-{n}.tmp", std::process::id()));
     let tmp = path.with_file_name(name);
     let written = std::fs::File::create(&tmp).and_then(|mut f| {
         f.write_all(sealed.as_bytes())?;

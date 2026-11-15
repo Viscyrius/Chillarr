@@ -310,6 +310,9 @@ pub fn launch_args(app: &AppHandle, java: &Path) -> Result<Vec<String>, String> 
     std::fs::create_dir_all(&data).map_err(|e| format!("Couldn't make {}: {e}", data.display()))?;
     let moved = set_aside_damaged(&data);
     if !moved.is_empty() {
+        crate::read::forget_checked_copies();
+    }
+    if !moved.is_empty() {
         crate::log::log(
             app,
             crate::model::Level::Amber,
@@ -658,7 +661,8 @@ pub fn one_per_chapter(chs: Vec<Chapter>) -> Vec<Chapter> {
     for c in &chs {
         *counts.entry(c.scanlator.clone()).or_default() += 1;
     }
-    let main = counts.into_iter().max_by_key(|(_, n)| *n).map(|(s, _)| s).flatten();
+    // A tie goes to the same group every time, so chapter ids don't change between asks.
+    let main = counts.into_iter().max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.cmp(&a.0))).and_then(|(s, _)| s);
     let mut out: Vec<Chapter> = Vec::new();
     for c in chs {
         let Some(n) = c.number else {
@@ -678,6 +682,24 @@ pub fn one_per_chapter(chs: Vec<Chapter>) -> Vec<Chapter> {
     out
 }
 
+/// A name in Latin letters (accents allowed): what an English-language site lists.
+fn latin(s: &str) -> bool {
+    s.chars().filter(|c| c.is_alphabetic()).all(|c| (c as u32) < 0x250)
+}
+
+/// The names to search a site with, at most 4: the first (most common), then
+/// the other Latin-letter names, then the rest. The third name is usually the
+/// native one, so synonyms were never tried on Latin-letter sites (issue #78).
+pub fn search_names(names: &[String]) -> Vec<&String> {
+    let Some((first, rest)) = names.split_first() else { return vec![] };
+    let mut out = vec![first];
+    out.extend(rest.iter().filter(|n| latin(n)));
+    out.extend(rest.iter().filter(|n| !latin(n)));
+    out.dedup();
+    out.truncate(4);
+    out
+}
+
 async fn one_source(source_id: String, source: String, names: Vec<String>) -> Option<Candidate> {
     // The first name is the most common (English, else romaji); a second try
     // with another name catches sources that list the original title.
@@ -687,7 +709,7 @@ async fn one_source(source_id: String, source: String, names: Vec<String>) -> Op
     // name, is tried instead of giving up on the whole site. A search that
     // errors (Cloudflare) moves on to the next name too.
     let mut tried: Vec<i64> = Vec::new();
-    for q in names.iter().take(3) {
+    for q in search_names(&names) {
         let Ok(found) = gql(
             "mutation($s:LongString!,$q:String){fetchSourceManga(input:{source:$s,type:SEARCH,page:1,query:$q}){mangas{id title}}}",
             json!({ "s": source_id, "q": q }),
@@ -968,6 +990,14 @@ Caused by: org.h2.mvstore.MVStoreException: File is corrupted - unable to recove
             assert!(has(want), "{want} missing from {a:?}");
         }
         assert_eq!(a[a.len() - 2], "-jar");
+    }
+
+    #[test]
+    fn synonyms_are_tried_before_the_native_name() {
+        let names: Vec<String> = ["Solo Leveling", "Na Honjaman Level Up", "나 혼자만 레벨업", "Only I Level Up", "I Level Up Alone"].iter().map(|s| s.to_string()).collect();
+        let picked: Vec<&str> = search_names(&names).into_iter().map(|s| s.as_str()).collect();
+        assert_eq!(picked, ["Solo Leveling", "Na Honjaman Level Up", "Only I Level Up", "I Level Up Alone"]);
+        assert!(search_names(&[]).is_empty());
     }
 
     #[test]

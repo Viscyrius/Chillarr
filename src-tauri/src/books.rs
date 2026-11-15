@@ -143,6 +143,18 @@ pub fn file_name(author: Option<&str>, title: &str, ext: &str) -> String {
     format!("{}.{ext}", base.trim_end_matches(['.', ' ']))
 }
 
+/// `name`, or "<name> (2).<ext>" and up when another book has that file.
+pub fn free_name(name: &str, taken: &std::collections::HashSet<String>) -> String {
+    if !taken.contains(&name.to_lowercase()) {
+        return name.to_string();
+    }
+    let (base, ext) = name.rsplit_once('.').unwrap_or((name, ""));
+    (2..)
+        .map(|n| if ext.is_empty() { format!("{base} ({n})") } else { format!("{base} ({n}).{ext}") })
+        .find(|c| !taken.contains(&c.to_lowercase()))
+        .unwrap_or_else(|| name.to_string())
+}
+
 // ---------- the list of books ----------
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -181,7 +193,7 @@ fn books_file(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 pub fn all(app: &AppHandle) -> Vec<Book> {
-    books_file(app).ok().and_then(|p| std::fs::read_to_string(p).ok()).and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
+    books_file(app).map(|p| crate::read::load_json(&p)).unwrap_or_default()
 }
 
 /// Held around every read, change and save of books.json (never across an
@@ -198,6 +210,7 @@ fn save(app: &AppHandle, list: &[Book]) -> Result<(), String> {
     static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let tmp = p.with_extension(format!("json.{}-{n}.tmp", std::process::id()));
+    crate::read::safe_to_overwrite(&p)?;
     std::fs::write(&tmp, serde_json::to_string(list).map_err(|e| e.to_string())?).and_then(|_| std::fs::rename(&tmp, &p)).map_err(|e| format!("Couldn't save it: {e}"))
 }
 
@@ -393,12 +406,18 @@ pub async fn tick(app: &AppHandle) {
     let Some(dir) = crate::read::books_dir(app) else { return };
     let seeding = matches!(crate::waiting::seeding(app).await, Ok(true));
     let mut changed = false;
+    // Every file another book already has: two books that file under the same
+    // "<Author> - <Title>" used to land on one file, the second over the first.
+    let mut taken: std::collections::HashSet<String> = list.iter().filter_map(|b| b.file.as_ref().map(|f| f.to_lowercase())).collect();
     for b in list.iter_mut().filter(|b| b.file.is_none() && !b.not_downloaded) {
         // Matched by its hash, in the books category: never by name, which let
         // "Dune" take "Dune Messiah"'s torrent.
         let Some(h) = b.hash.clone() else {
-            b.problem = Some("Couldn't find its download. Remove it and pick a copy again.".into());
-            changed = true;
+            // A reason already given (a download with nothing to read in it) stays.
+            if b.problem.is_none() {
+                b.problem = Some("Couldn't find its download. Remove it and pick a copy again.".into());
+                changed = true;
+            }
             continue;
         };
         let t = torrents.iter().find(|t| t["category"] == CATEGORY && t["hash"].as_str().is_some_and(|x| x.eq_ignore_ascii_case(&h)));
@@ -434,7 +453,7 @@ pub async fn tick(app: &AppHandle) {
         // A comic archive is always filed as a CBZ: many CBRs are zips anyway,
         // and a real RAR is unpacked and packed again as one.
         let comic_archive = b.comic && (ext == "cbz" || ext == "cbr");
-        let name = file_name(b.author.as_deref(), &b.title, if comic_archive { "cbz" } else { &ext });
+        let name = free_name(&file_name(b.author.as_deref(), &b.title, if comic_archive { "cbz" } else { &ext }), &taken);
         let _ = std::fs::create_dir_all(&dir);
         let to = dir.join(&name);
         let filed = if comic_archive && is_rar(&from) {
@@ -446,6 +465,7 @@ pub async fn tick(app: &AppHandle) {
         };
         match filed {
             Ok(()) => {
+                taken.insert(name.to_lowercase());
                 b.file = Some(name);
                 b.problem = None;
                 crate::log::log(app, crate::model::Level::Ok, format!("{} is ready to read.", b.title));
@@ -689,7 +709,8 @@ fn unescape(s: &str) -> String {
     let mut i = 0;
     while i < b.len() {
         if b[i] == b'%' && i + 2 < b.len() {
-            if let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
+            // By bytes: the two after a % may be half of a longer character.
+            if let Some(v) = std::str::from_utf8(&b[i + 1..i + 3]).ok().and_then(|h| u8::from_str_radix(h, 16).ok()) {
                 out.push(v);
                 i += 3;
                 continue;
@@ -922,6 +943,16 @@ pub async fn more(id: &str, page: u32) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn two_books_with_one_name_get_two_files() {
+        let mut taken = std::collections::HashSet::new();
+        assert_eq!(free_name("Frank Herbert - Dune.epub", &taken), "Frank Herbert - Dune.epub");
+        taken.insert("frank herbert - dune.epub".to_string());
+        assert_eq!(free_name("Frank Herbert - Dune.epub", &taken), "Frank Herbert - Dune (2).epub");
+        taken.insert("frank herbert - dune (2).epub".to_string());
+        assert_eq!(free_name("Frank Herbert - DUNE.epub", &taken), "Frank Herbert - DUNE (3).epub");
+    }
 
     fn res(title: &str, size_mb: u64, seeders: i64, magnet: bool) -> Value {
         json!({ "title": title, "size": size_mb * 1024 * 1024, "seeders": seeders, "indexer": "x", "protocol": "torrent",

@@ -315,7 +315,9 @@ impl Remote {
         if self.unread {
             return;
         }
-        let text = serde_json::to_string(&*self.saved.lock().unwrap()).unwrap_or_default();
+        // Written while the list is held, so two saves land in the order made.
+        let held = self.saved.lock().unwrap();
+        let text = serde_json::to_string(&*held).unwrap_or_default();
         let _ = crate::seal::write(&self.path, &text);
     }
 

@@ -137,7 +137,46 @@ async fn github_zip(repo: &str, tag: &str, asset: &str, sha256: &str, dir: &std:
 }
 
 /// Windows' own tar unpacks zips.
+/// Unpacks into `<dir>.partial` first and swaps it in only when it all came
+/// out: a failed unpack straight into `dir` counted as installed, with half
+/// its files and no way to repair it. When the old folder can't be taken away
+/// (the app is running from it), it unpacks over it as before.
 pub async fn unpack_zip(zip: &std::path::Path, dir: &std::path::Path) -> Result<(), String> {
+    let mut name = dir.file_name().unwrap_or_default().to_os_string();
+    name.push(".partial");
+    let partial = dir.with_file_name(name);
+    let _ = std::fs::remove_dir_all(&partial);
+    if let Err(e) = tar_into(zip, &partial).await {
+        let _ = std::fs::remove_dir_all(&partial);
+        return Err(e);
+    }
+    // The old folder is moved aside whole (a rename fails as a whole when a
+    // file in it is in use), so it is never left half deleted.
+    let mut old_name = dir.file_name().unwrap_or_default().to_os_string();
+    old_name.push(".old");
+    let old = dir.with_file_name(old_name);
+    let _ = std::fs::remove_dir_all(&old);
+    let moved_aside = dir.exists();
+    if moved_aside && std::fs::rename(dir, &old).is_err() {
+        let _ = std::fs::remove_dir_all(&partial);
+        return tar_into(zip, dir).await;
+    }
+    match std::fs::rename(&partial, dir) {
+        Ok(()) => {
+            let _ = std::fs::remove_dir_all(&old);
+            Ok(())
+        }
+        Err(e) => {
+            if moved_aside {
+                let _ = std::fs::rename(&old, dir);
+            }
+            let _ = std::fs::remove_dir_all(&partial);
+            Err(format!("Couldn't put the unpacked files in place: {e}"))
+        }
+    }
+}
+
+async fn tar_into(zip: &std::path::Path, dir: &std::path::Path) -> Result<(), String> {
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let (zip, dir) = (zip.to_path_buf(), dir.to_path_buf());
     let status = tokio::task::spawn_blocking(move || {
