@@ -42,6 +42,9 @@ const MAX_REQUEST: usize = 2 * 1024 * 1024;
 const REQUEST_WAIT: Duration = Duration::from_secs(15);
 /// And its head (with the sign-in) within this.
 const HEAD_WAIT: Duration = Duration::from_secs(5);
+/// The longest a reading page's reply may take to send: a minute for a big
+/// picture to a phone on a weak line, then the slot is freed.
+const PAGE_WRITE_WAIT: Duration = Duration::from_secs(60);
 /// Signed-in connections at once, event streams included; more are turned away.
 const MAX_CONNECTIONS: usize = 256;
 /// Connections not signed in yet (still sending, or being checked); more are
@@ -958,7 +961,23 @@ async fn serve(app: AppHandle, mut sock: TcpStream, gate: Gate) -> std::io::Resu
         let a = app.clone();
         let p = path.to_string();
         let (status, kind, body) = tokio::task::spawn_blocking(move || crate::read::serve(&a, &p)).await.unwrap_or(("500 Internal Server Error", "text/plain", vec![]));
-        return reply_page(&mut sock, origin, status, kind, &body).await;
+        // A good ticket is a signed-in viewer's: the stranger's slot is traded
+        // for a signed-in one. Holding one of the 32 pre-sign-in slots for a
+        // whole picture to a slow phone used to lock out new sign-ins.
+        let _slot = if status.starts_with("200") {
+            match gate.signed_in() {
+                Some(s) => Some(s),
+                None => return error(&mut sock, origin, "503 Service Unavailable", "Chillarr is busy. Try again in a moment.").await,
+            }
+        } else {
+            drop(gate);
+            None
+        };
+        // A phone that stops taking the picture doesn't hold the slot forever.
+        return match tokio::time::timeout(PAGE_WRITE_WAIT, reply_page(&mut sock, origin, status, kind, &body)).await {
+            Ok(r) => r,
+            Err(_) => Ok(()),
+        };
     }
     if method == "GET" && (path == "/events" || path.starts_with("/events?")) {
         let q = query(path);
@@ -1047,6 +1066,12 @@ async fn events(app: AppHandle, mut sock: TcpStream, origin: Option<&str>, claim
     let Some(_slot) = gate.signed_in() else {
         return error(&mut sock, origin, "503 Service Unavailable", "Chillarr is busy. Try again in a moment.").await;
     };
+    // A profile with a PIN not yet typed here hears nothing, as /invoke
+    // answers nothing: its events told what others were downloading. The
+    // page asks again by itself, and at once when the PIN is typed.
+    if crate::profiles::web_locked(&app, &v.session.user_id, &v.session.token) {
+        return error(&mut sock, origin, "403 Forbidden", "Enter this profile's PIN first.").await;
+    }
     // Counted until this stream ends, however it ends: per page, per user, and per device.
     struct Open(&'static Mutex<HashMap<String, usize>>, String);
     impl Drop for Open {

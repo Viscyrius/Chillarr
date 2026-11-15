@@ -518,6 +518,13 @@ pub struct Spot {
     pub hide_week: bool,
 }
 
+/// "read-<uid>.json", a profile's places. Not "read-list-<uid>.json" (its
+/// reading My List), which shares the prefix: read as places it failed and
+/// was set aside as damaged.
+pub fn is_spots_file(name: &str) -> bool {
+    name.strip_prefix("read-").and_then(|r| r.strip_suffix(".json")).is_some_and(|uid| !uid.is_empty() && uid.chars().all(|c| c.is_ascii_alphanumeric()))
+}
+
 fn spots_file(dir: &Path, uid: &str) -> PathBuf {
     dir.join(format!("read-{uid}.json"))
 }
@@ -536,7 +543,7 @@ fn all_spots(app: &AppHandle) -> Vec<HashMap<String, Spot>> {
     std::fs::read_dir(&dir)
         .map(|it| {
             it.filter_map(|e| e.ok())
-                .filter(|e| e.file_name().to_string_lossy().starts_with("read-") && e.file_name().to_string_lossy().ends_with(".json"))
+                .filter(|e| is_spots_file(&e.file_name().to_string_lossy()))
                 .map(|e| load_json(&e.path()))
                 .collect()
         })
@@ -578,7 +585,7 @@ fn move_spots(app: &AppHandle, old_keys: &[String], new_key: &str, old_nums: &Ha
     let Ok(it) = std::fs::read_dir(&dir) else { return };
     for e in it.filter_map(|e| e.ok()) {
         let name = e.file_name().to_string_lossy().to_string();
-        if !(name.starts_with("read-") && name.ends_with(".json")) {
+        if !is_spots_file(&name) {
             continue;
         }
         let mut all: HashMap<String, Spot> = load_json(&e.path());
@@ -623,22 +630,39 @@ pub(crate) fn series_dir(app: &AppHandle, source: &str, source_title: &str) -> O
 
 /// The .cbz of one chapter: by its name, else by its number (and scanlator).
 pub fn chapter_file(dir: &Path, ch: &crate::suwayomi::Chapter) -> Option<PathBuf> {
-    let files: Vec<(PathBuf, read_core::ChapterName)> = std::fs::read_dir(dir)
+    let names: Vec<String> = std::fs::read_dir(dir)
         .ok()?
         .filter_map(|e| e.ok().map(|e| e.path()))
         .filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("cbz") || x.eq_ignore_ascii_case("zip")))
-        .map(|p| {
-            let n = read_core::chapter_name(&p.file_stem().unwrap_or_default().to_string_lossy());
-            (p, n)
+        .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+        .collect();
+    chapter_file_in(&names, ch).map(|n| dir.join(n))
+}
+
+/// The file out of `names` (file names in a series folder) for one chapter.
+/// Suwayomi writes `<scanlator>_<name>.cbz`, or just `<name>.cbz` with no
+/// scanlator; Windows turns a ':' in the name into '_', so "Chapter 5: The
+/// Gate" with no scanlator is "Chapter 5_ The Gate.cbz". The whole stem is
+/// tried as the name too, and its number when the split one has none.
+pub fn chapter_file_in<'a>(names: &'a [String], ch: &crate::suwayomi::Chapter) -> Option<&'a String> {
+    let files: Vec<(&String, read_core::ChapterName, String, Option<f64>)> = names
+        .iter()
+        .map(|f| {
+            let stem = f.rsplit_once('.').map(|x| x.0).unwrap_or(f).to_string();
+            let n = read_core::chapter_name(&stem);
+            let whole_no = read_core::chapter_number(&stem);
+            (f, n, stem, whole_no)
         })
         .collect();
     let same = |a: &str, b: &str| read_core::norm_title(a) == read_core::norm_title(b);
+    let named = |n: &read_core::ChapterName, stem: &str| same(&n.name, &ch.name) || same(stem, &ch.name);
     files
         .iter()
-        .find(|(_, n)| same(&n.name, &ch.name) && (ch.scanlator.is_none() || n.scanlator.as_deref().is_some_and(|s| same(s, ch.scanlator.as_deref().unwrap_or_default()))))
-        .or_else(|| files.iter().find(|(_, n)| same(&n.name, &ch.name)))
-        .or_else(|| files.iter().find(|(_, n)| ch.number.is_some() && n.number == ch.number))
-        .map(|(p, _)| p.clone())
+        .find(|(_, n, _, _)| same(&n.name, &ch.name) && (ch.scanlator.is_none() || n.scanlator.as_deref().is_some_and(|s| same(s, ch.scanlator.as_deref().unwrap_or_default()))))
+        .or_else(|| files.iter().find(|(_, n, stem, _)| named(n, stem)))
+        .or_else(|| files.iter().find(|(_, n, _, _)| ch.number.is_some() && n.number == ch.number))
+        .or_else(|| files.iter().find(|(_, n, _, w)| ch.number.is_some() && n.number.is_none() && *w == ch.number))
+        .map(|(f, _, _, _)| *f)
 }
 
 // ---------- tickets and pages ----------
@@ -2451,6 +2475,15 @@ mod tests {
     use crate::suwayomi::Chapter;
 
     #[test]
+    fn only_place_files_are_read_as_places() {
+        assert!(is_spots_file("read-3b86a97d407a4471ad7039c532595fb3.json"));
+        assert!(!is_spots_file("read-list-3b86a97d407a4471ad7039c532595fb3.json"));
+        assert!(!is_spots_file("read-3b86a97d407a4471ad7039c532595fb3.json.bad-1794722014"));
+        assert!(!is_spots_file("reading.json"));
+        assert!(!is_spots_file("read-.json"));
+    }
+
+    #[test]
     fn a_reused_manga_id_is_not_the_followed_copy() {
         assert!(copy_matches(("Weeb Central (EN)", "Solo Leveling"), ("Weeb Central (EN)", "Solo Leveling")));
         assert!(copy_matches(("Weeb Central (EN)", "Re:Zero"), ("Weeb Central (EN)", "Re_Zero")));
@@ -2658,6 +2691,23 @@ mod tests {
         odd.name = "Ch 10.5".into();
         assert_eq!(chapter_file(dir.path(), &odd).unwrap().file_name().unwrap(), "Asura_Chapter 10.5 - Gate.cbz", "by number when the name differs");
         assert!(chapter_file(dir.path(), &ch(3, 99.0, true)).is_none());
+    }
+
+    #[test]
+    fn a_chapter_with_a_colon_and_no_scanlator_is_found() {
+        // Suwayomi's real names (2026-11-15): "Chapter 40.cbz" with no scanlator,
+        // "www.mangabats.com_Chapter 933.cbz" with one. A ':' is saved as '_'.
+        let names: Vec<String> = ["Chapter 5_ The Gate.cbz", "Chapter 6.cbz", "www.mangabats.com_Chapter 933.cbz"].iter().map(|s| s.to_string()).collect();
+        let mut c = ch(1, 5.0, true);
+        c.name = "Chapter 5: The Gate".into();
+        assert_eq!(chapter_file_in(&names, &c).map(|s| s.as_str()), Some("Chapter 5_ The Gate.cbz"));
+        let mut by_no = ch(2, 5.0, true);
+        by_no.name = "Ch. 5".into();
+        assert_eq!(chapter_file_in(&names, &by_no).map(|s| s.as_str()), Some("Chapter 5_ The Gate.cbz"), "by the whole name's number");
+        let mut bat = ch(3, 933.0, true);
+        bat.name = "Chapter 933".into();
+        bat.scanlator = Some("www.mangabats.com".into());
+        assert_eq!(chapter_file_in(&names, &bat).map(|s| s.as_str()), Some("www.mangabats.com_Chapter 933.cbz"));
     }
 
     #[test]

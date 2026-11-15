@@ -84,6 +84,17 @@ pub fn again(owner: AppId, rows: &[&Value]) -> Option<(Value, String)> {
             if eps.is_empty() {
                 return None;
             }
+            // A dead season pack (2+ episodes of one season): one season search,
+            // not one search per episode (24 for a cour). Counted by series and
+            // season, so the next pack for it counts as the same switch.
+            let series: Vec<i64> = rows.iter().filter_map(|r| r["seriesId"].as_i64()).collect();
+            let mut seasons: Vec<i64> = rows.iter().filter_map(|r| r["seasonNumber"].as_i64().or_else(|| r["episode"]["seasonNumber"].as_i64())).collect();
+            seasons.sort_unstable();
+            seasons.dedup();
+            if eps.len() >= 2 && seasons.len() == 1 && series.len() == rows.len() && series.iter().all(|s| *s == series[0]) {
+                let (sid, sn) = (series[0], seasons[0]);
+                return Some((json!({ "name": "SeasonSearch", "seriesId": sid, "seasonNumber": sn }), format!("sonarr:season:{sid}:{sn}")));
+            }
             let key = format!("sonarr:ep:{}", eps.iter().map(i64::to_string).collect::<Vec<_>>().join(","));
             Some((json!({ "name": "EpisodeSearch", "episodeIds": eps }), key))
         }
@@ -226,5 +237,18 @@ mod tests {
         assert_eq!(cmd, json!({ "name": "MoviesSearch", "movieIds": [7] }));
         assert_eq!(key, "radarr:movie:7");
         assert!(again(AppId::Sonarr, &[]).is_none());
+    }
+
+    #[test]
+    fn a_dead_season_pack_is_one_season_search() {
+        let rows: Vec<Value> = (1..=24).map(|e| json!({ "id": e, "episodeId": 100 + e, "seriesId": 5, "seasonNumber": 2 })).collect();
+        let (cmd, key) = again(AppId::Sonarr, &rows.iter().collect::<Vec<_>>()).unwrap();
+        assert_eq!(cmd, json!({ "name": "SeasonSearch", "seriesId": 5, "seasonNumber": 2 }));
+        assert_eq!(key, "sonarr:season:5:2");
+        // One episode, or a pack over two seasons: episodes as before.
+        let one = [json!({ "id": 1, "episodeId": 7, "seriesId": 5, "seasonNumber": 2 })];
+        assert_eq!(again(AppId::Sonarr, &one.iter().collect::<Vec<_>>()).unwrap().0["name"], "EpisodeSearch");
+        let two = [json!({ "id": 1, "episodeId": 7, "seriesId": 5, "seasonNumber": 1 }), json!({ "id": 2, "episodeId": 8, "seriesId": 5, "seasonNumber": 2 })];
+        assert_eq!(again(AppId::Sonarr, &two.iter().collect::<Vec<_>>()).unwrap().0["name"], "EpisodeSearch");
     }
 }

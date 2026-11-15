@@ -42,6 +42,19 @@
 - Setup and repair: after giving you access to Jellyfin's data folder, Chillarr starts Jellyfin. A Sonarr, Radarr or Prowlarr settings file left blank by a crash is set aside so the app makes a new one. A manga downloader just started by another task is waited for instead of "didn't start". With no reading folder picked, the manga downloader's card waits quietly instead of running Fix everything every few seconds. A FlareSolverr or manga downloader unpack that fails no longer leaves a half-installed folder.
 - Back on a TV remote in reading mode goes to reading Home, and steps out of an author's or "All" page. With search results up, pressing the tab you searched from (or the logo) leaves them.
 - Subtitles: a download too big is stopped as it comes in, not after all of it arrived.
+- Reading: a chapter with a ':' in its name and no scan group opens again. Windows saves the ':' as '_', and the file wasn't found.
+- Reading: a chapter number with no date that jumps past the newest (1 to 120, then 125) is no longer taken as the newest, so 121 to 124 still download. The real next chapter still counts.
+- Reading: a profile's reading My List could be set aside as damaged by the last build. It is read as a list again.
+- Reading together in Follow me: page turns in another series are yours again. They used to freeze in every series.
+- A dead season pack is searched again once, as a season, not once per episode (24 searches).
+- Picking another voice in a dual-audio MP4 plays that voice. The PC's player can't switch voices in a file it plays as-is, so it played the first one whatever you picked. Jellyfin now sends it with the voice you picked.
+- Adding subtitles while watching keeps the voice you picked, and the subtitle timing you set stays on its track. Jellyfin numbers every track again when a file is added, and both moved to the wrong one.
+- Phones and browsers: a profile waiting for its PIN no longer hears other people's download updates. They start the moment the PIN is typed.
+- Phones reading over a slow line no longer stop new phones from signing in, and a page that stops loading lets go after a minute.
+- "Your week" checks every show that is still airing, in turn. It used to check a random 80 and skip the rest.
+- Setup and repair: a Jellyfin that is slow to answer after switching to run as you is given 30 seconds before its service is put back. When the service is put back, the copy run as you is closed first, so the two don't fight over the same folder. The same for Sonarr, Radarr and Prowlarr.
+- Settings: an action that takes a while (saving folders, signing in, Find again) no longer draws Settings over the page you have moved to.
+- Settings on a phone or browser: the reading folder shows what's in it and says it is set on the PC, instead of controls that did nothing.
 
 ## 0.20.2 (2026-11-12)
 - Fixed for good: picking Dubbed, or English in the player's audio menu, really plays English now. Jellyfin was ignoring the choice and played the file's first track (Japanese), and Chillarr never told it which copy of the file it meant. VLC never had this problem because it picks the track itself.

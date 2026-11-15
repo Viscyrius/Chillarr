@@ -194,21 +194,30 @@ pub fn keep_mask(list: &[(Option<f64>, Option<i64>)], backing: Option<f64>) -> V
         }
     }
     // The newest few: one uploaded long before the chapters just under it is
-    // an old chapter under a new number.
-    if !same_day {
-        for _ in 0..3 {
-            let Some(&(n, Some(d))) = trusted.last() else { break };
-            if backed(n) {
-                break;
-            }
-            let below: Vec<i64> = trusted.iter().rev().skip(1).take(5).filter_map(|c| c.1).collect();
-            match median(below) {
-                Some(m) if d < m - 30 * DAY_MS => {
-                    trusted.pop();
-                }
-                _ => break,
-            }
+    // an old chapter under a new number. One with no date to judge (or on a
+    // list where every date is the same day) is a stray when it jumps more
+    // than 2 past a steady run: 1..120 then an undated 125 was trusted, and
+    // 121..124 were never fetched. A real next chapter (121, or 122 after a
+    // skipped one) still counts.
+    for _ in 0..3 {
+        let Some(&(n, d)) = trusted.last() else { break };
+        if backed(n) {
+            break;
         }
+        let under: Vec<f64> = trusted.iter().rev().skip(1).take(6).map(|c| c.0).collect();
+        let steady = under.len() >= 6 && under.windows(2).all(|w| w[0] - w[1] <= 1.0 + 1e-9);
+        let jump = under.first().is_some_and(|p| n - p > 2.0 + 1e-9);
+        let stray = match d {
+            Some(d) if !same_day => {
+                let below: Vec<i64> = trusted.iter().rev().skip(1).take(5).filter_map(|c| c.1).collect();
+                median(below).is_some_and(|m| d < m - 30 * DAY_MS)
+            }
+            _ => jump && steady,
+        };
+        if !stray {
+            break;
+        }
+        trusted.pop();
     }
     let ok: Vec<f64> = trusted.into_iter().map(|c| c.0).collect();
     list.iter().map(|(n, _)| n.is_none_or(|n| ok.contains(&n))).collect()
@@ -485,6 +494,27 @@ mod tests {
         let mut l = weekly(1, 120, NOV_2026 - 120 * 7 * DAY);
         l.push((Some(121.0), Some(NOV_2026 - 100 * 7 * DAY)));
         assert_eq!(trusted_top(&l, None), Some(120.0));
+    }
+
+    #[test]
+    fn undated_jump_near_the_top_is_dropped() {
+        let mut l = weekly(1, 120, NOV_2026 - 120 * 7 * DAY);
+        l.push((Some(125.0), None));
+        assert_eq!(trusted_top(&l, None), Some(120.0), "121..124 must still be fetched");
+        assert_eq!(trusted_top(&l, Some(125.0)), Some(125.0), "another copy backs it");
+        let mut next = weekly(1, 120, NOV_2026 - 120 * 7 * DAY);
+        next.push((Some(121.0), None));
+        assert_eq!(trusted_top(&next, None), Some(121.0), "the real next chapter, not dated yet");
+    }
+
+    #[test]
+    fn same_day_jump_near_the_top_is_dropped() {
+        let mut l: Vec<_> = (1..=120).map(|n| (Some(n as f64), Some(NOV_2026))).collect();
+        l.push((Some(125.0), Some(NOV_2026)));
+        assert_eq!(trusted_top(&l, None), Some(120.0));
+        let mut skip: Vec<_> = (1..=120).map(|n| (Some(n as f64), Some(NOV_2026))).collect();
+        skip.push((Some(122.0), Some(NOV_2026)));
+        assert_eq!(trusted_top(&skip, None), Some(122.0), "one skipped chapter is normal");
     }
 
     #[test]

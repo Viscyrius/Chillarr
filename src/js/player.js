@@ -325,7 +325,8 @@ async function showSub(index) {
 /* Subtitle timing. Every track is checked against the film's audio once
    (subsync.rs): a file beside the video is fixed on disk for good, a track
    inside the video is moved here. G / H (or - / + in the menu) move it by hand. */
-const shiftKey = (s) => `${session?.tile.jf_id}|${s.path || `stream${s.index}`}`;
+// A track inside the video by which of its own it is (`track`): its index moves when a subtitle file is added.
+const shiftKey = (s) => `${session?.tile.jf_id}|${s.path || (s.track != null ? `sub${s.track}` : `stream${s.index}`)}`;
 function shifts() {
   try { return JSON.parse(localStorage.getItem("chillarr-sub-shift") || "{}"); } catch (e) { return {}; }
 }
@@ -592,7 +593,11 @@ async function load(tile, playlist, startAt, opts = {}) {
   try {
     // `track`: Jellyfin's numbers just moved (a night copy arrived), so the old one means nothing.
     info = await invoke("media_play", { id: tile.jf_id, start: startAt || 0, audio: opts.track != null ? null : audio, subtitle, codecs: videoCodecs() });
-    if (opts.track != null && audio != null) audio = info.audio.find((a) => a.track === opts.track)?.index ?? null;
+    if (opts.track != null && audio != null) {
+      audio = info.audio.find((a) => a.track === opts.track)?.index ?? null;
+      // That was asked with no voice (the old number meant nothing): ask again with the one it is now.
+      if (audio != null && seq === loadSeq) return load(tile, playlist, startAt, { ...opts, track: null, audio });
+    }
   } catch (e) {
     if (seq !== loadSeq) return;
     // Watch now: Jellyfin reads the download again for every ask, and can be slow to.
@@ -1216,7 +1221,9 @@ async function addSub(s, f, lang) {
   saveSubPref({ lang });
   toast("Subtitles added.");
   report("stop");
-  load(s.tile, s.playlist, now(), { audio: s.audio, preferExternal: lang });
+  // The voice by which of the file's own it is: Jellyfin renumbers every
+  // track when a file is added, and the old index played the wrong voice.
+  load(s.tile, s.playlist, now(), { audio: s.audio, track: s.audio != null ? trackOf(s.info, s.audio) : null, preferExternal: lang });
   return true;
 }
 

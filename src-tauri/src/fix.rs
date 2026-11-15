@@ -1117,8 +1117,25 @@ async fn jellyfin_as_user_step(app: &AppHandle, rep: &mut FixReport) {
     }
     let webdir = crate::jfweb::prepare(app, &exe).await.map(|(d, _)| d);
     let started = procs::start_jellyfin(&exe, webdir.as_deref()).is_ok() && procs::wait_until(&cfg.base_url, WAIT_ARR_SECS).await;
-    let answering = started && crate::jellyfin::Jf::new(&cfg.base_url, "chillarr-check", None).public_info().await.is_ok();
+    // Asked for up to 30 s: a first start after the switch can be slow to answer,
+    // and one try that missed used to put the service back on a working Jellyfin.
+    let mut answering = false;
+    if started {
+        let j = crate::jellyfin::Jf::new(&cfg.base_url, "chillarr-check", None);
+        for _ in 0..15 {
+            if j.public_info().await.is_ok() {
+                answering = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        }
+    }
     if !answering {
+        // The copy run as the user goes first: the service started beside it
+        // would clash on the same port and data folder.
+        if let Some(n) = exe.file_name().map(|n| n.to_string_lossy().to_string()) {
+            tokio::task::spawn_blocking(move || procs::force_close(&n)).await.ok();
+        }
         // The service comes back, and the user's write access to its data
         // folder goes: a service loading a folder the user can change would
         // run whatever the user's programs put there.
@@ -1222,6 +1239,14 @@ async fn run_as_user_step(app: &AppHandle, rep: &mut FixReport) {
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
         if !up {
+            // The copy run as the user goes first, so the service isn't started beside it.
+            let n = name.to_string();
+            tokio::task::spawn_blocking(move || {
+                procs::force_close(&format!("{n}.exe"));
+                procs::force_close(&format!("{n}.Console.exe"));
+            })
+            .await
+            .ok();
             // Put the service back so the app isn't left down after a reboot.
             let params = format!("{}\n{}", crate::imports::remove_grant_line(&data, &account), crate::imports::revert_command(&svc));
             let _ = tokio::task::spawn_blocking(move || procs::run_elevated(&params)).await;

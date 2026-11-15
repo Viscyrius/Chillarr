@@ -156,8 +156,26 @@ async fn yours(app: &AppHandle) -> Yours {
 }
 
 /// TVmaze's show for a TVDB id, with its next and previous episodes, kept a while.
+/// TVmaze's answers by TVDB id, kept for TVMAZE_LIFE.
+static SEEN: Mutex<Option<HashMap<i64, (Instant, Option<Value>)>>> = Mutex::new(None);
+
+/// TVmaze's answer for a show is still kept: asking costs nothing.
+fn tvmaze_kept(tvdb: i64) -> bool {
+    SEEN.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|m| m.get(&tvdb)).is_some_and(|(at, _)| at.elapsed() < TVMAZE_LIFE)
+}
+
+/// Which shows off the calendar to look up this time: never an ended one,
+/// every one already kept (free), and at most `limit` new asks, in id order
+/// so the next round goes on where this one stopped. It used to be a random
+/// 80 of them (a set's order), so some shows were never checked.
+pub fn lookup_order(ids: &HashSet<i64>, ended: &HashSet<i64>, kept: impl Fn(i64) -> bool, limit: usize) -> Vec<i64> {
+    let mut all: Vec<i64> = ids.iter().copied().filter(|id| !ended.contains(id)).collect();
+    all.sort_unstable();
+    let (have, ask): (Vec<i64>, Vec<i64>) = all.into_iter().partition(|id| kept(*id));
+    have.into_iter().chain(ask.into_iter().take(limit)).collect()
+}
+
 async fn tvmaze(tvdb: i64) -> Option<Value> {
-    static SEEN: Mutex<Option<HashMap<i64, (Instant, Option<Value>)>>> = Mutex::new(None);
     if let Some((at, v)) = SEEN.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).get(&tvdb) {
         if at.elapsed() < TVMAZE_LIFE {
             return v.clone();
@@ -244,7 +262,9 @@ pub async fn list(app: &AppHandle) -> Result<Vec<WeekShow>, String> {
         out.push(WeekShow { tile: tile_for(id, tiles::from_sonarr(s)), air, aired, anime, episode: ep_label(&ep), episode_title: clean_title(ep["title"].as_str()), between: false });
     }
     // The rest from TVmaze, a few at a time.
-    let rest: Vec<i64> = y.tvdb.iter().copied().filter(|id| !done.contains(id)).take(80).collect();
+    let ended: HashSet<i64> = all.iter().filter(|s| s["status"] == "ended").filter_map(|s| s["tvdbId"].as_i64()).collect();
+    let open: HashSet<i64> = y.tvdb.iter().copied().filter(|id| !done.contains(id)).collect();
+    let rest = lookup_order(&open, &ended, tvmaze_kept, 80);
     let gate = std::sync::Arc::new(tokio::sync::Semaphore::new(6));
     let mut set = tokio::task::JoinSet::new();
     for id in rest {
@@ -288,6 +308,17 @@ pub async fn list(app: &AppHandle) -> Result<Vec<WeekShow>, String> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn off_calendar_lookups_skip_ended_and_go_in_order() {
+        let ids: HashSet<i64> = (1..=200).collect();
+        let ended: HashSet<i64> = [3, 4].into();
+        let kept = |id: i64| id > 150;
+        let order = lookup_order(&ids, &ended, kept, 80);
+        assert!(!order.contains(&3) && !order.contains(&4));
+        assert_eq!(order.len(), 50 + 80, "every kept one, plus 80 asks");
+        assert_eq!(&order[50..53], &[1, 2, 5], "the asks in id order, the same every time");
+    }
 
     fn ep(tvdb: i64, when: &str) -> Value {
         json!({ "airDateUtc": when, "series": { "tvdbId": tvdb, "title": format!("S{tvdb}") } })

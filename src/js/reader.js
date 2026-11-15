@@ -62,7 +62,7 @@ export async function openReader(key, chapter, onClose = null) {
   r.comic = false;
   load(opened, root);
   // Read Party: where this reader is, and how a party moves it.
-  attachReader({ where: partyWhere, go: partyGo });
+  attachReader({ where: partyWhere, go: partyGo, key: () => r?.key ?? null });
 }
 
 /** A comic from Books (read_book_open's "comic"): its pages here, as one

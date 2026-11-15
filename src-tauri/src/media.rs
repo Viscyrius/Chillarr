@@ -1550,6 +1550,9 @@ pub async fn play(app: &AppHandle, jf_id: &str, start: f64, audio_index: Option<
                 "external": s["IsExternal"],
                 // Which file it is, since Jellyfin renumbers tracks when one is added.
                 "path": s["Path"],
+                // A track inside the video: which of the video's own it is, for
+                // the same reason (its index moves when a file is added).
+                "track": crate::jellyfin::embedded_sub_track(&streams, index),
                 "burn": !text,
                 "url": text.then(|| format!("{}/Videos/{jf_id}/{source_id}/Subtitles/{index}/0/Stream.vtt?api_key={token}", j.base)),
                 // The original styled file, drawn by the player itself like VLC does.

@@ -534,7 +534,11 @@
     let data;
     try { data = body ? JSON.parse(body) : null; }
     catch (e) { throw r.ok ? "Chillarr sent something it couldn't read." : `Chillarr answered ${r.status}.`; }
-    if (r.ok) return data;
+    if (r.ok) {
+      // The PIN was typed: the event stream (refused while locked) opens now.
+      if (cmd === "web_unlock") reopenStream();
+      return data;
+    }
     // A command's own error comes back as the string Tauri would have rejected with.
     throw (data && data.error) || (r.status === 413 ? "That's too much to send." : `Chillarr answered ${r.status}.`);
   }
@@ -560,7 +564,8 @@
     live = true;
     openStream();
   }
-  const again = (ms) => setTimeout(() => { base(true).catch(() => {}); openStream(); }, ms);
+  let againT = 0;
+  const again = (ms) => { clearTimeout(againT); againT = setTimeout(() => { againT = 0; base(true).catch(() => {}); openStream(); }, ms); };
   async function openStream() {
     const s = server();
     if (location.protocol === "https:" || !s) { live = false; return; }
@@ -585,8 +590,21 @@
       es.onerror = null;
       // Twice in a row: maybe the login was refused. A call says so (a 401 goes to the sign-in).
       if (++closes === 2) invoke("web_viewer").catch(() => {});
-      again(3000);
+      // Refused again and again (a profile waiting for its PIN): ask less
+      // often. Typing the PIN opens it at once (reopenStream).
+      again(closes > 3 ? 15000 : 3000);
     };
+  }
+
+  /** Closes the stream and opens it again now (after the PIN was typed). */
+  function reopenStream() {
+    closes = 0;
+    if (!live) return;
+    // A retry already waiting would open a second stream beside this one.
+    clearTimeout(againT);
+    againT = 0;
+    if (stream) { stream.onerror = null; stream.close(); }
+    openStream();
   }
 
   function listen(event, cb) {

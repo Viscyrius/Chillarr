@@ -67,9 +67,31 @@ pub fn device_profile_for(codecs: &[String]) -> Value {
             { "Format": "pgssub", "Method": "Encode" },
             { "Format": "dvdsub", "Method": "Encode" }
         ],
-        "CodecProfiles": [],
+        // The web view can't switch audio tracks in a file it plays as-is (no
+        // `audioTracks` in Chromium/WebView2), so a dual-audio MP4 played its
+        // first voice whatever was picked. With this, a voice other than the
+        // file's default is streamed with that voice instead. jellyfin-web adds
+        // the same rule for browsers without `audioTracks`.
+        "CodecProfiles": [
+            { "Type": "VideoAudio", "Conditions": [
+                { "Condition": "Equals", "Property": "IsSecondaryAudio", "Value": "false", "IsRequired": false }
+            ] }
+        ],
         "ContainerProfiles": []
     })
+}
+
+/// A subtitle track inside the video, as which of the video's own subtitle
+/// tracks it is (0, 1, ...). Jellyfin's index for it moves by one when a
+/// subtitle file is added beside the video, so timing kept under the index
+/// landed on another track. None for a file beside the video.
+pub fn embedded_sub_track(streams: &[Value], index: i64) -> Option<usize> {
+    let own = |s: &&Value| s["Type"] == "Subtitle" && s["IsExternal"] != true;
+    let me = streams.iter().find(|s| s["Index"] == index)?;
+    if !own(&me) {
+        return None;
+    }
+    streams.iter().filter(own).position(|s| s["Index"] == index)
 }
 
 /// The most a stream may use when nothing says less.
@@ -613,6 +635,26 @@ mod tests {
         let plain = device_profile_for(&[]);
         assert_eq!(plain["TranscodingProfiles"][0]["VideoCodec"], "h264");
         assert_eq!(plain["TranscodingProfiles"][0]["Container"], "ts", "an old TV keeps what it plays");
+    }
+
+    #[test]
+    fn a_picked_second_voice_is_never_played_as_is() {
+        let p = device_profile();
+        let c = &p["CodecProfiles"][0];
+        assert_eq!(c["Type"], "VideoAudio");
+        assert!(c.get("Codec").is_none(), "every audio codec: mp3 plays as-is too");
+        assert_eq!(c["Conditions"][0], json!({ "Condition": "Equals", "Property": "IsSecondaryAudio", "Value": "false", "IsRequired": false }));
+    }
+
+    #[test]
+    fn a_track_inside_the_video_keeps_its_number_when_a_file_is_added() {
+        let before = vec![json!({ "Index": 0, "Type": "Video" }), json!({ "Index": 1, "Type": "Audio" }), json!({ "Index": 2, "Type": "Subtitle" }), json!({ "Index": 3, "Type": "Subtitle" })];
+        // Jellyfin lists an added file first and moves the rest up by one.
+        let after = vec![json!({ "Index": 0, "Type": "Subtitle", "IsExternal": true }), json!({ "Index": 1, "Type": "Video" }), json!({ "Index": 2, "Type": "Audio" }), json!({ "Index": 3, "Type": "Subtitle" }), json!({ "Index": 4, "Type": "Subtitle" })];
+        assert_eq!(embedded_sub_track(&before, 3), Some(1));
+        assert_eq!(embedded_sub_track(&after, 4), Some(1));
+        assert_eq!(embedded_sub_track(&after, 0), None, "a file beside the video");
+        assert_eq!(embedded_sub_track(&after, 9), None);
     }
 
     #[test]

@@ -365,7 +365,10 @@ pub async fn sync(app: &AppHandle, j: &Jf, id: &str, index: i64, cues: Vec<(f64,
     let stream = item["MediaSources"][0]["MediaStreams"].as_array().and_then(|s| s.iter().find(|s| s["Index"] == index && s["Type"] == "Subtitle")).cloned().ok_or("no such subtitle track")?;
     let external = stream["IsExternal"].as_bool().unwrap_or(false);
     let file = stream["Path"].as_str().map(PathBuf::from).filter(|p| external && p.is_file() && kind_of(p).is_some());
-    let key = format!("{}#{}", stamp(&video), file.as_deref().map_or(format!("stream{index}"), stamp));
+    // A track inside the video by which of its own it is: its index moves when a file is added.
+    let streams = item["MediaSources"][0]["MediaStreams"].as_array().cloned().unwrap_or_default();
+    let inside = crate::jellyfin::embedded_sub_track(&streams, index).map_or(format!("stream{index}"), |t| format!("sub{t}"));
+    let key = format!("{}#{}", stamp(&video), file.as_deref().map_or(inside, stamp));
     if let Some(f) = memo_get(app, &key) {
         return Ok(Fit { written: false, ..f });
     }

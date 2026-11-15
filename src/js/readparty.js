@@ -30,8 +30,14 @@ let target = null;
 
 export const partyIcon = () => icon(PEOPLE);
 export const inParty = () => !!party;
-/** Follow me is on and this profile isn't the host: the host turns the pages. */
-export const following = () => !!(party && party.mode === "follow" && !party.host);
+/** Follow me is on, this profile isn't the host, and the open reader shows
+ *  the party's series: the host turns its pages. Another series is your own
+ *  (it used to freeze page turns in every series). */
+export const following = () => {
+  if (!(party && party.mode === "follow" && !party.host)) return false;
+  const key = hooks && hooks.key ? hooks.key() : null;
+  return !key || key === party.key;
+};
 /** May this reader's moves move the party? */
 const leads = () => !!party && (party.mode === "together" || party.host);
 

@@ -44,6 +44,18 @@ export function stopSettings() {
   unsub = null;
 }
 
+/** Settings drawn again after something slow finished, only while that
+    section is still on screen: it used to be drawn over whatever page (or
+    search) you had moved to meanwhile. */
+function redrawIf(section) {
+  const norm = (x) => (x === "storage" ? "library" : x);
+  const h = location.hash.replace(/^#/, "");
+  if (!h.startsWith("settings") || !$("#view .settings")) return;
+  const now = h.split("/")[1];
+  if (now && norm(now) !== norm(section)) return;
+  renderSettings($("#view"), section);
+}
+
 export function renderSettings(view, section = "system") {
   // Library and Storage were two pages; old links open the merged one.
   if (section === "storage") section = "library";
@@ -341,6 +353,18 @@ function folderCards(stats, disks) {
 /** Clean up watched, Delete watched now, and what takes the most room. */
 /** Manga, manhwa and books: where they go, and deleting chapters once read. */
 function readingBox() {
+  // On the web the folder and clean-up can't be changed (only the PC has
+  // them): what's in the folder still shows, with a note, not dead controls.
+  if (WEB) {
+    const inside = el("div", { class: "rs-inside" });
+    const room = el("div", { class: "rs-room" });
+    drawReadingRoom(inside, room);
+    return el("div", {}, subhead("Reading"),
+      el("div", { class: "box" },
+        el("div", { class: "opt" }, el("span", {}, el("b", { text: "Reading folder" }), el("small", { text: "The reading folder and when chapters are deleted are set in Chillarr on the PC." }))),
+        inside),
+      room);
+  }
   const path = el("p", { class: "path selectable", text: "..." });
   invoke("read_folder").then((p) => (path.textContent = p || "Picked next to your movies the first time you download something to read.")).catch(() => {});
   const change = el("button", { class: "btn small ghost" }, icon(ICON.folder), "Change");
@@ -419,7 +443,7 @@ async function drawReadingRoom(inside, room) {
   ].sort((a, b) => b.bytes - a.bytes);
   if (!items.length) { room.replaceChildren(); return; }
   const biggest = items[0].bytes || 1;
-  const redraw = () => { const r = $("#view"); if (r) renderSettings(r, "library"); };
+  const redraw = () => redrawIf("library");
   const list = el("ul", { class: "st-list" }, items.map(({ kind, x, bytes }) => {
     const del = el("button", { class: "btn small ghost danger" }, "Delete");
     del.addEventListener("click", async () => {
@@ -462,7 +486,7 @@ async function deleteMany(o, items, onEach) {
   const freed = items.reduce((n, i) => n + i.size, 0);
   if (failed.length) toast(`Couldn't delete ${failed.length}: ${failed.join("; ")}`, true);
   else toast(items.length === 1 ? `Deleted ${items[0].tile.title}. Freed ${size(freed)}.` : `Deleted ${items.length} titles. Freed ${size(freed)}.`);
-  if (failed.length) renderSettings($("#view"), "library");
+  if (failed.length) redrawIf("library");
 }
 
 function storageParts(o) {
@@ -547,7 +571,7 @@ function changeFolders(f) {
   const err = el("p", { class: "err" });
   save.addEventListener("click", async () => {
     save.disabled = true; err.textContent = "";
-    try { await invoke("setup_set_folders", { movies, series }); toast("Folders saved. Jellyfin is scanning them."); renderSettings($("#view"), "library"); }
+    try { await invoke("setup_set_folders", { movies, series }); toast("Folders saved. Jellyfin is scanning them."); redrawIf("library"); }
     catch (e) { err.textContent = String(e); }
     save.disabled = false;
   });
@@ -608,7 +632,7 @@ async function account(panel) {
   if (ms.signed_in) {
     panel.append(el("div", { class: "box" },
       el("div", { class: "opt" }, el("span", {}, el("b", { text: `Signed in as ${ms.user}` })),
-        el("button", { class: "btn small ghost", onclick: async () => { await invoke("media_sign_out"); renderSettings($("#view"), "account"); window.dispatchEvent(new Event("chillarr:refresh")); } }, "Sign out")),
+        el("button", { class: "btn small ghost", onclick: async () => { await invoke("media_sign_out"); redrawIf("account"); window.dispatchEvent(new Event("chillarr:refresh")); } }, "Sign out")),
       el("div", { class: "opt" }, el("span", {}, el("b", { text: "Profiles" }),
         el("small", { text: "Everyone gets their own Continue watching and My List. Add a PIN to keep one private." })),
         el("button", { class: "btn small ghost", onclick: () => window.dispatchEvent(new Event("chillarr:profiles")) }, "Manage profiles"))));
@@ -623,7 +647,7 @@ async function account(panel) {
       try {
         await invoke("media_connect", { user: user.value.trim(), password: pass.value });
         toast(loginSummary(await invoke("apps_set_login", { user: user.value.trim(), password: pass.value }).catch(() => []), "Jellyfin is ready."));
-        renderSettings($("#view"), "account");
+        redrawIf("account");
         window.dispatchEvent(new Event("chillarr:refresh"));
         // Still locked (a PIN, or the main profile's password): ask who's watching.
         startProfiles().catch(() => {});
@@ -762,7 +786,7 @@ async function subtitleBlock(name) {
     return box;
   }
   const open = el("button", { class: "btn small ghost", onclick: () => {
-    box.replaceChildren(box.firstChild, subtitleForm(name, st.installed, () => renderSettings($("#view"), "account")));
+    box.replaceChildren(box.firstChild, subtitleForm(name, st.installed, () => redrawIf("account")));
   } }, "Set it up");
   box.append(el("div", { class: "box" }, el("div", { class: "opt" }, el("span", {}, el("small", { text: SUBS_PITCH })), open)));
   return box;
@@ -803,7 +827,7 @@ async function apps(panel) {
         el("label", { class: "field" }, el("small", { text: "Port" }), port),
         el("label", { class: "field" }, el("small", { text: "Manage" }), managed));
     })),
-    el("div", { style: "margin-top:18px" }, el("button", { class: "btn ghost", onclick: async () => { await invoke("rediscover"); renderSettings($("#view"), "apps"); toast("Looked for every app again."); } }, "Find again")));
+    el("div", { style: "margin-top:18px" }, el("button", { class: "btn ghost", onclick: async () => { await invoke("rediscover"); redrawIf("apps"); toast("Looked for every app again."); } }, "Find again")));
 }
 
 /* ---------- General ---------- */
