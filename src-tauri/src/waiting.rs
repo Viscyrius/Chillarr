@@ -1056,28 +1056,53 @@ async fn grabbed_by(a: &crate::arr::Arr, field: &str, download_id: &str) -> Opti
     None
 }
 
+/// Jellyfin's API key for the arr links (Dashboard > API Keys shows it as
+/// "Chillarr"), made when it's missing.
+async fn chillarr_key(j: &crate::jellyfin::Jf) -> Option<String> {
+    let find = |v: &Value| v["Items"].as_array().and_then(|i| i.iter().find(|k| k["AppName"] == "Chillarr")).and_then(|k| k["AccessToken"].as_str()).map(String::from);
+    if let Some(k) = j.get_json("/Auth/Keys").await.ok().as_ref().and_then(find) {
+        return Some(k);
+    }
+    j.post_json("/Auth/Keys?app=Chillarr", &json!({})).await.ok()?;
+    j.get_json("/Auth/Keys").await.ok().as_ref().and_then(find)
+}
+
 /// Has Radarr and Sonarr tell Jellyfin the moment they import something, so
 /// it shows up in seconds rather than at the next check. Adds the connection
-/// only where there's none; an existing one is left alone.
+/// where there's none. Our own one ("Jellyfin (Chillarr)") gets the current
+/// key every start: if Jellyfin's "Chillarr" key is gone, the old one is
+/// refused ("Invalid token"), every import goes unannounced, and finished
+/// episodes stay "Not downloaded" until Jellyfin's next full scan. One the
+/// user made themselves is left alone.
 async fn link_jellyfin(app: &AppHandle) {
     let Some(j) = jf_admin(app).filter(|j| j.user_id.is_some()) else { return };
     let mut key: Option<String> = None;
     for (owner, name) in [(AppId::Radarr, "Radarr"), (AppId::Sonarr, "Sonarr")] {
         let Some(a) = arr(app, owner) else { continue };
         let Ok(existing) = a.list("notification").await else { continue };
-        if existing.iter().any(|n| n["implementation"] == "MediaBrowser") {
+        let ours = existing.iter().find(|n| n["implementation"] == "MediaBrowser" && n["name"] == "Jellyfin (Chillarr)").cloned();
+        if ours.is_none() && existing.iter().any(|n| n["implementation"] == "MediaBrowser") {
+            continue;
+        }
+        if key.is_none() {
+            key = chillarr_key(&j).await;
+        }
+        let Some(k) = key.clone() else { return };
+        if let Some(mut n) = ours {
+            // The arr hands keys back masked, so there's no telling a stale one
+            // from a good one: write the current key back every time.
+            let Some(id) = n["id"].as_i64() else { continue };
+            for f in n["fields"].as_array_mut().into_iter().flatten() {
+                if f["name"] == "apiKey" {
+                    f["value"] = json!(k);
+                }
+            }
+            if let Err(e) = a.update(&format!("notification/{id}"), &n).await {
+                log(app, Level::Amber, format!("Couldn't refresh {name}'s link to Jellyfin: {e}"));
+            }
             continue;
         }
         let Some(mut n) = a.list("notification/schema").await.unwrap_or_default().into_iter().find(|n| n["implementation"] == "MediaBrowser") else { continue };
-        if key.is_none() {
-            // A Jellyfin API key just for this (Dashboard > API Keys shows it as "Chillarr").
-            let find = |v: &Value| v["Items"].as_array().and_then(|i| i.iter().find(|k| k["AppName"] == "Chillarr")).and_then(|k| k["AccessToken"].as_str()).map(String::from);
-            key = j.get_json("/Auth/Keys").await.ok().as_ref().and_then(find);
-            if key.is_none() && j.post_json("/Auth/Keys?app=Chillarr", &json!({})).await.is_ok() {
-                key = j.get_json("/Auth/Keys").await.ok().as_ref().and_then(find);
-            }
-        }
-        let Some(k) = key.clone() else { return };
         let port: i64 = j.base.rsplit(':').next().and_then(|p| p.trim_end_matches('/').parse().ok()).unwrap_or(8096);
         for f in n["fields"].as_array_mut().into_iter().flatten() {
             match f["name"].as_str() {
