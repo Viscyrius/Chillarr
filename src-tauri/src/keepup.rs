@@ -108,6 +108,11 @@ async fn round(app: &AppHandle) {
             tell_new(app, f).await;
         }
     }
+    // A chapter written during a crash, or cut off, is got again before
+    // anyone opens it. Each file is looked at once, so this is cheap after the first.
+    if round % 4 == 0 {
+        read::check_downloads(app).await;
+    }
     for f in &list {
         let due = with_due(|d| d.behind.get(&f.key).is_none_or(|at| Instant::now() >= *at));
         if due {

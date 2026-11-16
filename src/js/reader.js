@@ -141,6 +141,7 @@ function build(onClose) {
   const top = el("div", { class: "rd-bar rd-top" },
     el("button", { class: "rd-btn", "aria-label": "Close", onclick: close }, icon(ICON.left)),
     title, hd, el("div", { class: "rd-modes", role: "group", "aria-label": "Reading direction" }, modeBtns), modeOne, zoomBox, count, mouseBtn,
+    el("button", { class: "rd-btn rd-reload", "aria-label": "Reload pages", title: "Reload pages (R)", onclick: () => reloadPages(true) }, icon(RELOAD)),
     el("button", { class: "rd-btn rp-btn rd-party", "aria-label": "Read together", title: "Read together", onclick: () => partyPanel() }, partyIcon()),
     el("button", { class: "rd-btn rd-full", "aria-label": "Full screen", title: "Full screen (F)", onclick: () => toggleFull() }, icon(FULL)));
   const prevCh = el("button", { class: "rd-btn rd-ch", onclick: () => jumpChapter(-1), "aria-label": "Previous chapter" }, "Previous", el("span", { class: "rd-ch-long" }, " chapter"));
@@ -182,6 +183,8 @@ function close() {
   r.endIo?.forEach((o) => o.disconnect());
   clearTimeout(r.hideT);
   clearTimeout(r.whereT);
+  clearTimeout(r.healT);
+  clearTimeout(r.repairT);
   window.removeEventListener("resize", onResize);
   const { box, onClose: done } = r;
   r = null;
@@ -197,7 +200,13 @@ function load(o, root) {
   const first = !r.o;
   r.o = o;
   r.url = (i) => `${root}/read/${o.ticket}/${i}`;
-  r.title.replaceChildren(el("strong", { text: o.title }), el("span", { text: chName(o.chapter) }));
+  // The chapter under the title opens the list of chapters (a comic is one book: no list).
+  const chLine = r.comic
+    ? el("span", { text: chName(o.chapter) })
+    : el("button", { class: "rd-chpick", type: "button", "aria-haspopup": "listbox", "aria-expanded": "false", "aria-label": `${chName(o.chapter) || "Chapter"}: pick another chapter`, onclick: (e) => { e.stopPropagation(); toggleMenu(); } },
+      el("span", { text: chName(o.chapter) || "Chapters" }), el("i", { "aria-hidden": "true", text: "▾" }));
+  r.title.replaceChildren(el("strong", { text: o.title }), chLine);
+  closeMenu();
   flashWhere();
   r.hd.hidden = !o.sharp;
   r.slider.max = String(Math.max(0, o.pages.length - 1));
@@ -211,6 +220,176 @@ function load(o, root) {
   if (first) setMode(o.mode, false, o.page);
   else fade(() => setMode(o.mode, false, o.page));
   showBars();
+  paintRepair();
+}
+
+/**
+ * A chapter whose download is damaged (pages of zeros from a crash, or cut
+ * off: Chapter 96, 2026-11-15) can never load, however often it's asked.
+ * Chillarr gets it again by itself (read.rs `repair`); this says so, looks
+ * every 10 seconds, and opens the good copy where you are once it's here.
+ */
+function paintRepair() {
+  if (!r) return;
+  r.repairEl?.remove();
+  r.repairEl = null;
+  clearTimeout(r.repairT);
+  const o = r.o;
+  if (!o.damaged || r.comic) return;
+  const n = o.damaged;
+  const text = el("span", { text: `${n} ${n === 1 ? "page" : "pages"} of this chapter came down damaged. Chillarr is getting it again, and it opens here by itself when it's ready.` });
+  const note = el("div", { class: "rd-repair", role: "status" }, text);
+  r.box.append(note);
+  r.repairEl = note;
+  const me = r;
+  let looks = 0;
+  const look = async () => {
+    if (r !== me || r.o !== o) return;
+    looks++;
+    try {
+      const fresh = await invoke("read_open", { key: r.key, chapter: o.chapter.id });
+      if (r !== me || r.o !== o) return;
+      if (!fresh.damaged) {
+        fresh.page = Math.min(r.page, fresh.pages.length - 1);
+        load(fresh, await bridgeBase());
+        toast("The chapter is fixed.");
+        return;
+      }
+    } catch (e) { /* still downloading: "isn't downloaded yet" */ }
+    // Ten minutes, then it stops looking and says where things stand.
+    if (looks < 60) me.repairT = setTimeout(look, 10000);
+    else text.textContent = "This chapter is still being got again. Open it later, or pick another copy on the series page (Change copy).";
+  };
+  me.repairT = setTimeout(look, 10000);
+}
+
+/* ---------- pages that didn't load ---------- */
+
+/**
+ * A new ticket for the open chapter. Tickets live in Chillarr's memory, so
+ * Chillarr restarting (an update, 2026-11-15) or 6 hours on one chapter ends
+ * them, and every page asked with the old one fails ("Open the chapter
+ * again"). A reader left open on a phone stayed broken until it was closed.
+ * One ask at a time; true when the pages now have a good address.
+ */
+function freshen() {
+  if (r.freshening) return r.freshening;
+  const me = r;
+  const o = r.o;
+  base = null;
+  const ask = r.comic ? invoke("read_book_open", { key: r.key }) : invoke("read_open", { key: r.key, chapter: o.chapter.id });
+  me.freshening = Promise.all([ask, bridgeBase()]).then(([n, root]) => {
+    // Closed, or on another chapter by now: nothing to mend.
+    if (r !== me || r.o !== o) return false;
+    if (!r.comic && n.pages.length !== o.pages.length) {
+      // The chapter's file changed under it (downloaded again): draw it anew where you are.
+      n.page = Math.min(r.page, n.pages.length - 1);
+      load(n, root);
+      return true;
+    }
+    o.ticket = n.ticket;
+    r.url = (i) => `${root}/read/${n.ticket}/${i}`;
+    return true;
+  }).catch((e) => { base = null; throw e; }).finally(() => { me.freshening = null; });
+  return me.freshening;
+}
+
+/**
+ * Asks again for the pages that haven't come. `manual` (the Reload button, R,
+ * or a tap on a page that says it didn't load) asks for every page not shown
+ * yet, from the start; the automatic try only for failed ones that still
+ * have tries left, so a page that is really broken can't loop.
+ */
+async function reloadPages(manual) {
+  if (!r?.o) return;
+  if (manual) { showBars(); toast("Loading the pages again..."); }
+  try {
+    if (!(await freshen())) return;
+  } catch (e) {
+    if (manual) toast(String(e), true);
+    return;
+  }
+  if (!r) return;
+  if (r.mode === "webtoon" && r.cells) {
+    for (const c of r.cells) {
+      const img = c.firstChild;
+      if (c.classList.contains("loaded") || !img) continue;
+      if (manual) img._tries = 0;
+      else if (!c.classList.contains("failed") || (img._tries || 0) > 5) continue;
+      img.removeAttribute("src");
+      c.classList.remove("failed");
+    }
+    // Watching again reports what is on screen now, which asks for those pages.
+    r.io.disconnect();
+    r.cells.forEach((c) => r.io.observe(c));
+  } else if (r.spread) {
+    const sp = r.spread;
+    for (const im of sp.querySelectorAll("img")) {
+      if (im.complete && im.naturalWidth) continue;
+      if (manual) im._tries = 0;
+      else if ((im._tries || 0) > 3) continue;
+      im.classList.remove("failed");
+      im.src = r.url(+im.dataset.i);
+    }
+    if (!sp.querySelector("img.failed")) sp.classList.remove("failed");
+  }
+}
+
+/** A page failed: a moment later, a new ticket and another try. */
+function autoHeal() {
+  if (!r || r.healT) return;
+  const me = r;
+  me.healT = setTimeout(() => { me.healT = 0; if (r === me) reloadPages(false); }, 2000);
+}
+
+/* ---------- the chapter list (tap the chapter under the title) ---------- */
+
+function closeMenu() {
+  if (!r || !r.menu) return;
+  r.menu.remove();
+  r.menu = null;
+  r.box.querySelector(".rd-chpick")?.setAttribute("aria-expanded", "false");
+  showBars();
+}
+
+/** Every chapter here, in order: the one open marked, read ones ticked. Pick one to open it. */
+async function toggleMenu() {
+  if (!r || r.comic) return;
+  if (r.menu) { closeMenu(); return; }
+  const me = r;
+  const o = r.o;
+  const list = el("div", { class: "rd-chlist", role: "listbox", "aria-label": "Chapters" }, el("p", { class: "rd-chnote", text: "Loading the chapters..." }));
+  const menu = el("div", { class: "rd-chmenu" }, list);
+  // Just under the top bar, however tall it is (it wraps on a phone).
+  const top = r.box.querySelector(".rd-top");
+  menu.style.top = `${(top ? top.offsetHeight : 56) + 8}px`;
+  r.box.append(menu);
+  r.menu = menu;
+  r.box.querySelector(".rd-chpick")?.setAttribute("aria-expanded", "true");
+  showBars();
+  let d;
+  try { d = await invoke("read_detail", { key: r.key }); }
+  catch (e) { if (me.menu === menu) list.replaceChildren(el("p", { class: "rd-chnote", text: String(e) })); return; }
+  if (r !== me || me.menu !== menu || r.o !== o) return;
+  const num = (c) => (c.number == null ? Infinity : c.number);
+  const chs = (d.chapters || []).filter((c) => c.downloaded || c.id === o.chapter.id).sort((a, b) => num(a) - num(b));
+  if (!chs.length) { list.replaceChildren(el("p", { class: "rd-chnote", text: "No other chapters are downloaded yet." })); return; }
+  let current = null;
+  const items = chs.map((c) => {
+    const on = c.id === o.chapter.id;
+    const label = c.number != null ? `Chapter ${c.number}` : c.name || "Chapter";
+    // The site's own name when it says more than the number.
+    const extra = c.number != null && c.name && !/^\s*(ch(apter)?\.?\s*)?[\d.]+\s*$/i.test(c.name) && c.name !== label ? c.name : "";
+    const b = el("button", { class: "rd-chitem" + (on ? " on" : "") + (c.read ? " read" : ""), type: "button", role: "option", "aria-selected": on ? "true" : "false",
+      onclick: (e) => { e.stopPropagation(); if (on) closeMenu(); else goChapter(c.id); } },
+      el("span", { class: "rd-chname" }, el("b", { text: label }), extra ? el("small", { text: extra }) : null),
+      el("span", { class: "rd-chstate", text: on ? "Reading" : c.read ? "✓ Read" : c.fresh ? "New" : "" }));
+    if (on) current = b;
+    return b;
+  });
+  list.replaceChildren(el("p", { class: "rd-chnote", text: `${chs.length} ${chs.length === 1 ? "chapter" : "chapters"} downloaded` }), ...items);
+  // The one you're on in the middle of the list, and ready for the arrow keys.
+  requestAnimationFrame(() => { if (current && me.menu === menu) { current.scrollIntoView({ block: "center" }); current.focus({ preventScroll: true }); } });
 }
 
 /** "Chapter 12" for a moment, so you know where you are. */
@@ -402,9 +581,10 @@ function drawScroll(page) {
     const img = el("img", { alt: `Page ${i + 1}`, decoding: "async", draggable: "false" });
     const cell = el("div", { class: "rd-cell", style: `padding-bottom:${pad}%`, dataset: { i: String(i) } }, img);
     img.addEventListener("load", () => { cell.classList.remove("failed"); cell.classList.add("loaded"); });
-    // A failed page is asked again when it comes back on screen, as it says
-    // (a dropped request on a phone left it broken until the chapter was reopened).
-    img.addEventListener("error", () => { cell.classList.add("failed"); img._tries = (img._tries || 0) + 1; img.removeAttribute("src"); });
+    // A failed page is asked again on its own a moment later, with a new
+    // ticket (autoHeal), and when it comes back on screen. A dropped request
+    // on a phone used to leave it broken until the chapter was reopened.
+    img.addEventListener("error", () => { cell.classList.add("failed"); img._tries = (img._tries || 0) + 1; img.removeAttribute("src"); autoHeal(); });
     return cell;
   });
   col.append(...imgs, endCard());
@@ -580,6 +760,11 @@ function goTo(page, force, dir) {
   const holder = r.stage.firstChild;
   const sp = el("div", { class: "rd-spread" + (spread.length === 2 ? " two" : "") },
     ...order.map((i) => el("img", { src: r.url(i), alt: `Page ${i + 1}`, draggable: "false", decoding: "async", dataset: { i: String(i) } })));
+  // A page that didn't come says so, and is asked again like a scrolled one.
+  for (const im of sp.children) {
+    im.addEventListener("load", () => { im.classList.remove("failed"); if (!sp.querySelector("img.failed")) sp.classList.remove("failed"); });
+    im.addEventListener("error", () => { im._tries = (im._tries || 0) + 1; im.classList.add("failed"); sp.classList.add("failed"); autoHeal(); });
+  }
   const old = r.spread;
   if (old) {
     // Lifted out where it stands, so the new one takes the middle under it.
@@ -644,10 +829,17 @@ function step(dir) {
 // then Previous could land in the wrong order.
 let jumping = false;
 async function jumpChapter(dir, toEnd = false) {
-  if (partyFollowing()) { partyNudge(); return; }
-  if (jumping) return;
+  if (!r) return;
   const id = dir > 0 ? r.o.next : r.o.prev;
   if (id == null) return;
+  return goChapter(id, toEnd);
+}
+
+/** Opens chapter `id` of this series in place (the next one, or one picked from the list). */
+async function goChapter(id, toEnd = false) {
+  if (partyFollowing()) { partyNudge(); return; }
+  if (jumping || !r) return;
+  closeMenu();
   jumping = true;
   saveNow();
   const was = r;
@@ -665,6 +857,10 @@ async function jumpChapter(dir, toEnd = false) {
 let dragged = false;
 function onStageClick(e) {
   if (dragged) { dragged = false; return; }
+  // A tap beside the open chapter list closes it, and does nothing else.
+  if (r.menu) { closeMenu(); return; }
+  // A page that says it didn't load: a tap on it tries again.
+  if (e.target.closest && e.target.closest(".rd-cell.failed, .rd-spread.failed")) { reloadPages(true); return; }
   flashWhere();
   if (r.mode === "webtoon") { toggleBars(); return; }
   // The reader's own width: the Read Party chat can take the right side.
@@ -717,6 +913,9 @@ const gap = (a, b) => Math.sqrt((a.clientX - b.clientX) * (a.clientX - b.clientX
 
 function onTouchStart(e) {
   if (!r) return;
+  // On the bars or the chapter list, a swipe scrolls them and a double tap
+  // presses twice: neither turns or zooms the page behind.
+  if (e.target && e.target.closest && e.target.closest(".rd-bar, .rd-chmenu")) { touch = null; pinch = null; return; }
   if (e.touches.length === 2) {
     const [a, b] = [e.touches[0], e.touches[1]];
     pinch = { d: gap(a, b) || 1, z: r.z, x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2, raf: 0, next: r.z };
@@ -766,6 +965,26 @@ function onKey(e) {
   const k = e.key || "";
   const code = e.keyCode;
   const manga = r.mode === "manga";
+  // A focused button (on the bars, or in the chapter list) takes its own
+  // Enter: showing the bars used to swallow it, so a keyboard or a TV
+  // remote's OK could never press one. Space still reads on (after a click a
+  // button keeps the focus, and Space is how people keep reading).
+  const press = k === "Enter" || code === 13;
+  if (press && e.target && e.target !== r.box && e.target.closest && e.target.closest("button, a, input, select")) return;
+  // The chapter list open: Back closes it, up and down move in it, Enter
+  // picks (each is a button); nothing turns a page behind it.
+  if (r.menu) {
+    if (k === "Escape" || k === "Backspace" || code === 461) { e.preventDefault(); closeMenu(); r.box.querySelector(".rd-chpick")?.focus(); return; }
+    if (k === "ArrowDown" || k === "ArrowUp" || code === 40 || code === 38) {
+      e.preventDefault();
+      const items = Array.prototype.slice.call(r.menu.querySelectorAll(".rd-chitem"));
+      const at = items.indexOf(document.activeElement);
+      const next = items[Math.max(0, Math.min(items.length - 1, at + (k === "ArrowDown" || code === 40 ? 1 : -1)))];
+      next?.focus();
+      next?.scrollIntoView({ block: "nearest" });
+    }
+    return;
+  }
   if (k === "Escape" || k === "Backspace" || code === 461 /* webOS Back */) { e.preventDefault(); close(); return; }
   if (e.target && e.target.tagName === "INPUT" && (k === "ArrowLeft" || k === "ArrowRight")) return;
   if (k === "+" || k === "=" || code === 107 || code === 187) { e.preventDefault(); zoomStep(1); showBars(); return; }
@@ -785,6 +1004,7 @@ function onKey(e) {
   else if (k === "Enter" || code === 13) { e.preventDefault(); toggleBars(); }
   if (k === "f" || k === "F" || code === 70) { e.preventDefault(); toggleFull(); }
   else if (k === "m" || k === "M" || code === 77) { e.preventDefault(); toggleMouse(); }
+  else if ((k === "r" || k === "R" || code === 82) && !e.ctrlKey && !e.metaKey) { e.preventDefault(); reloadPages(true); }
   // Reading keys (down, space, page turns) leave the bars away: Enter brings them.
 }
 
@@ -839,6 +1059,7 @@ function calmBars() {
 
 const FULL = "M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5";
 const MOUSE = "M12 3a6 6 0 0 0-6 6v6a6 6 0 0 0 12 0V9a6 6 0 0 0-6-6zM12 7v4";
+const RELOAD = "M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5";
 
 /** Hide the mouse while reading: off unless chosen, kept for next time. */
 function hideMouse() { return getPref("reader-hide-mouse") === "1"; }
@@ -880,7 +1101,8 @@ function showBars() {
   if (!r.box.classList.contains("bars")) r.shownAt = Date.now();
   r.box.classList.add("bars");
   clearTimeout(r.hideT);
-  r.hideT = setTimeout(() => r?.box.classList.remove("bars"), HIDE_BARS);
+  // Not while the chapter list is open: it hangs from the top bar.
+  r.hideT = setTimeout(() => { if (r && !r.menu) r.box.classList.remove("bars"); }, HIDE_BARS);
 }
 function toggleBars() {
   if (r.box.classList.contains("bars")) { clearTimeout(r.hideT); r.box.classList.remove("bars"); } else showBars();

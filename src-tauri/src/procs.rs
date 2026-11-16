@@ -402,15 +402,12 @@ pub fn ps_all(lines: &[String]) -> String {
     out
 }
 
-/// Whether a process with this exe name is running (no window, no console).
+/// Whether a process with this exe name is running. Read from one snapshot
+/// of the process list: it used to start tasklist.exe for every ask (around
+/// 100 ms and a new process each time), and closing an app asks up to 60
+/// times in a row.
 pub fn process_running(exe_name: &str) -> bool {
-    Command::new(sys32("tasklist.exe"))
-        .args(["/FI", &format!("IMAGENAME eq {exe_name}"), "/NH"])
-        .creation_flags(CREATE_NO_WINDOW)
-        .stdin(Stdio::null())
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).to_ascii_lowercase().contains(&exe_name.to_ascii_lowercase()))
-        .unwrap_or(false)
+    process_list().iter().any(|(_, _, n)| n.eq_ignore_ascii_case(exe_name))
 }
 
 /// Closes a program so it can be updated. qBittorrent saves its torrents'
@@ -647,5 +644,13 @@ mod tests {
     fn the_snapshot_sees_this_process() {
         let me = std::process::id();
         assert!(process_list().iter().any(|(pid, _, _)| *pid == me));
+    }
+
+    #[test]
+    fn running_is_read_without_starting_tasklist() {
+        let me = std::env::current_exe().unwrap().file_name().unwrap().to_string_lossy().to_string();
+        assert!(process_running(&me));
+        assert!(process_running(&me.to_uppercase()), "Windows names don't care about case");
+        assert!(!process_running("no-such-program-chillarr.exe"));
     }
 }

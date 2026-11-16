@@ -204,6 +204,42 @@ pub fn hide(dir: &Path, uid: &str, key: &str, now: i64) -> Result<(), String> {
     std::fs::write(&tmp, text).and_then(|_| std::fs::rename(&tmp, &path)).map_err(|e| format!("Couldn't save it: {e}"))
 }
 
+/// Two takings-off of one title as one: off for good wins, else the later.
+pub fn merge_off(have: Option<Option<i64>>, incoming: Option<i64>) -> Option<i64> {
+    match (have, incoming) {
+        (None, b) => b,
+        (Some(None), _) | (Some(Some(_)), None) => None,
+        (Some(Some(a)), Some(b)) => Some(a.max(b)),
+    }
+}
+
+/// Titles another copy took off Completed (a profile's export,
+/// profile_data.rs), added to this profile's. Returns how many changed.
+pub fn absorb_hidden(dir: &Path, uid: &str, incoming: &Hidden) -> Result<usize, String> {
+    let mut all = load_hidden(dir, uid);
+    let mut n = 0;
+    for (k, at) in incoming {
+        let ok = k.strip_prefix("tmdb:").or_else(|| k.strip_prefix("tvdb:")).is_some_and(|id| !id.is_empty() && id.len() <= 12 && id.bytes().all(|b| b.is_ascii_digit()));
+        if !ok {
+            continue;
+        }
+        let have = all.get(k).copied();
+        let next = merge_off(have, *at);
+        if have != Some(next) {
+            all.insert(k.clone(), next);
+            n += 1;
+        }
+    }
+    if n == 0 {
+        return Ok(0);
+    }
+    let path = hidden_file(dir, uid);
+    let tmp = path.with_extension("json.tmp");
+    let text = serde_json::to_string(&all).map_err(|e| e.to_string())?;
+    std::fs::write(&tmp, text).and_then(|_| std::fs::rename(&tmp, &path)).map_err(|e| format!("Couldn't save it: {e}"))?;
+    Ok(n)
+}
+
 /// `completed_remove`: off the watching profile's Completed.
 pub fn remove(app: &AppHandle, key: &str) -> Result<(), String> {
     let (Some(dir), Some(uid)) = (data_dir(app), active_user(app)) else { return Err("Sign in to Jellyfin first.".into()) };
@@ -427,6 +463,16 @@ mod tests {
 
     fn movie(title: &str, tmdb: Option<i64>, at: i64) -> MovieWatch {
         MovieWatch { title: title.into(), tmdb, anime: false, at }
+    }
+
+    #[test]
+    fn taken_off_for_good_stays_off_for_good() {
+        assert_eq!(merge_off(None, Some(5)), Some(5));
+        assert_eq!(merge_off(None, None), None);
+        assert_eq!(merge_off(Some(None), Some(9)), None, "an import never puts back a title taken off for good");
+        assert_eq!(merge_off(Some(Some(5)), None), None);
+        assert_eq!(merge_off(Some(Some(5)), Some(9)), Some(9));
+        assert_eq!(merge_off(Some(Some(9)), Some(5)), Some(9));
     }
 
     #[test]

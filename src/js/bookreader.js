@@ -8,6 +8,7 @@
 import { el, getPref, icon, ICON, invoke, setPref, toast, WEB } from "./api.js";
 import { openComic } from "./reader.js";
 
+const RELOAD = "M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5";
 const THEMES = { dark: ["#111214", "#e4e4e6"], sepia: ["#f4ecd8", "#3b3024"], light: ["#ffffff", "#1a1a1a"] };
 let base = null;
 let b = null;
@@ -46,7 +47,8 @@ function build(key, o, root, onClose) {
   const themeBtns = Object.keys(THEMES).map((t) => el("button", { class: "rd-mode", dataset: { theme: t }, onclick: () => theme(t) }, t[0].toUpperCase() + t.slice(1)));
   const top = el("div", { class: "rd-bar rd-top" },
     el("button", { class: "rd-btn", "aria-label": "Close", onclick: close }, icon(ICON.left)), title,
-    el("div", { class: "rd-modes" }, themeBtns), smaller, bigger);
+    el("div", { class: "rd-modes" }, themeBtns), smaller, bigger,
+    el("button", { class: "rd-btn", "aria-label": "Reload", title: "Reload (R)", onclick: () => reload() }, icon(RELOAD)));
   const slider = el("input", { class: "rd-slider", type: "range", min: "0", max: String(o.spine.length - 1), value: String(o.chapter), "aria-label": "Chapter" });
   slider.addEventListener("change", () => show(+slider.value, 0));
   const bottom = el("div", { class: "rd-bar rd-bottom" },
@@ -92,15 +94,43 @@ async function show(idx, at) {
   if (!b) return;
   idx = Math.max(0, Math.min(idx, b.o.spine.length - 1));
   const path = b.o.spine[idx];
+  const get = async () => { const res = await fetch(fileUrl(path)); if (!res.ok) throw new Error(String(res.status)); return res.text(); };
   let text;
-  // An error page (an expired link, the PC busy) isn't the chapter: what's showing stays.
-  try { const res = await fetch(fileUrl(path)); if (!res.ok) throw new Error(String(res.status)); text = await res.text(); } catch (e) { toast("Couldn't open that part of the book. Try again in a moment.", true); return; }
+  // An error page (an expired link, the PC busy) isn't the chapter: what's
+  // showing stays. One more try with a new ticket first: Chillarr restarting
+  // ends the old one, and every later ask failed until the book was reopened.
+  try { text = await get(); } catch (e) {
+    try { await freshen(); text = await get(); } catch (e2) { if (b) toast("Couldn't open that part of the book. Press Reload to try again.", true); return; }
+  }
   if (!b) return;
   b.idx = idx;
   b.pendingAt = at;
   b.slider.value = String(idx);
   b.where.textContent = `Part ${idx + 1} of ${b.o.spine.length}`;
   b.frame.srcdoc = await clean(text, path);
+}
+
+/** A new ticket for the open book (reader.js `freshen` says why). */
+async function freshen() {
+  const me = b;
+  if (!me) return;
+  base = null;
+  const [o, root] = await Promise.all([invoke("read_book_open", { key: me.key }), bridgeBase()]);
+  if (b !== me) return;
+  b.o.ticket = o.ticket;
+  b.root = root;
+}
+
+/** The Reload button: a new ticket, and this part drawn again where you are, its pictures too. */
+async function reload() {
+  if (!b) return;
+  const w = b.frame.contentWindow;
+  const d = b.frame.contentDocument;
+  const room = w && d ? d.documentElement.scrollHeight - w.innerHeight : 0;
+  const at = room > 0 ? w.scrollY / room : 0;
+  toast("Loading the pages again...");
+  try { await freshen(); } catch (e) { toast(String(e), true); return; }
+  show(b.idx, at);
 }
 
 /** The chapter, safe to show: no scripts, no frames, its styles folded in. */
@@ -190,6 +220,7 @@ function onKey(e) {
   if (k === "Escape" || k === "Backspace" || e.keyCode === 461) { e.preventDefault(); close(); return; }
   if (["ArrowRight", "ArrowDown", "PageDown", " "].includes(k)) { e.preventDefault(); turn(1); }
   else if (["ArrowLeft", "ArrowUp", "PageUp"].includes(k)) { e.preventDefault(); turn(-1); }
+  else if ((k === "r" || k === "R") && !e.ctrlKey && !e.metaKey) { e.preventDefault(); reload(); }
   bars();
 }
 

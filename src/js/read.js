@@ -66,9 +66,13 @@ let pvLeave = 0;
 function pvSchedule(anchor, c, shelf) {
   if (matchMedia("(hover: none)").matches || document.documentElement.classList.contains("tv")) return;
   clearTimeout(pvTimer);
-  clearTimeout(pvLeave);
-  if (c.banner) { const im = new Image(); im.src = c.banner; }
-  pvTimer = setTimeout(() => pvShow(anchor, c, shelf), pv ? 140 : 420);
+  // Back on the cover whose card is open: it stays. Another one waits its
+  // full second, like on the watching pages (browse.js OPEN_DELAY).
+  if (pv && pv._anchor === anchor) { clearTimeout(pvLeave); return; }
+  pvTimer = setTimeout(() => {
+    if (c.banner) { const im = new Image(); im.src = c.banner; }
+    pvTimer = setTimeout(() => pvShow(anchor, c, shelf), 600);
+  }, 400);
 }
 
 function pvSoon() {
@@ -183,6 +187,7 @@ function pvShow(anchor, c, shelf) {
     }
   }
   pv = card;
+  card._anchor = anchor;
 }
 
 // A scroll, a tab change or a panel opening closes the card.
@@ -1748,22 +1753,46 @@ async function pickChapters(c, x, state, list, mine, found, fill) {
     count.textContent = n ? `${n} of ${chs.length} picked` : `${chs.length} chapters`;
     goBtn.lastChild.textContent = n === 0 || n === chs.length ? "Download all" : `Download ${n}`;
   }
+  // Already read some of it (elsewhere, or before data was lost): from the
+  // chapter you're up to on, downloaded and new ones coming, the ones before
+  // it counted as read, so the series opens right where you are.
+  const upTo = el("button", { class: "btn soft read-upto", type: "button" });
+  const paintUpTo = () => {
+    const f = from.value === "" ? null : Number(from.value);
+    const ok = f != null && Number.isFinite(f);
+    upTo.disabled = !ok;
+    upTo.textContent = ok ? `Continue from chapter ${f}` : "Continue from a chapter";
+    upTo.title = ok ? `Downloads chapter ${f} on and new ones as they come; the ones before it count as read` : "Type the chapter you're up to in From chapter";
+  };
   from.addEventListener("input", () => {
     const f = from.value === "" ? null : Number(from.value);
     chs.forEach((ch, i) => set(i, f == null || (ch.number ?? Infinity) >= f));
     paint();
+    paintUpTo();
   });
-  const follow = async (ids, newTooOn = false) => {
+  upTo.addEventListener("click", () => {
+    const f = Number(from.value);
+    if (from.value === "" || !Number.isFinite(f)) return;
+    const ahead = chs.filter((ch) => (ch.number ?? Infinity) >= f).map((ch) => ch.id);
+    const behind = chs.filter((ch) => ch.number != null && ch.number < f).map((ch) => ch.id);
+    follow(ahead, true, behind);
+  });
+  const follow = async (ids, newTooOn = false, readIds = []) => {
     goBtn.disabled = true;
     justFollow.disabled = true;
+    upTo.disabled = true;
     if (state.followBtn) state.followBtn.disabled = true;
     const sel = { ids, from: null, new_too: newTooOn || newToo.checked };
     try {
       toast(await invoke("read_follow", { meta: meta(c), pick: x, fill, sel, lang: state.lang }));
+      if (readIds.length) {
+        await invoke("read_mark", { key: `m${x.manga_id}`, chapters: readIds, read: true })
+          .catch(() => toast("Followed, but the chapters before it couldn't be marked read. Use From chapter on its page.", true));
+      }
       await know();
       if (mine === panelSeq) openSeries({ key: `m${x.manga_id}`, card: c });
       window.dispatchEvent(new Event("chillarr:refresh"));
-    } catch (e) { toast(String(e), true); goBtn.disabled = false; justFollow.disabled = false; if (state.followBtn) state.followBtn.disabled = false; }
+    } catch (e) { toast(String(e), true); goBtn.disabled = false; justFollow.disabled = false; paintUpTo(); if (state.followBtn) state.followBtn.disabled = false; }
   };
   state.follow = follow;
   if (state.followBtn) { state.followBtn.disabled = false; state.followBtn.title = ""; }
@@ -1784,8 +1813,21 @@ async function pickChapters(c, x, state, list, mine, found, fill) {
       el("button", { class: "linkish", onclick: () => { chs.forEach((_, i) => set(i, false)); paint(); } }, "None"),
       count),
     el("div", { class: "read-pick-list" }, rows.slice().reverse()),
-    el("div", { class: "read-pick-go" }, el("label", { class: "read-newtoo" }, newToo, "Also get new chapters"), justFollow, goBtn)].filter(Boolean));
+    el("div", { class: "read-pick-go" }, el("label", { class: "read-newtoo" }, newToo, "Also get new chapters"), justFollow, upTo, goBtn)].filter(Boolean));
   paint();
+  paintUpTo();
+  // Imported data knew where this profile was in it (its own was lost):
+  // say so, and start "Continue from chapter" there.
+  invoke("read_waiting", { anilist: c.anilist ?? null, title: c.title || "" }).then((w) => {
+    if (!w || stale()) return;
+    const bar = list.querySelector(".read-pick-bar");
+    const tip = w.continue_from != null ? ` Press "Continue from chapter ${w.continue_from}" to pick up there.` : "";
+    if (bar) bar.before(note(`From your imported data: ${w.reading_now}.${tip}`));
+    if (w.continue_from != null && from.value === "") {
+      from.value = String(w.continue_from);
+      from.dispatchEvent(new Event("input"));
+    }
+  }).catch(() => {});
 }
 
 const meta = (c) => ({ anilist: c.anilist ?? null, title: c.title, names: c.names || [], cover: c.cover ?? null, banner: c.banner ?? null, country: c.country ?? null, format: c.format ?? null, status: c.status ?? null, description: c.description ?? null, genres: c.genres || [], adult: !!c.adult });
@@ -1807,6 +1849,9 @@ async function showFollowed(key, mine, c0) {
   const f = d.followed;
   const c = { ...(c0 || {}), ...f, chapters: d.chapters.length };
   const scroll = dlg && dlg.open ? dlg.scrollTop : 0;
+  // Before shell() empties the panel: the chapter list's own scroll, kept below.
+  const was = dlg && dlg.open ? dlg.querySelector(".read-chapters") : null;
+  const listAt = was && was.dataset.key === key ? was.scrollTop : 0;
   const { actions, body, options, hideOn, about } = shell(c);
   about.latest(d.chapters);
   if (f.lang) options.append(el("span", { class: "read-lang-tag", text: f.lang.toUpperCase() }));
@@ -1850,9 +1895,18 @@ async function showFollowed(key, mine, c0) {
     d.downloading ? ` · getting ${d.downloading} chapter${d.downloading === 1 ? "" : "s"}` : "",
     f.new_too === false ? " · new chapters off" : "",
     " · ", el("button", { class: "linkish", onclick: () => changeCopy(c, f, body) }, "Change copy"));
-  const list = el("ol", { class: "read-chapters" }, ...d.chapters.slice().reverse().map((r) => chapterRow(key, r, c0)));
-  body.append(...[where, markBar(key, d.chapters, c0), list, moreBySection(c, mine), similarSection(c, mine)].filter(Boolean));
+  // The chapters in a box of their own that scrolls by itself, the newest on
+  // top: a long series no longer pushes More by and Similar a long scroll
+  // down. Drawn like a show's "What to get", so getting looks the same everywhere.
+  const list = el("ol", { class: "read-chapters", dataset: { key } }, ...d.chapters.slice().reverse().map((r) => chapterRow(key, r, c0)));
+  const count = here.length === d.chapters.length ? `${d.chapters.length} downloaded` : `${here.length} of ${d.chapters.length} downloaded`;
+  const chBox = el("section", { class: "ep-pick read-chbox", "aria-label": "Chapters" },
+    el("div", { class: "ep-pick-head" }, el("h3", { text: "Chapters" }), el("small", { class: "read-chbox-count", text: count })),
+    markBar(key, d.chapters, c0), list);
+  body.append(...[where, chBox, moreBySection(c, mine), similarSection(c, mine)].filter(Boolean));
   if (scroll) dlg.scrollTop = scroll;
+  // Drawn again (a chapter marked, a download done): the list stays where it was.
+  if (listAt) list.scrollTop = listAt;
 }
 
 /** Marks a stretch of chapters read (read somewhere else, or skipped), or the whole series. */
@@ -1897,7 +1951,7 @@ function markBar(key, chs, c0) {
   const whole = el("button", { class: "btn soft", onclick: (e) => send(all ? chs.map((r) => r.id) : chs.filter((r) => !r.read).map((r) => r.id), !all, e.currentTarget) },
     all ? "Mark all unread" : "Mark all read");
   return el("div", { class: "read-markbar" },
-    el("span", { text: "Chapters" }), from, el("span", { text: "to" }), to, go, get, del, el("span", { class: "read-markbar-gap" }), whole);
+    el("span", { text: "From chapter" }), from, el("span", { text: "to" }), to, go, get, del, el("span", { class: "read-markbar-gap" }), whole);
 }
 
 function chapterRow(key, r, c0) {

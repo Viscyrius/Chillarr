@@ -346,6 +346,8 @@ fn need(cmd: &str) -> Option<Need> {
         | "read_languages" | "read_copy_chapters" | "read_get_chapters" | "read_keep_up" | "read_list" | "read_list_set" | "read_explore" | "read_genres" | "read_filter_info" | "read_similar" | "read_about" | "read_downloads"
         | "read_makers" | "read_maker_works" | "read_for_you" | "read_kind_rows"
         | "read_delete_plan" => Need::Viewer,
+        // The viewer's own data, out and in (profile_data.rs): only ever theirs.
+        "profile_export" | "profile_import" | "read_waiting" => Need::Viewer,
         // Deleting reading's files: anyone, for what only they read; the
         // server decides (read_storage::may_delete), not Jellyfin's delete switch.
         "read_unfollow" | "read_book_remove" | "read_stop_chapters" | "read_delete_chapters" | "read_book_delete_file" | "read_can_delete" => Need::Viewer,
@@ -483,6 +485,9 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
         "read_can_delete" => res(crate::read_storage::can_delete(app, &arg::<String>(a, "key")?)),
         "read_book_delete_file" => res(crate::read_storage::delete_book(app, &arg::<String>(a, "key")?, arg::<Option<bool>>(a, "othersOk")?.unwrap_or(false)).await),
         "read_open" => res(crate::read::open(app, &arg::<String>(a, "key")?, arg(a, "chapter")?).await),
+        "profile_export" => res(crate::profile_data::export(app).await),
+        "profile_import" => res(crate::profile_data::import(app, &arg::<String>(a, "text")?).await),
+        "read_waiting" => ok(crate::profile_data::waiting_for(app, arg(a, "anilist")?, &arg::<String>(a, "title")?)),
         "read_progress" => res(crate::read::set_spot(app, &arg::<String>(a, "key")?, arg(a, "chapter")?, arg(a, "page")?, arg(a, "pages")?)),
         "read_mode" => res(crate::read::set_mode(app, &arg::<String>(a, "key")?, &arg::<String>(a, "mode")?)),
         "read_hide_week" => res(crate::read::set_hide_week(app, &arg::<String>(a, "key")?, arg(a, "hide")?)),

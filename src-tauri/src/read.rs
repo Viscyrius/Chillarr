@@ -500,7 +500,7 @@ fn followed_mine(app: &AppHandle) -> Vec<Followed> {
 
 // ---------- where each profile is ----------
 
-#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct Spot {
     pub chapter: i64,
     pub page: usize,
@@ -711,26 +711,101 @@ impl Reading {
     }
 }
 
-/// The first bytes of a page, enough to read its size: the whole entry for a
-/// stored one, the first 64 KB inflated for a packed one.
-fn page_head(file: &Path, e: &Entry) -> Option<(u32, u32)> {
+/// One page's first bytes: its size, and whether it is a picture at all.
+/// Most pages tell their size in the first few KB, so that is read first;
+/// only a JPEG with a large colour profile in front needs more (up to 256
+/// KB, as before). An entry that can't even be read is damaged too.
+fn look(f: &mut std::fs::File, e: &Entry) -> (Option<(u32, u32)>, bool) {
     use std::io::{Read, Seek, SeekFrom};
-    let mut f = std::fs::File::open(file).ok()?;
     let mut head = [0u8; 30];
-    f.seek(SeekFrom::Start(e.header_at)).ok()?;
-    f.read_exact(&mut head).ok()?;
+    if f.seek(SeekFrom::Start(e.header_at)).is_err() || f.read_exact(&mut head).is_err() {
+        return (None, true);
+    }
     let skip = u16::from_le_bytes([head[26], head[27]]) as i64 + u16::from_le_bytes([head[28], head[29]]) as i64;
-    f.seek(SeekFrom::Current(skip)).ok()?;
-    let mut raw = vec![0u8; e.compressed.min(256 * 1024) as usize];
-    f.read_exact(&mut raw).ok()?;
-    let bytes = if e.method == 8 {
-        let mut out = Vec::new();
-        let _ = flate2::read::DeflateDecoder::new(&raw[..]).take(64 * 1024).read_to_end(&mut out);
-        out
-    } else {
-        raw
-    };
-    read_core::dims(&bytes)
+    if f.seek(SeekFrom::Current(skip)).is_err() {
+        return (None, true);
+    }
+    let mut raw: Vec<u8> = Vec::new();
+    let mut first = true;
+    for want in [16 * 1024u64, 256 * 1024] {
+        let upto = e.compressed.min(want) as usize;
+        if upto > raw.len() {
+            let mut more = vec![0u8; upto - raw.len()];
+            if f.read_exact(&mut more).is_err() {
+                // Shorter than its own directory says: cut off while it was written.
+                return (None, true);
+            }
+            raw.extend_from_slice(&more);
+        }
+        let bytes = if e.method == 8 {
+            let mut out = Vec::new();
+            let _ = flate2::read::DeflateDecoder::new(&raw[..]).take(64 * 1024).read_to_end(&mut out);
+            out
+        } else {
+            raw.clone()
+        };
+        if first {
+            first = false;
+            if !read_core::looks_like_image(&bytes) {
+                return (None, true);
+            }
+        }
+        if let Some(d) = read_core::dims(&bytes) {
+            return (Some(d), false);
+        }
+        if raw.len() as u64 >= e.compressed {
+            break;
+        }
+    }
+    (None, false)
+}
+
+/// What a chapter (or comic) file holds: its entries, the pages in order,
+/// each page's size, and which pages aren't pictures.
+pub(crate) struct Scan {
+    entries: Arc<Vec<Entry>>,
+    pages: Vec<usize>,
+    sizes: Vec<(u32, u32)>,
+    /// Positions in `pages` of pages that are damaged (zeros, cut off).
+    damaged: Vec<usize>,
+}
+
+/// Scans the file once per version of it (its path, length and time): opening
+/// a chapter again, or a reader asking for a new ticket, reads nothing. It used
+/// to read up to 256 KB of every page, opening the file once per page, each time.
+fn scan(file: &Path) -> Result<Arc<Scan>, String> {
+    type Key = (PathBuf, u64, Option<std::time::SystemTime>);
+    static SCANS: Mutex<Vec<(Key, Arc<Scan>)>> = Mutex::new(Vec::new());
+    const KEEP: usize = 32;
+    let meta = std::fs::metadata(file).map_err(|e| format!("Couldn't open the chapter: {e}"))?;
+    let key: Key = (file.to_path_buf(), meta.len(), meta.modified().ok());
+    if let Some(hit) = SCANS.lock().unwrap_or_else(|e| e.into_inner()).iter().find(|(k, _)| *k == key).map(|(_, v)| v.clone()) {
+        return Ok(hit);
+    }
+    let entries = zipread::entries(file)?;
+    let names: Vec<String> = entries.iter().map(|e| e.name.clone()).collect();
+    let pages = read_core::page_order(&names);
+    let mut f = std::fs::File::open(file).map_err(|e| format!("Couldn't open the chapter: {e}"))?;
+    let mut sizes = Vec::with_capacity(pages.len());
+    let mut damaged = Vec::new();
+    for (n, &i) in pages.iter().enumerate() {
+        let (dims, bad) = look(&mut f, &entries[i]);
+        sizes.push(dims.unwrap_or((0, 0)));
+        if bad {
+            damaged.push(n);
+        }
+    }
+    let out = Arc::new(Scan { entries: Arc::new(entries), pages, sizes, damaged });
+    let mut all = SCANS.lock().unwrap_or_else(|e| e.into_inner());
+    all.retain(|(k, _)| k.0 != key.0);
+    all.insert(0, (key, out.clone()));
+    all.truncate(KEEP);
+    Ok(out)
+}
+
+/// How many pages of a chapter file are damaged, for the check of new downloads.
+pub(crate) fn damaged_pages(file: &Path) -> Result<usize, String> {
+    scan(file).map(|s| s.damaged.len())
 }
 
 #[derive(Serialize)]
@@ -745,6 +820,9 @@ pub struct Opened {
     pub title: String,
     /// The pages are the graphics card's sharpened copy (sharpen.rs).
     pub sharp: bool,
+    /// Pages of this download that aren't pictures (written during a crash, or
+    /// cut off): it is being got again, and the reader says so.
+    pub damaged: usize,
 }
 
 /// Opens one downloaded chapter for the watching profile.
@@ -758,23 +836,26 @@ pub async fn open(app: &AppHandle, key: &str, chapter: i64) -> Result<Opened, St
     let (_, src, title) = &copies[copy.min(copies.len() - 1)];
     let dir = series_dir(app, src, title).ok_or("This series has nothing downloaded yet.")?;
     let chs: Vec<crate::suwayomi::Chapter> = merged.into_iter().map(|x| x.0).collect();
-    let file = chapter_file(&dir, &ch).ok_or("That chapter isn't downloaded yet.")?;
+    let original = chapter_file(&dir, &ch).ok_or("That chapter isn't downloaded yet.")?;
     // The graphics card's sharpened copy, when Settings has it on and it's made.
-    let (file, sharp) = crate::sharpen::pick(app, file);
-    let (entries, pages, sizes) = tokio::task::spawn_blocking({
+    let (file, sharp) = crate::sharpen::pick(app, original);
+    let sc = tokio::task::spawn_blocking({
         let file = file.clone();
-        move || -> Result<_, String> {
-            let entries = zipread::entries(&file)?;
-            let names: Vec<String> = entries.iter().map(|e| e.name.clone()).collect();
-            let pages = read_core::page_order(&names);
-            let sizes = pages.iter().map(|&i| page_head(&file, &entries[i]).unwrap_or((0, 0))).collect::<Vec<_>>();
-            Ok((entries, pages, sizes))
-        }
+        move || scan(&file)
     })
     .await
     .map_err(|e| e.to_string())??;
-    if pages.is_empty() {
+    if sc.pages.is_empty() {
         return Err("That chapter has no pages. It may still be downloading.".into());
+    }
+    if !sc.damaged.is_empty() {
+        if sharp {
+            // A sharpened copy written badly: it goes, the original shows from
+            // the next open, and a new copy is made.
+            let _ = std::fs::remove_file(&file);
+        } else {
+            tauri::async_runtime::spawn(repair(app.clone(), f.title.clone(), ch.clone(), sc.damaged.len()));
+        }
     }
     // The nearest chapter each way that is here: one missing in between (a
     // failed download, a deleted one) doesn't end the series there.
@@ -782,10 +863,75 @@ pub async fn open(app: &AppHandle, key: &str, chapter: i64) -> Result<Opened, St
     let next = chs.get(at + 1..).and_then(|after| after.iter().find(|c| c.downloaded)).map(|c| c.id);
     let s = spots(app, &uid);
     let spot = s.get(key);
-    let page = spot.filter(|s| s.chapter == chapter).map(|s| s.page.min(pages.len() - 1)).unwrap_or(0);
+    let page = spot.filter(|s| s.chapter == chapter).map(|s| s.page.min(sc.pages.len() - 1)).unwrap_or(0);
     let mode = spot.and_then(|s| s.mode.clone()).unwrap_or_else(|| f.mode.clone());
-    let ticket = app.state::<Reading>().issue(file, Arc::new(entries), pages);
-    Ok(Opened { ticket, pages: sizes, chapter: ch, prev, next, mode, page, title: f.title, sharp })
+    let ticket = app.state::<Reading>().issue(file, sc.entries.clone(), sc.pages.clone());
+    Ok(Opened { ticket, pages: sc.sizes.clone(), chapter: ch, prev, next, mode, page, title: f.title, sharp, damaged: sc.damaged.len() })
+}
+
+/// Gets a damaged chapter again: the downloader drops its copy and downloads
+/// it anew. Once per chapter in 15 minutes (the reader asks again and again
+/// while it waits), and twice at most: a site that keeps sending bad pages is
+/// said so, not asked forever.
+pub async fn repair(app: AppHandle, title: String, ch: crate::suwayomi::Chapter, bad: usize) {
+    static TRIED: Mutex<Option<HashMap<i64, (Option<Instant>, u32)>>> = Mutex::new(None);
+    let tries = {
+        let mut g = TRIED.lock().unwrap_or_else(|e| e.into_inner());
+        let m = g.get_or_insert_with(HashMap::new);
+        let e = m.entry(ch.id).or_insert((None, 0));
+        if e.0.is_some_and(|t| t.elapsed() < Duration::from_secs(15 * 60)) {
+            return;
+        }
+        e.0 = Some(Instant::now());
+        e.1 += 1;
+        e.1
+    };
+    let name = ch.number.map(|n| format!("chapter {n}")).unwrap_or_else(|| ch.name.clone());
+    if tries > 2 {
+        if tries == 3 {
+            crate::log::log(&app, crate::model::Level::Red, format!("{title}: {name} still comes down damaged after getting it twice. Pick another copy (Change copy on its page) or delete it there."));
+        }
+        return;
+    }
+    let pages = if bad == 1 { "1 page".to_string() } else { format!("{bad} pages") };
+    crate::log::log(&app, crate::model::Level::Amber, format!("{title}: {name} downloaded damaged ({pages} blank or cut off, from a crash or a dropped connection). Getting it again."));
+    if let Err(e) = crate::suwayomi::delete_chapters(&[ch.id]).await {
+        crate::log::log(&app, crate::model::Level::Red, format!("{title}: couldn't drop the damaged {name}: {e}"));
+        return;
+    }
+    if let Err(e) = crate::suwayomi::enqueue(&[ch.id]).await {
+        crate::log::log(&app, crate::model::Level::Red, format!("{title}: couldn't get {name} again: {e}"));
+    }
+}
+
+/// Looks over every downloaded chapter once (each version of each file) and
+/// gets the damaged ones again before anyone opens them. keepup's round calls it.
+pub async fn check_downloads(app: &AppHandle) {
+    static SEEN: Mutex<Option<HashSet<(PathBuf, u64)>>> = Mutex::new(None);
+    let seen = |k: &(PathBuf, u64)| SEEN.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashSet::new).contains(k);
+    for f in followed(app) {
+        let Ok(chs) = chapters_of(&f).await else { continue };
+        let copies = f.copies();
+        for (ch, copy) in chs.into_iter().filter(|(c, _)| c.downloaded) {
+            let (_, src, title) = &copies[copy.min(copies.len() - 1)];
+            let Some(dir) = series_dir(app, src, title) else { continue };
+            let Some(file) = chapter_file(&dir, &ch) else { continue };
+            let Ok(len) = std::fs::metadata(&file).map(|m| m.len()) else { continue };
+            let k = (file.clone(), len);
+            if seen(&k) {
+                continue;
+            }
+            let bad = tokio::task::spawn_blocking(move || damaged_pages(&file)).await.ok().and_then(|r| r.ok());
+            match bad {
+                Some(0) => {
+                    SEEN.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashSet::new).insert(k);
+                }
+                Some(n) => repair(app.clone(), f.title.clone(), ch, n).await,
+                // Not readable as a zip at all: still being written, most likely. Next round.
+                None => {}
+            }
+        }
+    }
 }
 
 /// `/read/<ticket>/<page>` (a comic's page), `/read/<ticket>/f/<path>` (a
@@ -928,25 +1074,20 @@ pub async fn open_book(app: &AppHandle, key: &str) -> Result<OpenedBook, String>
 
 /// A comic's pages, like a chapter's: read straight out of its CBZ.
 async fn open_comic(app: &AppHandle, b: crate::books::Book, file: PathBuf, spot: Option<Spot>) -> Result<OpenedBook, String> {
-    let (entries, pages, sizes) = tokio::task::spawn_blocking({
+    let sc = tokio::task::spawn_blocking({
         let file = file.clone();
-        move || -> Result<_, String> {
-            let entries = zipread::entries(&file)?;
-            let names: Vec<String> = entries.iter().map(|e| e.name.clone()).collect();
-            let pages = read_core::page_order(&names);
-            let sizes = pages.iter().map(|&i| page_head(&file, &entries[i]).unwrap_or((0, 0))).collect::<Vec<_>>();
-            Ok((entries, pages, sizes))
-        }
+        move || scan(&file)
     })
     .await
     .map_err(|e| e.to_string())??;
+    let (entries, pages, sizes) = (sc.entries.clone(), sc.pages.clone(), sc.sizes.clone());
     if pages.is_empty() {
         return Err("This comic has no pages in it.".into());
     }
     let page = spot.as_ref().map(|s| s.page.min(pages.len() - 1)).unwrap_or(0);
     // Western comics read left to right unless the profile picked another way.
     let mode = spot.and_then(|s| s.mode).unwrap_or_else(|| "ltr".into());
-    let ticket = app.state::<Reading>().issue(file, Arc::new(entries), pages);
+    let ticket = app.state::<Reading>().issue(file, entries, pages);
     Ok(OpenedBook { ticket, kind: "comic".into(), spine: vec![], title: b.title, chapter: 0, at: 0, pages: sizes, page, mode })
 }
 
@@ -1378,6 +1519,8 @@ pub async fn follow(app: &AppHandle, meta: Meta, pick: crate::suwayomi::Candidat
         }
         let msg = format!("{} is on your list now. Its chapters are already here.", f.title);
         crate::log::log(app, crate::model::Level::Ok, &msg);
+        // A place from this profile's imported data goes in now.
+        crate::profile_data::apply_waiting(app, &me, &f.key).await;
         return Ok(msg);
     }
     // Where its chapters land is Suwayomi's say, never the page's: the folder
@@ -1482,6 +1625,8 @@ pub async fn follow(app: &AppHandle, meta: Meta, pick: crate::suwayomi::Candidat
         let old_keys: Vec<String> = old.iter().map(|o| o.key.clone()).collect();
         move_spots(app, &old_keys, &format!("m{}", pick.manga_id), &old_nums, &new_ids);
     }
+    // A place from this profile's imported data (it lost its own) goes in now.
+    crate::profile_data::apply_waiting(app, &me, &format!("m{}", pick.manga_id)).await;
     let msg = match queued {
         0 if sel.new_too => format!("Following {}. New chapters download by themselves.", meta.title),
         0 => format!("{} is on your list.", meta.title),
@@ -1800,6 +1945,85 @@ pub fn toggle_list(app: &AppHandle, card: &Value, on: bool) -> Result<bool, Stri
     }
     save_json(&path, &list)?;
     Ok(on)
+}
+
+// ---------- a profile's reading, in and out (profile_data.rs) ----------
+
+/// One profile's reading list cards, newest first.
+pub fn list_of(app: &AppHandle, uid: &str) -> Vec<Value> {
+    let Ok(dir) = data_dir(app) else { return vec![] };
+    let list: Vec<(String, Value)> = load_json(&list_file(&dir, uid));
+    list.into_iter().map(|(_, v)| v).collect()
+}
+
+/// Adds cards to one profile's reading list, each kept the usual way
+/// (`keep_card`), after what's there and skipping what's on it. `keep(card)`
+/// says whether a card may go on (a kids' profile's filter). Returns how many came in.
+pub fn absorb_list(app: &AppHandle, uid: &str, cards: &[Value], keep: impl Fn(&Value) -> bool) -> Result<usize, String> {
+    let path = list_file(&data_dir(app)?, uid);
+    let mut list: Vec<(String, Value)> = load_json(&path);
+    let mut n = 0;
+    for c in cards {
+        let Some((key, kept)) = keep_card(c) else { continue };
+        if list.len() >= LIST_MAX || list.iter().any(|(k, _)| k == &key) || !keep(&kept) {
+            continue;
+        }
+        list.push((key, kept));
+        n += 1;
+    }
+    if n > 0 {
+        save_json(&path, &list)?;
+    }
+    Ok(n)
+}
+
+/// One place over another for the same series: the later place wins, and
+/// the chapters finished add up, each with its later finish: the clean-up
+/// counts its days from there, so an import never makes it delete sooner. A
+/// profile's own reading mode and Your week choice stay unless it has none.
+pub fn merge_spot(have: Option<&Spot>, incoming: &Spot) -> Spot {
+    let Some(have) = have else { return incoming.clone() };
+    let mut out = if incoming.at > have.at { Spot { read: have.read.clone(), mode: have.mode.clone(), hide_week: have.hide_week, ..incoming.clone() } } else { have.clone() };
+    for (ch, at) in &incoming.read {
+        let e = out.read.entry(*ch).or_insert(*at);
+        *e = (*e).max(*at);
+    }
+    if out.mode.is_none() {
+        out.mode = incoming.mode.clone();
+    }
+    out.hide_week = out.hide_week || incoming.hide_week;
+    out
+}
+
+/// Puts a place from an export into one profile's spots. True when it changed.
+pub fn absorb_spot(app: &AppHandle, uid: &str, key: &str, incoming: &Spot) -> Result<bool, String> {
+    let mut all = spots(app, uid);
+    let next = merge_spot(all.get(key), incoming);
+    if all.get(key) == Some(&next) {
+        return Ok(false);
+    }
+    all.insert(key.to_string(), next);
+    save_spots(app, uid, &all)?;
+    Ok(true)
+}
+
+/// One profile joins a series someone here already follows, as Follow does
+/// when another profile has it: nothing downloads twice. True when it joined.
+pub fn join(app: &AppHandle, key: &str, uid: &str) -> bool {
+    let pc_owner = crate::profiles::owner_id(app);
+    let Some(f) = followed(app).into_iter().find(|f| f.key == key) else { return false };
+    if owned_by(&f.owners, pc_owner.as_deref(), uid) {
+        return false;
+    }
+    // Worked out again under the lock: someone may have joined meanwhile.
+    update_followed(app, key, |x| {
+        let mut owners = owners_of(&x.owners, pc_owner.as_deref());
+        if !owners.iter().any(|o| o == uid) {
+            owners.push(uid.to_string());
+        }
+        x.owners = owners;
+    });
+    true
 }
 
 /// What reading has downloading: each series with chapters queued, and books on their way.
@@ -2473,6 +2697,72 @@ fn search_args(adult: bool, porn: bool) -> &'static str {
 mod tests {
     use super::*;
     use crate::suwayomi::Chapter;
+
+    #[test]
+    fn a_chapter_written_during_a_crash_is_found_out() {
+        let dir = tempfile::tempdir().unwrap();
+        // A real JPEG's start (SOF0: 256 high, 128 wide), a page of zeros like
+        // Chapter 96's (2026-11-15), and an empty one.
+        let mut jpeg = vec![0xFF, 0xD8, 0xFF, 0xC0, 0x00, 0x11, 0x08, 0x01, 0x00, 0x00, 0x80];
+        jpeg.resize(64, 0x11);
+        let pages = [("001.jpg", jpeg), ("002.webp", vec![0u8; 5000]), ("003.png", vec![])];
+        let mut files = Vec::new();
+        for (name, bytes) in &pages {
+            let p = dir.path().join(name);
+            std::fs::write(&p, bytes).unwrap();
+            files.push((name.to_string(), p));
+        }
+        let cbz = dir.path().join("Chapter 96.cbz");
+        crate::books::write_cbz(&cbz, &files).unwrap();
+        let sc = scan(&cbz).unwrap();
+        assert_eq!(sc.pages.len(), 3);
+        assert_eq!(sc.sizes[0], (128, 256));
+        assert_eq!(sc.damaged, vec![1, 2], "zeros and nothing are not pictures");
+        assert!(Arc::ptr_eq(&sc, &scan(&cbz).unwrap()), "the same file isn't read twice");
+        // Downloaded again: a new version, read anew.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        crate::books::write_cbz(&cbz, &files[..1]).unwrap();
+        let again = scan(&cbz).unwrap();
+        assert!(again.damaged.is_empty() && again.pages.len() == 1);
+        assert_eq!(damaged_pages(&cbz), Ok(0));
+    }
+
+    #[test]
+    fn pictures_are_told_from_garbage() {
+        use read_core::looks_like_image as img;
+        let with = |head: &[u8]| {
+            let mut v = head.to_vec();
+            v.resize(16, 0x20);
+            v
+        };
+        assert!(img(&with(&[0xFF, 0xD8, 0xFF, 0xE0])), "JPEG");
+        assert!(img(&with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A])), "PNG");
+        assert!(img(&with(b"RIFF\0\0\0\0WEBPVP8 ")), "WebP");
+        assert!(img(&with(b"\0\0\0\x1cftypavif")), "AVIF");
+        assert!(img(&with(b"GIF89a")), "GIF");
+        assert!(!img(&[0u8; 32]), "a page of zeros");
+        assert!(!img(&with(b"<html><body>")), "an error page saved as a picture");
+        assert!(!img(&[0xFF, 0xD8]), "too short to be anything");
+    }
+
+    #[test]
+    fn an_imported_place_only_moves_forward_in_time() {
+        let spot = |chapter, at, read: &[(i64, i64)]| Spot { chapter, page: 3, pages: 20, at, read: read.iter().copied().collect(), mode: None, hide_week: false };
+        let here = Spot { mode: Some("webtoon".into()), ..spot(10, 500, &[(9, 400)]) };
+        let older = spot(4, 100, &[(3, 90), (9, 300)]);
+        let m = merge_spot(Some(&here), &older);
+        assert_eq!((m.chapter, m.at), (10, 500), "an older place doesn't move this one back");
+        assert_eq!(m.read.get(&9), Some(&400), "a chapter keeps its later finish: the clean-up never comes sooner");
+        assert_eq!(m.read.get(&3), Some(&90), "finished chapters add up");
+        let newer = Spot { mode: Some("manga".into()), hide_week: true, ..spot(12, 900, &[]) };
+        let m = merge_spot(Some(&here), &newer);
+        assert_eq!((m.chapter, m.at), (12, 900));
+        assert_eq!(m.read.get(&9), Some(&400), "what was finished here stays");
+        assert_eq!(m.mode.as_deref(), Some("webtoon"), "this profile's own mode here stays");
+        assert!(m.hide_week);
+        assert_eq!(merge_spot(None, &older), older);
+        assert_eq!(merge_spot(Some(&m), &newer), m, "the same file twice changes nothing");
+    }
 
     #[test]
     fn only_place_files_are_read_as_places() {

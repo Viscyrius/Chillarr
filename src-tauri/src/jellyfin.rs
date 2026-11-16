@@ -401,12 +401,16 @@ impl Jf {
     /// Puts an item on, or takes it off, this user's favourites. Chillarr's
     /// My List is the favourites for anything in the library, so it shows the
     /// same in Jellyfin's own apps.
+    /// Jellyfin's own address for this is /UserFavoriteItems; the older
+    /// /Users/{id}/FavoriteItems still answers (12.4, 2026-11-15) but is no
+    /// longer in its API list, so it is only the way back for a Jellyfin that
+    /// lacks the new one.
     pub async fn set_favourite(&self, id: &str, on: bool) -> Result<(), JfError> {
-        let path = format!("/Users/{}/FavoriteItems/{id}", self.uid()?);
-        if on {
-            self.post(&path, &json!({})).await.map(|_| ())
-        } else {
-            self.delete_path(&path).await
+        let uid = self.uid()?.to_string();
+        let method = if on { reqwest::Method::POST } else { reqwest::Method::DELETE };
+        match self.call(method.clone(), &format!("/UserFavoriteItems/{id}?userId={uid}"), None).await {
+            Err(e) if not_found(&e) => self.call(method, &format!("/Users/{uid}/FavoriteItems/{id}"), None).await.map(|_| ()),
+            r => r.map(|_| ()),
         }
     }
 
@@ -459,6 +463,20 @@ impl Jf {
         match self.call(method.clone(), &format!("/UserPlayedItems/{item_id}?userId={uid}"), None).await {
             Ok(_) => Ok(()),
             Err(JfError::Other(_)) => self.call(method, &format!("/Users/{uid}/PlayedItems/{item_id}"), None).await.map(|_| ()),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Marks an item watched for this user as of `at` (unix seconds), so an
+    /// imported watch keeps its own date instead of today's.
+    pub async fn set_played_at(&self, item_id: &str, at: Option<i64>) -> Result<(), JfError> {
+        let Some(date) = at.and_then(|t| chrono::DateTime::from_timestamp(t, 0)).map(|d| d.format("%Y-%m-%dT%H:%M:%S.0000000Z").to_string()) else {
+            return self.set_played(item_id, true).await;
+        };
+        let uid = self.uid()?.to_string();
+        match self.call(reqwest::Method::POST, &format!("/UserPlayedItems/{item_id}?userId={uid}&datePlayed={date}"), None).await {
+            Ok(_) => Ok(()),
+            Err(JfError::Other(_)) => self.call(reqwest::Method::POST, &format!("/Users/{uid}/PlayedItems/{item_id}?datePlayed={date}"), None).await.map(|_| ()),
             Err(e) => Err(e),
         }
     }

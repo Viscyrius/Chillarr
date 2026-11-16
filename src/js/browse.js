@@ -167,8 +167,12 @@ let leaveTimer;
 let trailerTimer;
 let soundOn = false;
 try { soundOn = localStorage.getItem("chillarr-pv-sound") === "1"; } catch (e) { /* storage blocked */ }
-const OPEN_DELAY = 420;
-const SWITCH_DELAY = 140;
+// A card opens once the pointer has rested on a poster for 2 seconds, every
+// time: crossing a row on the way somewhere used to pop one card after another
+// (0.42 s, then 0.14 s from one open card to the next poster). Its picture is
+// fetched only after a short rest too, not for every poster passed over.
+const OPEN_DELAY = 1000;
+const WARM_AFTER = 400;
 // YouTube loads in its own process, so it can start with the card.
 const TRAILER_DELAY = 0;
 const TRAILER_CLEAN = 3.8;
@@ -291,10 +295,14 @@ function schedulePreview(anchor, t) {
   // No hover cards by touch, or on a TV (LG's pointer remote hovers, but the cards are for a mouse).
   if (matchMedia("(hover: none)").matches || document.documentElement.classList.contains("tv")) return;
   clearTimeout(previewTimer);
-  clearTimeout(leaveTimer);
-  warm(t);
-  // Moving from one open card to the next poster: follow quickly.
-  previewTimer = setTimeout(() => showPreview(anchor, t), preview ? SWITCH_DELAY : OPEN_DELAY);
+  // Back on the poster whose card is open: it stays.
+  if (preview && preview._anchor === anchor) { clearTimeout(leaveTimer); return; }
+  // Another poster: the open card closes as it would (leaveSoon), and this one
+  // waits its full time like the first.
+  previewTimer = setTimeout(() => {
+    warm(t);
+    previewTimer = setTimeout(() => showPreview(anchor, t), OPEN_DELAY - WARM_AFTER);
+  }, WARM_AFTER);
 }
 
 async function showPreview(anchor, t) {
@@ -347,6 +355,7 @@ async function showPreview(anchor, t) {
     );
   }
   preview = card;
+  card._anchor = anchor;
   clearTimeout(trailerTimer);
   trailerTimer = setTimeout(() => startTrailer(card, t), TRAILER_DELAY);
 }

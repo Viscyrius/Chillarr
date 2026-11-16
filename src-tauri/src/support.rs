@@ -47,9 +47,13 @@ fn env_path(name: &str) -> Option<PathBuf> {
 
 /// Where the report goes: the Downloads folder, where people look for what they just saved.
 fn target(stamp: &str) -> Result<PathBuf, String> {
+    Ok(save_dir()?.join(format!("Chillarr logs {stamp}.txt")))
+}
+
+/// The folder a file the user saves goes in: Downloads, else the Desktop, else their own folder.
+pub fn save_dir() -> Result<PathBuf, String> {
     let home = env_path("USERPROFILE").ok_or("No user folder")?;
-    let dir = [home.join("Downloads"), home.join("Desktop"), home].into_iter().find(|d| d.is_dir()).ok_or("No folder to save in")?;
-    Ok(dir.join(format!("Chillarr logs {stamp}.txt")))
+    [home.join("Downloads"), home.join("Desktop"), home].into_iter().find(|d| d.is_dir()).ok_or_else(|| "No folder to save in".to_string())
 }
 
 /// Writes the report; returns its path.

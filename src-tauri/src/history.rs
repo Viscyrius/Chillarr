@@ -245,6 +245,65 @@ impl History {
         }
     }
 
+    /// Takes in another copy of a log (a profile's export, profile_data.rs).
+    /// Like a sync, nothing here is dropped and a time only moves later.
+    /// Movies come by TMDB id; shows by TVDB id, into the show's record here
+    /// or a new "tvdb:<id>" one (Completed counts a show logged under several
+    /// keys as one). Never files or half-watched marks: those are the other
+    /// PC's, and the clean-up acts on them. An episode started over here
+    /// since it was finished there stays started over. Returns how many
+    /// movies and shows gained something.
+    pub fn absorb(&mut self, movies: &[MovieWatch], series: &[SeriesWatch]) -> (usize, usize) {
+        let mut moved = (0, 0);
+        for m in movies {
+            let Some(tmdb) = m.tmdb else { continue };
+            let w = self.movies.entry(format!("tmdb:{tmdb}")).or_default();
+            if w.tmdb.is_some() && w.at >= m.at {
+                continue;
+            }
+            if w.title.is_empty() {
+                w.title = m.title.clone();
+            }
+            w.tmdb = Some(tmdb);
+            w.anime = w.anime || m.anime;
+            w.at = w.at.max(m.at);
+            moved.0 += 1;
+        }
+        for s in series {
+            let Some(tvdb) = s.tvdb else { continue };
+            let key = self.series.iter().find(|(_, w)| w.tvdb == Some(tvdb)).map(|(k, _)| k.clone()).unwrap_or_else(|| format!("tvdb:{tvdb}"));
+            let w = self.series.entry(key).or_default();
+            let before = w.clone();
+            w.tvdb = Some(tvdb);
+            if w.title.is_empty() {
+                w.title = s.title.clone();
+            }
+            w.anilist = w.anilist.or(s.anilist);
+            w.anime = w.anime || s.anime;
+            for g in &s.genres {
+                if !w.genres.contains(g) {
+                    w.genres.push(g.clone());
+                }
+            }
+            for (ep, &at) in &s.episodes {
+                if w.forgotten.get(ep).is_some_and(|&f| f >= at) {
+                    continue;
+                }
+                let e = w.episodes.entry(ep.clone()).or_insert(at);
+                *e = (*e).max(at);
+            }
+            // Whole-show finishes: the earliest one known.
+            w.complete_at = match (w.complete_at, s.complete_at) {
+                (Some(a), Some(b)) => Some(a.min(b)),
+                (a, b) => a.or(b),
+            };
+            if *w != before {
+                moved.1 += 1;
+            }
+        }
+        (moved.0, moved.1)
+    }
+
     /// What "Because you watched" may start from, the latest first: finished
     /// movies, series watched to the end, and anime with 5+ episodes watched.
     pub fn seeds(&self) -> Vec<Seed> {
@@ -430,6 +489,30 @@ fn read(dir: &Path, user_id: &str, set_aside: bool) -> Result<History, String> {
             format!("The watch history couldn't be read ({e}), so it wasn't updated.")
         }
     })
+}
+
+/// A profile's log as it may leave this PC (profile_data.rs): movies with a
+/// TMDB id and shows with a TVDB id, without files or half-watched marks.
+pub fn portable(h: &History) -> (Vec<MovieWatch>, Vec<SeriesWatch>) {
+    let movies = h.movies.values().filter(|m| m.tmdb.is_some()).cloned().collect();
+    let series = h
+        .series
+        .values()
+        .filter(|w| w.tvdb.is_some())
+        .map(|w| SeriesWatch { files: BTreeMap::new(), resuming: BTreeSet::new(), forgotten: BTreeMap::new(), ..w.clone() })
+        .collect();
+    (movies, series)
+}
+
+/// `History::absorb` into one profile's saved log, under the same lock as the sync.
+pub fn absorb_into(dir: &Path, user_id: &str, movies: &[MovieWatch], series: &[SeriesWatch]) -> Result<(usize, usize), String> {
+    let _one = UPDATING.lock().unwrap_or_else(|e| e.into_inner());
+    let mut h = read(dir, user_id, true)?;
+    let moved = h.absorb(movies, series);
+    if moved != (0, 0) {
+        save(dir, user_id, &h)?;
+    }
+    Ok(moved)
 }
 
 fn save(dir: &Path, user_id: &str, h: &History) -> Result<(), String> {
@@ -624,6 +707,57 @@ mod tests {
 
     fn t(s: &str) -> i64 {
         chrono::DateTime::parse_from_rfc3339(s).unwrap().timestamp()
+    }
+
+    #[test]
+    fn an_import_only_adds_and_never_brings_back_a_start_over() {
+        let mut h = History::default();
+        h.movies.insert("tmdb:1".into(), MovieWatch { title: "Here".into(), tmdb: Some(1), anime: false, at: 500 });
+        let mut here = SeriesWatch { title: "Show".into(), tvdb: Some(7), ..SeriesWatch::default() };
+        here.episodes.insert(ep_key(1, 1), 100);
+        here.forgotten.insert(ep_key(1, 2), 300);
+        here.files.insert("c:\\show\\s01e01.mkv".into(), 100);
+        h.series.insert("jf-id".into(), here);
+
+        let movies = vec![
+            MovieWatch { title: "Older".into(), tmdb: Some(1), anime: false, at: 400 },
+            MovieWatch { title: "New".into(), tmdb: Some(2), anime: true, at: 50 },
+            MovieWatch { title: "No id".into(), tmdb: None, anime: false, at: 50 },
+        ];
+        let mut show = SeriesWatch { title: "Show".into(), tvdb: Some(7), complete_at: Some(900), ..SeriesWatch::default() };
+        show.episodes.insert(ep_key(1, 1), 200);
+        show.episodes.insert(ep_key(1, 2), 250);
+        show.episodes.insert(ep_key(1, 3), 260);
+        let other = SeriesWatch { title: "Elsewhere".into(), tvdb: Some(8), episodes: [(ep_key(2, 1), 70)].into_iter().collect(), ..SeriesWatch::default() };
+
+        assert_eq!(h.absorb(&movies, &[show.clone(), other]), (1, 2));
+        assert_eq!(h.movies["tmdb:1"].at, 500, "a later watch here stays");
+        assert_eq!(h.movies["tmdb:1"].title, "Here");
+        assert_eq!(h.movies["tmdb:2"].at, 50);
+        assert_eq!(h.movies.len(), 2, "no id, nothing to find it by");
+        let w = &h.series["jf-id"];
+        assert_eq!(w.episodes[&ep_key(1, 1)], 200, "the later finish");
+        assert!(!w.episodes.contains_key(&ep_key(1, 2)), "started over here after that finish: stays started over");
+        assert_eq!(w.episodes[&ep_key(1, 3)], 260);
+        assert_eq!(w.complete_at, Some(900));
+        assert_eq!(w.files.len(), 1, "this PC's own files stay as they were");
+        assert_eq!(h.series["tvdb:8"].episodes[&ep_key(2, 1)], 70, "a show with no record here gets one by its TVDB id");
+        assert_eq!(h.absorb(&movies, &[show]), (0, 0), "the same file twice changes nothing");
+    }
+
+    #[test]
+    fn what_leaves_the_pc_has_no_files() {
+        let mut h = History::default();
+        let mut w = SeriesWatch { title: "Show".into(), tvdb: Some(7), ..SeriesWatch::default() };
+        w.files.insert("c:\\x.mkv".into(), 1);
+        w.resuming.insert("c:\\y.mkv".into());
+        h.series.insert("a".into(), w);
+        h.series.insert("b".into(), SeriesWatch { tvdb: None, ..SeriesWatch::default() });
+        h.movies.insert("jf:z".into(), MovieWatch { title: "Z".into(), tmdb: None, anime: false, at: 1 });
+        let (movies, series) = portable(&h);
+        assert!(movies.is_empty());
+        assert_eq!(series.len(), 1);
+        assert!(series[0].files.is_empty() && series[0].resuming.is_empty());
     }
 
     fn ep(series: &str, s: i64, e: i64, at: &str) -> Value {

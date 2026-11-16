@@ -10,6 +10,7 @@ mod downloads_home;
 mod zipread;
 mod read_core;
 mod read;
+mod profile_data;
 mod read_mu;
 mod read_storage;
 mod hidden;
@@ -1319,6 +1320,31 @@ async fn logs_save(app: AppHandle) -> Result<String, String> {
     support::save(&app).await
 }
 
+/// Settings > Account > Your data: the watching profile's data as a file's
+/// contents (a browser downloads it itself)...
+#[tauri::command]
+async fn profile_export(app: AppHandle) -> Result<profile_data::Export, String> {
+    profile_data::export(&app).await
+}
+
+/// ...or, in this window, saved where the person picks. Returns where (None: not saved).
+#[tauri::command]
+async fn profile_export_save(app: AppHandle) -> Result<Option<String>, String> {
+    profile_data::export_to_file(&app).await
+}
+
+/// Following a series: where an imported place says you were in it, if any.
+#[tauri::command]
+fn read_waiting(app: AppHandle, anilist: Option<i64>, title: String) -> Option<profile_data::Waiting> {
+    profile_data::waiting_for(&app, anilist, &title)
+}
+
+/// A profile file's text, added to the watching profile.
+#[tauri::command]
+async fn profile_import(app: AppHandle, text: String) -> Result<profile_data::Report, String> {
+    profile_data::import(&app, &text).await
+}
+
 #[tauri::command]
 fn get_logs(logs: State<'_, Logs>) -> Vec<LogLine> {
     logs.0.lock().unwrap().iter().cloned().collect()
@@ -1581,7 +1607,11 @@ pub fn run() {
             set_settings,
             pick_exe,
             get_logs,
-            logs_save
+            logs_save,
+            profile_export,
+            profile_export_save,
+            profile_import,
+            read_waiting
         ])
         .setup(move |app| {
             // WebView2 offered past searches in its own dropdown, which doesn't

@@ -88,6 +88,29 @@ pub fn save_mark(dir: &Path, uid: &str, tvdb: i64, mark: Mark) -> Result<(), Str
     std::fs::write(&tmp, text).and_then(|_| std::fs::rename(&tmp, &path)).map_err(|e| format!("Couldn't save where you're at: {e}"))
 }
 
+/// Spots from an export (profile_data.rs) for shows this profile has none
+/// for. A spot already here is this PC's own, set on purpose or worked out,
+/// and stays. Returns how many came in.
+pub fn absorb(dir: &Path, uid: &str, incoming: &HashMap<i64, Mark>) -> Result<usize, String> {
+    let mut all = load(dir, uid);
+    let mut n = 0;
+    for (tvdb, m) in incoming {
+        if *tvdb <= 0 || m.spot.season < 0 || m.spot.episode < 0 || all.contains_key(tvdb) {
+            continue;
+        }
+        all.insert(*tvdb, *m);
+        n += 1;
+    }
+    if n == 0 {
+        return Ok(0);
+    }
+    let path = file(dir, uid);
+    let tmp = path.with_extension("json.tmp");
+    let text = serde_json::to_string(&all).map_err(|e| e.to_string())?;
+    std::fs::write(&tmp, text).and_then(|_| std::fs::rename(&tmp, &path)).map_err(|e| format!("Couldn't save where you're at: {e}"))?;
+    Ok(n)
+}
+
 /// The sync saw `finished` finished at `at` (any device). Moves the spot only
 /// when the show has one (the page works out the first one when it's opened)
 /// and the finish came after it was last set.

@@ -616,11 +616,90 @@ function appsLoginBlock(name) {
     err);
 }
 
+/** The bridge takes requests up to 2 MB: a bigger file is imported on the PC. */
+const WEB_IMPORT_MAX = 1900 * 1024;
+
+/** A picked file's text (FileReader for browsers older than File.text). */
+function fileText(f) {
+  if (f.text) return f.text();
+  return new Promise((ok, fail) => {
+    const r = new FileReader();
+    r.onload = () => ok(String(r.result || ""));
+    r.onerror = () => fail(new Error("Couldn't read that file."));
+    r.readAsText(f);
+  });
+}
+
+/** Your data: this profile's My List, what it watched and read, out to a file and back in. */
+function yourDataBox() {
+  const report = el("ul", { class: "data-report", hidden: true });
+  const out = el("button", { class: "btn small primary", type: "button" }, "Export");
+  const inn = el("button", { class: "btn small ghost", type: "button" }, "Import");
+  const pick = el("input", { type: "file", accept: ".json,application/json", hidden: true });
+  out.addEventListener("click", async () => {
+    out.disabled = true;
+    out.textContent = "Exporting...";
+    try {
+      if (WEB) {
+        // A browser saves it itself, with the name the PC would give it.
+        const data = await invoke("profile_export");
+        // Plain filtering: \p{} classes are a syntax error on the TV's Chrome 53.
+        const who = String(data.profile || "").replace(/[\\/:*?"<>|.\u0000-\u001f]/g, "").trim().slice(0, 40) || "Profile";
+        const day = new Date(data.exported_at * 1000);
+        const stamp = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`;
+        const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
+        const a = el("a", { href: url, download: `Chillarr - ${who} - ${stamp}.json` });
+        document.body.append(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 60000);
+        toast("Saved to your downloads. Keep the file somewhere safe.");
+      } else {
+        // Windows asks where it goes; closing that window saves nothing.
+        const path = await invoke("profile_export_save");
+        if (path) {
+          toast(`Saved ${path}.`);
+          invoke("open_folder", { path: path.replace(/[\\/][^\\/]*$/, "") }).catch(() => {});
+        }
+      }
+    } catch (e) { toast(String(e), true); }
+    out.disabled = false;
+    out.textContent = "Export";
+  });
+  inn.addEventListener("click", () => { pick.value = ""; pick.click(); });
+  pick.addEventListener("change", async () => {
+    const f = pick.files && pick.files[0];
+    if (!f) return;
+    if (WEB && f.size > WEB_IMPORT_MAX) { toast("That file is too big to import from a browser. Import it in Chillarr on the PC.", true); return; }
+    if (f.size > 64 * 1024 * 1024) { toast("That file is too big to be a Chillarr profile file.", true); return; }
+    if (!(await ask("Import this file?", `What's in "${f.name}" is added to your profile: My List, watched, Continue watching, Completed, Notify me and reading. Nothing you have now is taken away.`, [], "Import", "Cancel"))) return;
+    inn.disabled = true;
+    inn.textContent = "Importing...";
+    report.hidden = true;
+    try {
+      const rep = await invoke("profile_import", { text: await fileText(f) });
+      report.replaceChildren(...rep.lines.map((l) => el("li", { text: l })));
+      report.hidden = false;
+      toast("Imported.");
+      // My List, Continue watching and the reading rows read it all again.
+      window.dispatchEvent(new Event("chillarr:refresh"));
+    } catch (e) { toast(String(e), true); }
+    inn.disabled = false;
+    inn.textContent = "Import";
+  });
+  return el("div", { class: "box data-box" },
+    el("div", { class: "opt" },
+      el("span", {}, el("b", { text: "Your data" }),
+        el("small", { text: "Save your My List, what you watched and where you stopped, Completed, Notify me and your reading to a file. Import it on another PC or profile, after a reinstall, or to keep a copy. Your Hidden list and passwords stay out of it." })),
+      el("div", { class: "acts" }, out, inn, pick)),
+    report);
+}
+
 async function account(panel) {
   const ms = await invoke("media_status");
   panel.append(el("h2", { text: "Account & devices" }),
     el("p", { class: "sub", text: "Your profiles, and how to watch on your phone, TV or laptop. Nothing goes through the cloud: your PC does the work." }),
-    hiddenBox());
+    hiddenBox(), yourDataBox());
   if (!ms.installed) {
     panel.append(el("button", { class: "btn primary", onclick: () => offerInstall(["Jellyfin"]) }, "Install Jellyfin"));
     return;
@@ -1079,7 +1158,9 @@ function webAccount(panel) {
       viewer.admin ? row("Jellyfin dashboard", "Users, libraries and the server itself.", jf("dashboard")) : null,
       row("Sign out", "Goes back to Jellyfin's sign-in, where someone else can sign in.", out)),
     // Hidden things: on phones too, or what's hidden here could never be seen again.
-    hiddenBox());
+    hiddenBox(),
+    // Each profile's own data, out and in: on phones too, since many only use one.
+    yourDataBox());
 }
 
 /** Subtitle size and controllers; seeding for an admin. Kept in this browser or on the server. */

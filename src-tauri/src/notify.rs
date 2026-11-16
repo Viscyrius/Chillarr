@@ -147,6 +147,38 @@ fn wake(key: &str) {
 
 // ---------- what the page asks ----------
 
+/// One profile's Notify me list, for its export (profile_data.rs).
+pub fn watches_of(app: &AppHandle, uid: &str) -> Vec<Watch> {
+    let _g = IO.lock().unwrap_or_else(|e| e.into_inner());
+    load(app).profiles.get(uid).map(|m| m.watches.clone()).unwrap_or_default()
+}
+
+/// Adds watches from an export to one profile's list, skipping titles already
+/// on it. "Get it too" comes in off: on someone else's PC it would start
+/// downloads nobody there asked for. Each starts fresh (the first look says
+/// nothing), so an old "new episode" isn't announced again. Returns how many came in.
+pub fn absorb(app: &AppHandle, uid: &str, incoming: Vec<Watch>) -> Result<usize, String> {
+    edit(app, |s| {
+        let mine = s.profiles.entry(uid.to_string()).or_default();
+        let mut n = 0;
+        for mut w in incoming {
+            if mine.watches.len() >= MAX_WATCHES {
+                break;
+            }
+            if mine.watches.iter().any(|x| x.source == w.source) {
+                continue;
+            }
+            w.auto = false;
+            w.seen = None;
+            w.works.clear();
+            w.added = now();
+            mine.watches.push(w);
+            n += 1;
+        }
+        n
+    })
+}
+
 /// What the page sends: a film or show's tile, or a book's card.
 #[derive(Deserialize, Clone, Debug, Default)]
 pub struct Target {

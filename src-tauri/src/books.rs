@@ -214,6 +214,23 @@ fn save(app: &AppHandle, list: &[Book]) -> Result<(), String> {
     std::fs::write(&tmp, serde_json::to_string(list).map_err(|e| e.to_string())?).and_then(|_| std::fs::rename(&tmp, &p)).map_err(|e| format!("Couldn't save it: {e}"))
 }
 
+/// One profile gets a book someone here already has (a profile's import,
+/// profile_data.rs): it goes on their list too, with the same file. True when it joined.
+pub fn join(app: &AppHandle, key: &str, uid: &str) -> Result<bool, String> {
+    let _held = books_lock();
+    let pc_owner = crate::profiles::owner_id(app);
+    let mut list = all(app);
+    let Some(b) = list.iter_mut().find(|b| b.key == key) else { return Ok(false) };
+    let mut owners = crate::read::owners_of(&b.owners, pc_owner.as_deref());
+    if owners.iter().any(|o| o == uid) {
+        return Ok(false);
+    }
+    owners.push(uid.to_string());
+    b.owners = owners;
+    save(app, &list)?;
+    Ok(true)
+}
+
 /// The watching profile's book: someone else's isn't in your list.
 pub fn find(app: &AppHandle, key: &str) -> Result<Book, String> {
     let uid = crate::media::active_user(app).ok_or("Sign in to Jellyfin first.")?;

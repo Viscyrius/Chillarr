@@ -77,6 +77,25 @@ pub fn page_order(names: &[String]) -> Vec<usize> {
     idx
 }
 
+/// Whether a page's first bytes are a picture at all. A chapter written while
+/// the PC crashed (2026-11-15: pages of zeros, "Chapter 96") is a file of the
+/// right size that no browser can draw; reloading it can never help.
+pub fn looks_like_image(b: &[u8]) -> bool {
+    if b.len() < 12 {
+        return false;
+    }
+    b.starts_with(&[0xFF, 0xD8, 0xFF])
+        || b.starts_with(b"\x89PNG")
+        || b.starts_with(b"GIF8")
+        || (b.starts_with(b"RIFF") && &b[8..12] == b"WEBP")
+        // AVIF, HEIC and the other ISO boxes: "....ftyp".
+        || &b[4..8] == b"ftyp"
+        || b.starts_with(b"BM")
+        // JPEG XL, bare or in its box.
+        || b.starts_with(&[0xFF, 0x0A])
+        || b.starts_with(b"\0\0\0\x0cJXL ")
+}
+
 /// Width and height from an image's first bytes (JPEG, PNG, WebP, GIF, AVIF).
 pub fn dims(b: &[u8]) -> Option<(u32, u32)> {
     // AVIF: the size is in the "ispe" box. Without it pages came out stretched (#82).

@@ -1233,6 +1233,7 @@ pub async fn remove(app: &AppHandle, id: &str, pin: Option<String>, login: Optio
     crate::watchnow::drop_placeholders(app, &gone).await;
     let _ = std::fs::remove_file(app.path().app_data_dir().map(|d| crate::completed::hidden_file(&d, id)).unwrap_or_default());
     crate::hidden::forget_profile(app, id);
+    let _ = std::fs::remove_file(app.path().app_data_dir().map(|d| d.join(format!("read-waiting-{id}.json"))).unwrap_or_default());
     crate::seen::forget(app, id);
     let _ = std::fs::remove_file(app.path().app_data_dir().map(|d| crate::marker::file(&d, id)).unwrap_or_default());
     let _ = std::fs::remove_file(app.path().app_data_dir().map(|d| crate::marker::file(&d, id).with_extension("json.bad")).unwrap_or_default());

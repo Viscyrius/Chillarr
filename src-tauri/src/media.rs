@@ -250,6 +250,24 @@ impl Media {
         self.edit_saved(false, |list| list.clone())
     }
 
+    /// Adds titles (an import, profile_data.rs) after what's on My List,
+    /// skipping any already on it. Returns how many came in.
+    pub(crate) fn absorb_saved(&self, tiles: Vec<Tile>) -> usize {
+        if tiles.is_empty() {
+            return 0;
+        }
+        self.edit_saved(true, |list| {
+            let mut n = 0;
+            for t in tiles {
+                if !list.iter().any(|x| x.key == t.key) {
+                    list.push(t);
+                    n += 1;
+                }
+            }
+            n
+        })
+    }
+
     /// Drops titles that are now in the library (they became favourites).
     fn forget_saved(&self, keys: &[String]) {
         if keys.is_empty() {
