@@ -336,7 +336,6 @@ header.MuiAppBar-root .MuiIconButton-root:hover { color: #fff; background: rgba(
 .MuiMenuItem-root:hover { background: rgba(255, 255, 255, 0.07) !important; }
 .toast { background: var(--cx-raised) !important; color: var(--cx-text) !important; border-radius: 10px; border: 1px solid var(--cx-line-2); }
 .mdl-spinner__layer, .progressring-spiner { border-color: var(--cx-accent) !important; }
-.docspinner .mdl-spinner__circle { border-color: var(--cx-accent) !important; }
 .alphaPickerButton { font-family: var(--cx-display); border-radius: 6px; }
 .alphaPickerButton-selected, .alphaPickerButton-tv:focus { background: var(--cx-accent) !important; color: var(--cx-ink) !important; }
 

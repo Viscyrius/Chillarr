@@ -309,9 +309,16 @@ enum Need {
 /// command that takes a Jellyfin item under another argument name must add
 /// that name to `item_ids`, or its item skips the visibility check.
 /// What a device locked behind its profile's PIN may still do: say who it is,
-/// type the PIN, or switch to another profile (which asks that one's PIN).
+/// type the PIN, switch to another profile (which asks that one's PIN), or
+/// make a profile of its own. Several people often share one Jellyfin sign-in
+/// (the PC owner's); someone who doesn't know its PIN still needs a way to get
+/// their own profile, and on 2026-11-16 a friend got "Enter this profile's PIN
+/// first" from Add profile with no other way in. Nothing behind the PIN is
+/// reached that way: the new profile is a separate, non-admin Jellyfin account
+/// with no more access than the one it was made from (profiles.rs `add_web`),
+/// and that sign-in's password already opens Jellyfin's own pages.
 fn open_while_locked(cmd: &str) -> bool {
-    matches!(cmd, "web_viewer" | "web_unlock" | "profiles_list" | "profiles_switch_web")
+    matches!(cmd, "web_viewer" | "web_unlock" | "profiles_list" | "profiles_switch_web" | "profiles_add")
 }
 
 fn need(cmd: &str) -> Option<Need> {
@@ -1280,5 +1287,15 @@ mod tests {
         assert_eq!(q["page"], "p-1");
         assert_eq!(unescape("a%2"), "a%2");
         assert_eq!(unescape("%zz"), "%zz");
+    }
+
+    #[test]
+    fn a_locked_shared_sign_in_can_still_make_its_own_profile() {
+        assert!(open_while_locked("profiles_add"));
+        assert!(open_while_locked("profiles_switch_web"));
+        // Everything behind the PIN stays shut.
+        for cmd in ["media_rows", "media_my_list", "hidden_list", "profiles_update", "profiles_remove", "read_rows"] {
+            assert!(!open_while_locked(cmd), "{cmd}");
+        }
     }
 }
