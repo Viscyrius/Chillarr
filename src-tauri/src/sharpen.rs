@@ -48,8 +48,11 @@ const JPEG_Q: &str = "3";
 /// A chapter file this new may still be being written.
 const SETTLE: Duration = Duration::from_secs(30);
 const IDLE: Duration = Duration::from_secs(60);
-/// Pages per ffmpeg run, so the command line stays short.
-const PACK_BATCH: usize = 80;
+/// Pages per ffmpeg run. At 80, ffmpeg wrote only some of them ("Nothing was
+/// written into output file, because at least one of its streams received no
+/// packets"): 45 of 93 pages, and a third of all chapters failed to sharpen
+/// (log, 2026-11-18). 20 and 10 wrote all 93; 16 leaves room.
+const PACK_BATCH: usize = 16;
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 #[serde(default)]
