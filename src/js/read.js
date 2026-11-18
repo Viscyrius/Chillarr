@@ -6,7 +6,7 @@
 // complete copy, found by asking every source) or a copy of your choice,
 // then which chapters.
 import { hideButton, isHidden, markHidden } from "./hidden.js";
-import { away, ask, choose, el, expandRow, getPref, icon, ICON, invoke, listen, personKey, setPref, toast } from "./api.js";
+import { away, ask, choose, closeDialog, el, expandRow, getPref, icon, ICON, invoke, listen, personKey, setPref, toast } from "./api.js";
 import { selectable, stopSelecting } from "./select.js";
 import { openReader } from "./reader.js";
 import { openBook } from "./bookreader.js";
@@ -507,6 +507,10 @@ function stash() {
 window.addEventListener("chillarr:refresh", () => { for (const [k, e] of kept) if (!TAB_TITLE[e.tab]) kept.delete(k); });
 
 export async function renderRead(view, tab) {
+  // The same page drawn again (something you read changed): it's built out of
+  // sight and swapped in whole when ready, so it doesn't blank to placeholders
+  // and fill in again in front of you.
+  const again = !!(shown && shown.view === view && shown.tab === tab && shown.key === `${personKey()}:${styleNow()}:${tab}` && view.childElementCount);
   stash();
   alias = -1;
   const my = ++seq;
@@ -532,14 +536,25 @@ export async function renderRead(view, tab) {
   }
   const me = { key, tab, view, done: false, my };
   shown = me;
-  const drawn = TAB_TITLE[tab] ? explorePage(view, tab, my)
-    : tab === "r-all" ? allPage(view, my)
-    : tab === "r-author" ? authorPage(view, my)
-    : tab === "r-maker" ? makerPage(view, my)
-    : tab === "r-books" ? booksPage(view, my)
-    : tab === "r-mylist" ? listPage(view, my)
-    : tab === "r-downloads" ? downloadsPage(view, my)
-    : homePage(view, my);
+  const into = again ? el("div") : view;
+  const drawn = TAB_TITLE[tab] ? explorePage(into, tab, my)
+    : tab === "r-all" ? allPage(into, my)
+    : tab === "r-author" ? authorPage(into, my)
+    : tab === "r-maker" ? makerPage(into, my)
+    : tab === "r-books" ? booksPage(into, my)
+    : tab === "r-mylist" ? listPage(into, my)
+    : tab === "r-downloads" ? downloadsPage(into, my)
+    : homePage(into, my);
+  if (again) {
+    // In when it's all there, or after a few seconds whatever has come (a slow source).
+    const swap = () => {
+      if (!alive(my) || into.parentNode === view || !into.childNodes.length) return;
+      const y = scrollY;
+      view.replaceChildren(...into.childNodes);
+      scrollTo(0, y);
+    };
+    Promise.race([Promise.resolve(drawn).catch(() => {}), new Promise((r) => setTimeout(r, 4000))]).then(swap);
+  }
   // Kept only once it's all in: a page left half drawn stops (its seq moved on).
   Promise.resolve(drawn).then(() => { if (alive(my)) me.done = true; }, () => {});
   return drawn;
@@ -1401,7 +1416,9 @@ function panel() {
     panelComments.reset();
     if (staleBehind) { staleBehind = false; window.dispatchEvent(new Event("chillarr:refresh")); }
   });
-  dlg.addEventListener("click", (e) => { if (e.target === dlg) dlg.close(); });
+  dlg.addEventListener("click", (e) => { if (e.target === dlg) closeDialog(dlg); });
+  // Esc leaves the same soft way as the X.
+  dlg.addEventListener("cancel", (e) => { e.preventDefault(); closeDialog(dlg); });
   document.body.append(dlg);
   return dlg;
 }
@@ -1422,16 +1439,24 @@ function shell(c) {
   tidy(actions);
   if (!isBook(c)) { const rb = recommendButton("read", c); if (rb) actions.append(rb); }
   // Hide is on every series and book: it goes from every page of this profile.
-  const hideOn = () => actions.append(hideButton(c.title, () => { if (dlg) dlg.close(); }, c));
-  const poster = c.cover ? el("img", { class: "read-poster", src: c.cover, alt: "" }) : null;
-  hero.append(el("button", { class: "close", "aria-label": "Close", onclick: () => d.close() }, icon("M6 6l12 12M18 6L6 18")),
-    el("div", { class: "read-head-row" }, poster, el("div", { class: "detail-head" }, el("h2", { text: c.title }), meta, options, actions, isBook(c) ? null : whoLine("read", c))));
+  const hideOn = () => actions.append(hideButton(c.title, () => { if (dlg) closeDialog(dlg); }, c));
+  const poster = c.cover ? el("img", { class: "read-poster", src: c.cover, alt: "", dataset: { keep: "poster" } }) : null;
+  hero.append(el("button", { class: "close", "aria-label": "Close", onclick: () => closeDialog(d) }, icon("M6 6l12 12M18 6L6 18")),
+    el("div", { class: "read-head-row" }, poster, el("div", { class: "detail-head" }, el("h2", { text: c.title }), meta, options, actions, isBook(c) ? null : keepAs(whoLine("read", c), "who"))));
   const about = aboutBox(c);
   if (c.anilist && !isBook(c)) meta.parentNode.insertBefore(makersLine(c), meta.nextSibling);
   const body = el("div", { class: "detail-body" }, c.description ? el("p", { class: "overview read-overview", text: c.description }) : null, about);
   // Comments under everything on the panel, for every reading title (#76).
   // One list per title, whichever copy or source it was opened from.
   panelComments.show(c);
+  // Drawn again for the same series (a chapter marked, a button pressed): the
+  // parts that load by themselves (poster, who made it, who's reading it,
+  // More by, Similar) are carried over as they are instead of coming back
+  // empty and filling in again, so only what changed moves.
+  const same = d.open && d.dataset.title === titleId(c);
+  const old = same ? new Map([...d.querySelectorAll("[data-keep]")].map((n) => [n.dataset.keep, n])) : null;
+  d.dataset.title = titleId(c);
+  if (old) queueMicrotask(() => carryOver(d, old));
   // Redrawn in place: the comments box isn't taken out and put back, so a
   // comment being typed keeps its cursor while the panel updates.
   if (panelComments.box.parentNode === d) {
@@ -1448,6 +1473,20 @@ function shell(c) {
   return { actions, body, options, hideOn, about };
 }
 
+const keepAs = (n, k) => { n.dataset.keep = k; return n; };
+const titleId = (c) => String(c.anilist || c.key || c.title || "");
+
+/** Puts back the old, already loaded copy of each part in place of its new, empty one. */
+function carryOver(d, old) {
+  for (const fresh of d.querySelectorAll("[data-keep]")) {
+    const was = old.get(fresh.dataset.keep);
+    if (!was || was === fresh || was.isConnected) continue;
+    // Not loaded yet (still hidden or a placeholder): the new one carries on loading.
+    if (was.hidden || was.querySelector(":scope > .skel")) continue;
+    fresh.replaceWith(was);
+  }
+}
+
 /* ---------- who made it (issue: "Same author") ----------
    Like a film's director: the writer and the artist of a series are links,
    each opening everything else they made (r-maker), and the panel shows a
@@ -1461,14 +1500,14 @@ const makerHref = (m) => `#r-maker/${m.id}/${encodeURIComponent(m.name)}`;
 
 /** "Story and Art: Chugong · Art: DUBU", each name a link. Fills in when AniList answers. */
 function makersLine(c) {
-  const line = el("p", { class: "read-by", hidden: true });
+  const line = el("p", { class: "read-by", hidden: true, dataset: { keep: "by" } });
   makersOf(c.anilist).then((list) => {
     if (!list.length) return;
     const parts = [];
     list.slice(0, 3).forEach((m, i) => {
       if (i) parts.push(el("span", { class: "sep" }));
       parts.push(el("span", { class: "read-by-role", text: `${m.role} ` }),
-        el("button", { class: "maker-link", title: `Everything by ${m.name}`, onclick: () => { if (dlg) dlg.close(); location.hash = makerHref(m); } }, m.name));
+        el("button", { class: "maker-link", title: `Everything by ${m.name}`, onclick: () => { if (dlg) closeDialog(dlg); location.hash = makerHref(m); } }, m.name));
     });
     line.replaceChildren(...parts);
     line.hidden = false;
@@ -1479,7 +1518,7 @@ function makersLine(c) {
 /** "More by <writer>" under a series: their other series, this one left out. */
 function moreBySection(c, mine) {
   if (!c || !c.anilist || isBook(c)) return null;
-  const box = el("section", { class: "read-similar read-moreby", hidden: true });
+  const box = el("section", { class: "read-similar read-moreby", hidden: true, dataset: { keep: "moreby" } });
   makersOf(c.anilist).then(async (list) => {
     const m = list[0];
     if (!m) return;
@@ -1487,7 +1526,7 @@ function moreBySection(c, mine) {
       .filter((x) => x.anilist !== c.anilist);
     if (mine !== panelSeq || works.length < 1) return;
     box.replaceChildren(el("div", { class: "read-moreby-head" }, el("h3", { class: "read-similar-h", text: `More by ${m.name}` }),
-      el("a", { class: "explore", href: makerHref(m), onclick: () => { if (dlg) dlg.close(); } }, "See all", icon(ICON.right))),
+      el("a", { class: "explore", href: makerHref(m), onclick: () => { if (dlg) closeDialog(dlg); } }, "See all", icon(ICON.right))),
     el("div", { class: "read-similar-grid" }, works.slice(0, 12).map((x, i) => { const t = card(x); t.classList.add("rise"); t.style.setProperty("--i", String(i)); return t; })));
     box.hidden = false;
   });
@@ -1600,6 +1639,7 @@ function pickers(options, state) {
 
 /** Opens a series: `{ key }` for one you follow, `{ card }` for a title. */
 export async function openSeries({ key = null, card: c = null }) {
+  dlg?.classList.remove("closing");
   const mine = ++panelSeq;
   clearTimeout(poll);
   if (!key && c && followedOf(c)) key = followedOf(c);
@@ -1632,7 +1672,7 @@ const similarSeen = new Map();
 function similarSection(c, mine) {
   if (!c || !c.anilist) return null;
   const head = () => el("h3", { class: "read-similar-h", text: "Similar to this" });
-  const box = el("section", { class: "read-similar" }, head(), el("div", { class: "skel skel-row" }));
+  const box = el("section", { class: "read-similar", dataset: { keep: "similar" } }, head(), el("div", { class: "skel skel-row" }));
   const draw = (list) => {
     if (!list.length) { box.remove(); return; }
     box.replaceChildren(head(), el("div", { class: "read-similar-grid" }, list.slice(0, 12).map((x, i) => {
@@ -2218,7 +2258,7 @@ export async function deleteBookFile(x, others = []) {
 /** The reader goes over everything: the panel (a modal, drawn above all
  *  else) closes first and comes back, up to date, when the reader closes. */
 function read(key, chapter, c) {
-  if (dlg) dlg.close();
+  if (dlg) closeDialog(dlg);
   openReader(key, chapter, () => { openSeries({ key, card: c }); window.dispatchEvent(new Event("chillarr:refresh")); });
 }
 
@@ -2258,7 +2298,7 @@ async function unfollow(f, btn) {
   // It takes a few seconds with many chapters: the panel goes at once and says so,
   // instead of sitting there looking like nothing happened.
   if (btn) { btn.disabled = true; btn.textContent = "Stopping..."; }
-  if (dlg) dlg.close();
+  if (dlg) closeDialog(dlg);
   toast(`Stopping ${f.title}...`);
   try {
     toast(await invoke("read_unfollow", { key: f.key, delete: pick === "yes" }));
@@ -2280,6 +2320,7 @@ const bookMeta = (c) => ({ title: c.title, author: c.author ?? null, cover: c.co
 
 /** A book or light novel: read it if it's here, else find a copy. */
 export async function openBookPanel(c, mine = null) {
+  dlg?.classList.remove("closing");
   const my = ++panelSeq;
   delOk.clear();
   clearTimeout(poll);
@@ -2292,14 +2333,14 @@ export async function openBookPanel(c, mine = null) {
   const { actions, body, hideOn } = shell(shown);
   if (c.author) {
     const by = el("button", { class: "maker-link", title: `All books by ${c.author}`, onclick: () => {
-      if (dlg) dlg.close();
+      if (dlg) closeDialog(dlg);
       location.hash = `#r-author/${encodeURIComponent(c.author)}`;
     } }, c.author);
     actions.parentElement.querySelector(".meta").prepend(by, el("span", { class: "sep" }));
   }
   if (mine) {
     if (mine.ready) {
-      const go = (fromStart) => () => { if (dlg) dlg.close(); openBook(mine.key, () => openBookPanel(c), fromStart); };
+      const go = (fromStart) => () => { if (dlg) closeDialog(dlg); openBook(mine.key, () => openBookPanel(c), fromStart); };
       const done = mine.finished || mine.read >= 1;
       // Finished (90% in): Read again starts over; Resume still goes on from where you stopped.
       actions.append(el("button", { class: "btn play", onclick: go(done) }, icon(ICON.play),
@@ -2365,7 +2406,7 @@ async function bookCopies(c, list, btn, my) {
 
 async function removeBook(x) {
   if (!(await ask(`Remove ${x.title}?`, `The ${x.comic ? "comic" : "book"}'s file is deleted from your PC. You can download it again.`, [], "Remove", "Cancel"))) return;
-  try { toast(await invoke("read_book_remove", { key: x.key })); if (dlg) dlg.close(); window.dispatchEvent(new Event("chillarr:refresh")); }
+  try { toast(await invoke("read_book_remove", { key: x.key })); if (dlg) closeDialog(dlg); window.dispatchEvent(new Event("chillarr:refresh")); }
   catch (e) { toast(String(e), true); }
 }
 

@@ -85,7 +85,12 @@ function openMenu(anchor, actions) {
   const d = el("dialog", { class: "more-menu" + (sheet ? " sheet" : ""), role: "menu", "aria-label": "More options" },
     sheet ? el("span", { class: "more-grab", "aria-hidden": "true" }) : null,
     ...safe, safe.length && risky.length ? el("span", { class: "more-sep", role: "separator" }) : null, ...risky);
-  const close = () => { d.classList.add("closing"); setTimeout(() => d.remove(), 160); if (d.open) d.close(); anchor.setAttribute("aria-expanded", "false"); };
+  const close = () => {
+    anchor.setAttribute("aria-expanded", "false");
+    if (d.classList.contains("closing")) return;
+    d.classList.add("closing");
+    setTimeout(() => { if (d.open) d.close(); d.remove(); }, 200);
+  };
   d.addEventListener("click", (e) => { if (e.target === d) close(); });
   d.addEventListener("cancel", (e) => { e.preventDefault(); close(); });
   document.body.append(d);

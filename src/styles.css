@@ -3286,3 +3286,14 @@ dialog.rec-dlg.sheet .rec-go .btn { flex: 1; justify-content: center; min-height
   .rec-track { grid-auto-columns: 86%; }
   .into-track { grid-auto-columns: 120px; }
 }
+
+/* Every window leaves the way it came in: the panel eases out and the dim
+   behind it fades with it; a phone's bottom sheet slides back down. */
+dialog.closing::backdrop { animation: backdrop-out 0.22s ease forwards; }
+@keyframes backdrop-out { to { opacity: 0; } }
+dialog.more-menu.closing { transition: none; animation: shut 0.18s ease forwards; }
+dialog.more-menu.sheet.closing, dialog.rec-dlg.sheet.closing { animation: sheet-down 0.22s cubic-bezier(0.4, 0, 1, 1) forwards; }
+@keyframes sheet-down { to { transform: translateY(100%); } }
+@media (prefers-reduced-motion: reduce) {
+  dialog.closing, dialog.closing::backdrop, dialog.more-menu.sheet.closing, dialog.rec-dlg.sheet.closing { animation-duration: 0.01s; }
+}

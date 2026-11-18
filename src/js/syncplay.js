@@ -12,7 +12,7 @@
 // can lock it or ask for a password, remove someone, and turn on "Only I
 // control". The PC holds and enforces all of it; this page only shows it and
 // asks. Joining goes through syncplay_join, never Jellyfin's Join directly.
-import { $, ask, el, getPref, icon, invoke, listen, setPref, store, toast } from "./api.js";
+import { $, ask, closeDialog, el, getPref, icon, invoke, listen, setPref, store, toast } from "./api.js";
 import { syncControl as player } from "./player.js";
 
 const TICKS = 1e7;
@@ -427,13 +427,13 @@ async function draw() {
       invite(),
       el("div", { class: "ask-actions" },
         el("button", { class: "btn ghost", onclick: leave }, "Leave party"),
-        el("button", { class: "btn primary", onclick: () => dlg.close() }, "Done")));
+        el("button", { class: "btn primary", onclick: () => closeDialog(dlg) }, "Done")));
   } else {
     parts.push(el("p", { class: "wt-note", text: "Watch in sync with friends: everyone sees the same moment, and play, pause and skip happen for all." }));
     const list = el("div", { class: "wt-groups" }, el("p", { class: "wt-note", text: "Looking for parties..." }));
     parts.push(el("div", { class: "ask-actions", style: "justify-content:flex-start" }, el("button", { class: "btn primary", onclick: create }, "Start a watch party")),
       el("h3", { text: "Join one" }), list, invite(),
-      el("div", { class: "ask-actions" }, el("button", { class: "btn ghost", onclick: () => dlg.close() }, "Close")));
+      el("div", { class: "ask-actions" }, el("button", { class: "btn ghost", onclick: () => closeDialog(dlg) }, "Close")));
     Promise.all([call("/SyncPlay/List", null, "GET"), invoke("syncplay_locks").catch(() => ({}))]).then(([groups, locks]) => {
       const rows = (groups || []).map((x) => groupRow(x, (locks || {})[x.GroupId] || "open"));
       list.replaceChildren(...(rows.length ? rows : [el("p", { class: "wt-note", text: "No parties right now. Start one, or ask a friend to." })]));
@@ -670,7 +670,7 @@ chatInput.addEventListener("keydown", (e) => {
   e.stopPropagation();
   if (e.key === "Escape" || [461, 10009].includes(e.keyCode)) { e.preventDefault(); toggleChat(false); }
 });
-dlg.addEventListener("click", (e) => { if (e.target === dlg) dlg.close(); });
+dlg.addEventListener("click", (e) => { if (e.target === dlg) closeDialog(dlg); });
 
 // The host changed something, or someone came or went: ask again.
 listen("together-room", (e) => { if (g.id && e.payload && e.payload.group === g.id) loadRoom(); });

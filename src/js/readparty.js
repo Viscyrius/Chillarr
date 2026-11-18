@@ -10,7 +10,7 @@
 //   Free: everyone reads at their own pace; "Jump to the host" catches up.
 // The host can also lock the party, ask for a password, and remove someone.
 // The PC checks all of it; this page only shows it and asks.
-import { away, ask, el, getPref, icon, invoke, listen, personKey, setPref, toast } from "./api.js";
+import { away, ask, closeDialog, el, getPref, icon, invoke, listen, personKey, setPref, toast } from "./api.js";
 import { openReader } from "./reader.js";
 
 const PEOPLE = "M16 19v-1a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v1M12.5 7a3 3 0 1 1-6 0 3 3 0 0 1 6 0M21 19v-1a4 4 0 0 0-3-3.9M15.5 4.1a3 3 0 0 1 0 5.8";
@@ -231,7 +231,7 @@ function paintNote() {
 
 /* ---------- the panel ---------- */
 let dlg = null;
-function close() { if (dlg && dlg.open) dlg.close(); }
+function close() { if (dlg && dlg.open) closeDialog(dlg); }
 const MODES = [["together", "Together"], ["follow", "Follow me"], ["free", "Free"]];
 const MODE_NOTE = {
   together: "Anyone who turns the page moves everyone.",

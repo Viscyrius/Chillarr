@@ -3,7 +3,7 @@
 // card carries its title's ids in data-hk, and the rule hides cards holding a
 // hidden id). They show only in the Hidden tab, behind the profile's hidden
 // password, on the one device it was typed on, for 15 minutes.
-import { el, getPref, invoke, setPref, toast } from "./api.js";
+import { closeDialog, el, getPref, invoke, setPref, toast } from "./api.js";
 
 // The last list, so a page drawn before the PC answers already leaves them out,
 // and a failed ask never shows them (it used to clear the list).
@@ -86,7 +86,7 @@ function askPassword(title, body, { twice = false, old = false } = {}) {
     const two = twice ? field("Type it again", "new-password") : null;
     const err = el("p", { class: "hd-err", hidden: true });
     const d = el("dialog", { class: "hd-ask" });
-    const finish = (v) => { d.close(); d.remove(); done(v); };
+    const finish = (v) => { closeDialog(d); setTimeout(() => d.remove(), 260); done(v); };
     const ok = () => {
       if (twice && one.value !== two.value) { err.textContent = "Those don't match."; err.hidden = false; return; }
       if (!one.value) { err.textContent = "Type the password."; err.hidden = false; return; }

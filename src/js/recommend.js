@@ -1,7 +1,7 @@
 // Recommend: send a title to other profiles on this Chillarr, with a note,
 // and see what they sent you ("Recommended for you") and what they've been
 // watching and reading ("Your profiles are into"). recommend.rs keeps it.
-import { el, icon, invoke, toast } from "./api.js";
+import { closeDialog, el, icon, invoke, toast } from "./api.js";
 import { isHidden } from "./hidden.js";
 import { sheetMode } from "./more.js";
 
@@ -61,9 +61,10 @@ export async function openRecommend(kind, c) {
     el("div", { class: "rec-people" }, tiles),
     el("label", { class: "rec-note-wrap" }, el("span", { text: "Add a note" }), note),
     el("div", { class: "rec-go" }, el("button", { class: "btn ghost", type: "button", onclick: () => shut() }, "Cancel"), send));
-  const shut = () => { if (d.open) d.close(); setTimeout(() => d.remove(), 200); };
+  const shut = () => closeDialog(d);
   d.addEventListener("click", (e) => { if (e.target === d) shut(); });
-  d.addEventListener("close", () => setTimeout(() => d.remove(), 200));
+  d.addEventListener("close", () => d.remove());
+  d.addEventListener("cancel", (e) => { e.preventDefault(); shut(); });
   send.addEventListener("click", async () => {
     send.disabled = true;
     try {
@@ -100,10 +101,17 @@ const nameOf = (r) => r.from_name || "Someone";
  * "read" (Reading); `open` opens a card the way that page does. The section
  * removes itself when there's nothing to show.
  */
+// The last answer, so the rows come back drawn at once when a page is drawn
+// again, and change only if the new answer is different.
+let lastAnswer = null;
+
 export function profileRows(kind, open, alive = () => true) {
   const box = el("div", { class: "pf-rows" });
-  Promise.all([invoke("recommend_inbox").catch(() => []), invoke("recommend_into").catch(() => [])]).then(([inbox, into]) => {
-    if (!alive()) return;
+  let drawnFrom = "";
+  const fill = ([inbox, into]) => {
+    const sig = JSON.stringify([inbox, into]);
+    if (!alive() || sig === drawnFrom) return;
+    drawnFrom = sig;
     const recs = inbox.filter((r) => r.kind === kind && !isHidden(r.card));
     const near = into.filter((x) => x.kind === kind && !isHidden(x.card));
     const parts = [];
@@ -121,8 +129,12 @@ export function profileRows(kind, open, alive = () => true) {
         el("div", { class: "row-head" }, el("h2", { text: kind === "read" ? "Your profiles are reading" : "Your profiles are into" }), el("span", { class: "count", text: "What the others here watched and read lately" })),
         el("div", { class: "into-track" }, near.map((x) => intoCard(x, open)))));
     }
-    if (!parts.length) { box.remove(); return; }
     box.replaceChildren(...parts);
+  };
+  if (lastAnswer) fill(lastAnswer);
+  Promise.all([invoke("recommend_inbox").catch(() => []), invoke("recommend_into").catch(() => [])]).then((got) => {
+    lastAnswer = got;
+    fill(got);
   });
   return box;
 }
@@ -132,7 +144,11 @@ function recCard(r, open, gone) {
   const art = c.cover || c.poster;
   const go = () => open(c);
   const dismiss = async () => {
-    try { await invoke("recommend_dismiss", { id: r.id }); gone(); } catch (e) { toast(String(e), true); }
+    try {
+      await invoke("recommend_dismiss", { id: r.id });
+      if (lastAnswer) lastAnswer = [lastAnswer[0].filter((x) => x.id !== r.id), lastAnswer[1]];
+      gone();
+    } catch (e) { toast(String(e), true); }
   };
   return el("article", { class: "rec-card" },
     el("button", { class: "rec-card-art", type: "button", "aria-label": `Open ${c.title}`, onclick: go }, art ? el("img", { src: art, alt: "", loading: "lazy" }) : el("span", { text: c.title })),
