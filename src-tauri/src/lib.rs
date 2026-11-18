@@ -1,4 +1,5 @@
 mod arr;
+mod recommend;
 mod activity;
 mod dubcheck;
 mod seen;
@@ -945,6 +946,36 @@ fn hidden_set(app: AppHandle, keys: Vec<String>, hide: bool, label: Option<Strin
 }
 
 #[tauri::command]
+fn recommend_targets(app: AppHandle, adult: Option<bool>) -> Result<Vec<recommend::Target>, String> {
+    recommend::targets(&app, adult.unwrap_or(false))
+}
+
+#[tauri::command]
+fn recommend_send(app: AppHandle, kind: String, card: serde_json::Value, to: Vec<String>, note: Option<String>) -> Result<String, String> {
+    recommend::send(&app, &kind, card, &to, note.as_deref())
+}
+
+#[tauri::command]
+fn recommend_inbox(app: AppHandle) -> Result<Vec<recommend::Rec>, String> {
+    recommend::inbox(&app)
+}
+
+#[tauri::command]
+fn recommend_dismiss(app: AppHandle, id: String) -> Result<(), String> {
+    recommend::dismiss(&app, &id)
+}
+
+#[tauri::command]
+async fn recommend_into(app: AppHandle) -> Result<Vec<recommend::IntoItem>, String> {
+    recommend::into(&app).await
+}
+
+#[tauri::command]
+async fn recommend_who(app: AppHandle, kind: String, card: serde_json::Value) -> Result<Vec<recommend::Who>, String> {
+    recommend::who(&app, &kind, &card).await
+}
+
+#[tauri::command]
 fn hidden_list(app: AppHandle) -> Result<Vec<hidden::Entry>, String> {
     hidden::list(&app)
 }
@@ -1397,6 +1428,7 @@ pub fn run() {
         .manage(onboard::Onboard::default())
         .manage(read::Reading::default())
         .manage(hidden::Hidden::default())
+        .manage(recommend::Recommend::default())
         .manage(seen::Seen::default())
         .manage(newep::Cache::default())
         .invoke_handler(tauri::generate_handler![
@@ -1417,6 +1449,12 @@ pub fn run() {
             hidden_unlock,
             hidden_lock,
             hidden_set,
+            recommend_targets,
+            recommend_send,
+            recommend_inbox,
+            recommend_dismiss,
+            recommend_into,
+            recommend_who,
             notify_state,
             notify_set,
             notify_list,

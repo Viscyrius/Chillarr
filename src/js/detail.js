@@ -6,6 +6,8 @@ import { completedActions, confirmRedownload, isWatched, listable, loadWatched, 
 import { subtitlesControl } from "./subpick.js";
 import { commentsBox, loadComments } from "./comments.js";
 import { notifyButton } from "./notify.js";
+import { tidy } from "./more.js";
+import { recommendButton, whoLine } from "./recommend.js";
 
 const dlg = $("#detail");
 const shut = () => {
@@ -864,6 +866,11 @@ export async function openDetail(t, opts = {}) {
   $("#detail-episodes").hidden = true;
   const actions = $("#detail-actions");
   actions.replaceChildren();
+  // The few buttons used every time stay in the row; the rest go in ⋯ (more.js).
+  tidy(actions);
+  // Which other profiles watched it, under the buttons (recommend.js).
+  actions.parentNode.querySelector(".who-line")?.remove();
+  if (t.kind !== "episode" || t.series_id) actions.after(whoLine("media", t));
   // Opened from inside itself (a Similar card, Back): already open, and a
   // second showModal throws on Chrome before 114 (TVs).
   if (!dlg.open) dlg.showModal();
@@ -947,6 +954,7 @@ export async function openDetail(t, opts = {}) {
   // Notify me: a film not here yet, or any show (its new episodes and seasons).
   if (!opts.episodes && !watching && t.kind !== "episode" && !(t.jf_id && movieLike(t))) actions.append(...notifyButton({ tile: t }));
   actions.append(hideButton(t.subtitle && t.kind === "episode" ? t.title : t.title, () => shut(), t));
+  if (!watching) { const rb = recommendButton("media", t); if (rb) actions.append(rb); }
   if (t.jf_id && t.kind !== "episode" && !watching) {
     actions.append(subtitlesControl(t).el);
     if (canDelete()) actions.append(deleteButton(t));

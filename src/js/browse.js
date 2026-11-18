@@ -11,6 +11,7 @@ import { tabbed } from "./read.js";
 import { FILTER_KIND, inlineFilters } from "./filter.js";
 import { adultOf, adultShows } from "./filterpanel.js";
 import { selectable, stopSelecting } from "./select.js";
+import { profileRows } from "./recommend.js";
 
 const WIDE = new Set(["continue", "downloading"]);
 let refreshTimer;
@@ -1368,7 +1369,7 @@ async function draw(view, tab, rows, mode, seq) {
   const box = el("div", { class: side ? "rows mn-rows" : "rows" });
   const chips = chipBar(rows, tab);
   const filters = inlineFilters(tab, box, chips);
-  box.append(...[side, inlinePicker(), filters, filters ? null : chips, banner, yourWeek(tab, seq), ...rows.map((r, i) => rowEl(r, i))].filter(Boolean));
+  box.append(...[side, inlinePicker(), filters, filters ? null : chips, banner, yourWeek(tab, seq), tab === "home" ? profileRows("media", (t) => openDetail(t), () => seq === renderSeq) : null, ...rows.map((r, i) => rowEl(r, i))].filter(Boolean));
   // Home's count of shows with new episodes (none: the bubble goes).
   if (tab === "home") homeBubble((rows.find((r) => r.id === "new-episodes") || { tiles: [] }).tiles.length);
   swapIn(view, [h, box], mode);

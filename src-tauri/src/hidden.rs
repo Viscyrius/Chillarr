@@ -177,6 +177,12 @@ fn gate(app: &AppHandle, uid: &str, ok: impl FnOnce() -> bool) -> Result<(), Str
     Err("That's not the hidden password.".into())
 }
 
+/// A profile's hidden ids, for recommend.rs to keep its titles out of what
+/// other profiles see it watching. Never shown, only matched against.
+pub fn keys_of(app: &AppHandle, uid: &str) -> Vec<String> {
+    to_hide(&load(app, uid))
+}
+
 // ---------- commands ----------
 
 #[derive(Serialize)]

@@ -13,6 +13,8 @@ import { openBook } from "./bookreader.js";
 import { adultDefault, adultFields, adultOf, adultShows, chipKit, pornOn, clearButton, filtersButton, moreButton, orderSelect } from "./filterpanel.js";
 import { notifyButton } from "./notify.js";
 import { readingComments } from "./comments.js";
+import { tidy } from "./more.js";
+import { profileRows, recommendButton, whoLine } from "./recommend.js";
 import { applyLook, drawPickers, inlinePicker, onStyle, styleNow } from "./look.js";
 
 const KIND = { KR: "Manhwa", CN: "Manhua", TW: "Manhua", JP: "Manga" };
@@ -963,7 +965,7 @@ async function homePage(view, my) {
   const lib = el("div");
   const rows = el("div", {}, ...skel());
   const top = el("div", { class: "read-hero-slot" });
-  view.replaceChildren(top, page(inlinePicker(), head("Reading"), lib, rows));
+  view.replaceChildren(top, page(inlinePicker(), head("Reading"), lib, profileRows("read", (c) => { const k = c.key && /^m[0-9a-f]+$/.test(c.key) ? c.key : followedByAnilist.get(c.anilist); openSeries(k ? { key: k, card: c } : { card: c }); }, () => alive(my)), rows));
   const [{ lib: series }, books] = await Promise.all([know(), invoke("read_books").catch(() => [])]);
   if (!alive(my)) return;
   myBooks = books;
@@ -1416,11 +1418,14 @@ function shell(c) {
     .filter(Boolean).flatMap((x, i) => (i ? [el("span", { class: "sep" }), el("span", { text: x })] : [el("span", { text: x })])));
   const options = el("div", { class: "read-options" });
   const actions = el("div", { class: "actions" });
+  // The few buttons used every time stay in the row; the rest go in ⋯ (more.js).
+  tidy(actions);
+  if (!isBook(c)) { const rb = recommendButton("read", c); if (rb) actions.append(rb); }
   // Hide is on every series and book: it goes from every page of this profile.
   const hideOn = () => actions.append(hideButton(c.title, () => { if (dlg) dlg.close(); }, c));
   const poster = c.cover ? el("img", { class: "read-poster", src: c.cover, alt: "" }) : null;
   hero.append(el("button", { class: "close", "aria-label": "Close", onclick: () => d.close() }, icon("M6 6l12 12M18 6L6 18")),
-    el("div", { class: "read-head-row" }, poster, el("div", { class: "detail-head" }, el("h2", { text: c.title }), meta, options, actions)));
+    el("div", { class: "read-head-row" }, poster, el("div", { class: "detail-head" }, el("h2", { text: c.title }), meta, options, actions, isBook(c) ? null : whoLine("read", c))));
   const about = aboutBox(c);
   if (c.anilist && !isBook(c)) meta.parentNode.insertBefore(makersLine(c), meta.nextSibling);
   const body = el("div", { class: "detail-body" }, c.description ? el("p", { class: "overview read-overview", text: c.description }) : null, about);
@@ -1557,7 +1562,7 @@ function aboutBox(c) {
 function listButton(c) {
   const key = cardKey(c);
   if (!key) return null;
-  const b = el("button", { class: "btn soft" });
+  const b = el("button", { class: "btn soft list-btn" });
   const draw = () => b.replaceChildren(icon(listKeys.has(key) ? "M5 12l5 5L20 7" : "M12 5v14M5 12h14"), listKeys.has(key) ? "On My List" : "Add to My List");
   draw();
   b.addEventListener("click", async () => {
@@ -1902,25 +1907,31 @@ async function showFollowed(key, mine, c0) {
   const count = here.length === d.chapters.length ? `${d.chapters.length} downloaded` : `${here.length} of ${d.chapters.length} downloaded`;
   const chBox = el("section", { class: "ep-pick read-chbox", "aria-label": "Chapters" },
     el("div", { class: "ep-pick-head" }, el("h3", { text: "Chapters" }), el("small", { class: "read-chbox-count", text: count })),
-    markBar(key, d.chapters, c0), list);
+    markBar(key, d.chapters, c0, list), list);
   body.append(...[where, chBox, moreBySection(c, mine), similarSection(c, mine)].filter(Boolean));
   if (scroll) dlg.scrollTop = scroll;
   // Drawn again (a chapter marked, a download done): the list stays where it was.
   if (listAt) list.scrollTop = listAt;
 }
 
-/** Marks a stretch of chapters read (read somewhere else, or skipped), or the whole series. */
-function markBar(key, chs, c0) {
+/**
+ * The chapter list's tools: Mark all read, and Select. Select puts a tick box
+ * on every chapter (shift-click, or a long press on a phone, ticks the whole
+ * stretch since the last one) and one bar acts on what's ticked: Mark read,
+ * Download, Delete. The same calls the old From/To bar made.
+ */
+function markBar(key, chs, c0, list) {
   if (!chs.length) return null;
-  const nums = chs.map((r) => r.number).filter((n) => n != null);
-  const lo = nums.length ? Math.min(...nums) : null;
-  const hi = nums.length ? Math.max(...nums) : null;
-  const box = (label, ph) => el("input", { class: "read-from", type: "number", step: "any", placeholder: ph != null ? String(ph) : "", "aria-label": label });
-  const from = box("From chapter", lo);
-  const to = box("To chapter", hi);
   const all = chs.every((r) => r.read);
+  const byId = new Map(chs.map((r) => [String(r.id), r]));
+  const picked = new Set();
+  let last = null;
+  let selecting = false;
+  const rows = () => [...list.querySelectorAll(":scope > li[data-ch]")];
+  const count = el("strong", { class: "sel-count" });
+  const hint = el("span", { class: "sel-hint", text: matchMedia("(hover: none)").matches ? "Long-press to pick a stretch" : "Shift-click to pick a stretch" });
   const send = async (ids, read, btn) => {
-    if (!ids.length) { toast("No chapters in that stretch."); return; }
+    if (!ids.length) { toast(read ? "Those are all read already." : "Nothing to mark."); return; }
     btn.disabled = true;
     try {
       await invoke("read_mark", { key, chapters: ids, read });
@@ -1928,30 +1939,101 @@ function markBar(key, chs, c0) {
       refreshIfOpen(key, c0);
     } catch (e) { toast(String(e), true); btn.disabled = false; }
   };
-  // The chapters between the two boxes (either way round; empty means from the start or to the end).
-  const pick = () => {
-    const a = from.value === "" ? -Infinity : Number(from.value);
-    const b = to.value === "" ? Infinity : Number(to.value);
-    const [x, y] = a <= b ? [a, b] : [b, a];
-    return chs.filter((r) => r.number != null && r.number >= x && r.number <= y);
-  };
-  const go = el("button", { class: "btn soft", onclick: (e) => send(pick().filter((r) => !r.read).map((r) => r.id), true, e.currentTarget) }, "Mark read");
-  const get = el("button", { class: "btn soft", onclick: async (e) => {
-    const ids = pick().filter((r) => !r.downloaded && r.queued == null).map((r) => r.id);
+  const chosen = () => [...picked].map((id) => byId.get(id)).filter(Boolean);
+  const markBtn = el("button", { class: "btn soft small", type: "button", onclick: (e) => {
+    const sel = chosen();
+    const unread = sel.filter((r) => !r.read);
+    // All of them read already: the button marks them unread instead.
+    if (!unread.length) send(sel.map((r) => r.id), false, e.currentTarget); else send(unread.map((r) => r.id), true, e.currentTarget);
+  } }, "Mark read");
+  const getBtn = el("button", { class: "btn soft small", type: "button", onclick: async (e) => {
+    const ids = chosen().filter((r) => !r.downloaded && r.queued == null).map((r) => r.id);
     if (!ids.length) { toast("Those are all downloaded already."); return; }
     const btn = e.currentTarget;
     btn.disabled = true;
     try { toast(await invoke("read_get_chapters", { key, ids })); refreshIfOpen(key, c0); } catch (err) { toast(String(err), true); btn.disabled = false; }
   } }, icon(ICON.download), "Download");
-  const del = delOk.get(key) ? el("button", { class: "btn soft", onclick: async () => {
-    const ids = pick().filter((r) => r.downloaded).map((r) => r.id);
+  const delBtn = delOk.get(key) ? el("button", { class: "btn soft small sel-del", type: "button", onclick: async () => {
+    const ids = chosen().filter((r) => r.downloaded).map((r) => r.id);
     if (!ids.length) { toast("None of those are downloaded."); return; }
     if (await deleteChapters(key, ids)) refreshIfOpen(key, c0);
   } }, icon(TRASH), "Delete") : null;
-  const whole = el("button", { class: "btn soft", onclick: (e) => send(all ? chs.map((r) => r.id) : chs.filter((r) => !r.read).map((r) => r.id), !all, e.currentTarget) },
+  const allBtn = el("button", { class: "linkish", type: "button", onclick: () => { const on = picked.size !== chs.length; rows().forEach((li) => set(li, on)); paint(); } }, "All");
+  const done = el("button", { class: "sel-x", type: "button", "aria-label": "Stop selecting", onclick: () => toggle(false) }, icon("M6 6l12 12M18 6L6 18"));
+  const selBar = el("div", { class: "sel-bar", hidden: true }, count, hint, el("span", { class: "read-markbar-gap" }), allBtn, markBtn, getBtn, delBtn, done);
+  const selectBtn = el("button", { class: "btn soft small", type: "button", "aria-pressed": "false", onclick: () => toggle(!selecting) },
+    icon("M4 4h16v16H4z", "M8 12l3 3 5-6"), "Select");
+  const whole = el("button", { class: "btn soft small", type: "button", onclick: (e) => send(all ? chs.map((r) => r.id) : chs.filter((r) => !r.read).map((r) => r.id), !all, e.currentTarget) },
     all ? "Mark all unread" : "Mark all read");
-  return el("div", { class: "read-markbar" },
-    el("span", { text: "From chapter" }), from, el("span", { text: "to" }), to, go, get, del, el("span", { class: "read-markbar-gap" }), whole);
+
+  function set(li, on) {
+    const box = li.querySelector(".sel-box");
+    if (box) box.checked = on;
+    li.classList.toggle("picked", on);
+    if (on) picked.add(li.dataset.ch); else picked.delete(li.dataset.ch);
+  }
+  function paint() {
+    count.textContent = picked.size ? `${picked.size} selected` : "Tick chapters";
+    for (const b of [markBtn, getBtn, delBtn]) if (b) b.disabled = !picked.size;
+    const sel = chosen();
+    markBtn.textContent = sel.length && sel.every((r) => r.read) ? "Mark unread" : "Mark read";
+  }
+  function pick(li, shift) {
+    const list2 = rows();
+    const i = list2.indexOf(li);
+    const on = !picked.has(li.dataset.ch);
+    if (shift && last != null && last !== i) {
+      const [a, b] = [Math.min(last, i), Math.max(last, i)];
+      for (let j = a; j <= b; j++) set(list2[j], true);
+    } else set(li, on);
+    last = i;
+    paint();
+  }
+  function toggle(on) {
+    selecting = on;
+    list.classList.toggle("selecting", on);
+    selBar.hidden = !on;
+    selectBtn.setAttribute("aria-pressed", String(on));
+    selectBtn.classList.toggle("on", on);
+    if (!on) { rows().forEach((li) => set(li, false)); last = null; }
+    else for (const li of rows()) {
+      if (li.querySelector(".sel-box")) continue;
+      const r = byId.get(li.dataset.ch);
+      li.prepend(el("input", { type: "checkbox", class: "sel-box", "aria-label": r ? chLabel(r) : "Chapter", tabindex: "-1" }));
+    }
+    paint();
+  }
+  // While selecting, a click anywhere on a row ticks it instead of opening it.
+  list.addEventListener("click", (e) => {
+    // The click that ends a long press doesn't also tick (or open) the row.
+    if (list.dataset.pressed) { delete list.dataset.pressed; e.preventDefault(); e.stopPropagation(); return; }
+    if (!selecting) return;
+    const li = e.target.closest("li[data-ch]");
+    if (!li) return;
+    e.preventDefault();
+    e.stopPropagation();
+    pick(li, e.shiftKey);
+  }, true);
+  // A long press starts selecting (on a phone), and ticks the stretch since the last one.
+  let press = 0;
+  list.addEventListener("pointerdown", (e) => {
+    if (e.pointerType !== "touch") return;
+    const li = e.target.closest("li[data-ch]");
+    if (!li) return;
+    clearTimeout(press);
+    press = setTimeout(() => {
+      press = 0;
+      if (!selecting) toggle(true);
+      pick(li, last != null);
+      list.dataset.pressed = "1";
+    }, 450);
+  });
+  const cancel = () => { clearTimeout(press); press = 0; };
+  list.addEventListener("pointerup", cancel);
+  list.addEventListener("pointercancel", cancel);
+  list.addEventListener("pointermove", (e) => { if (Math.abs(e.movementY) > 4) cancel(); });
+  list.addEventListener("contextmenu", (e) => { if (e.target.closest("li[data-ch]") && matchMedia("(hover: none)").matches) e.preventDefault(); });
+  return el("div", { class: "read-markbar" }, el("div", { class: "read-markbar-tools" }, selectBtn, whole), selBar);
 }
 
 function chapterRow(key, r, c0) {

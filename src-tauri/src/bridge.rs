@@ -345,6 +345,8 @@ fn need(cmd: &str) -> Option<Need> {
         | "read_rows" | "read_search" | "read_library" | "read_detail" | "read_sources" | "read_follow" | "read_open" | "read_progress" | "read_mode" | "read_hide_week" | "read_mark"
         // Each profile's own hidden list and password (hidden.rs).
         | "seen_touch" | "hidden_status" | "hidden_set_password" | "hidden_unlock" | "hidden_lock" | "hidden_set" | "hidden_list"
+        // Recommend (recommend.rs): sent as the viewer, read from the viewer's own inbox.
+        | "recommend_targets" | "recommend_send" | "recommend_inbox" | "recommend_dismiss" | "recommend_into" | "recommend_who"
         // Each profile's own Notify me list and notes (notify.rs).
         | "notify_state" | "notify_set" | "notify_list" | "notify_unseen"
         // Host-only ones check the viewer is the party's host (readparty.rs).
@@ -510,6 +512,12 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
         "hidden_lock" => res(crate::hidden::lock(app)),
         "hidden_set" => res(crate::hidden::set(app, &arg::<Vec<String>>(a, "keys")?, arg(a, "hide")?, arg::<Option<String>>(a, "label")?.as_deref(), arg::<Option<Value>>(a, "item")?)),
         "hidden_list" => res(crate::hidden::list(app)),
+        "recommend_targets" => res(crate::recommend::targets(app, arg::<Option<bool>>(a, "adult")?.unwrap_or(false))),
+        "recommend_send" => res(crate::recommend::send(app, &arg::<String>(a, "kind")?, arg(a, "card")?, &arg::<Vec<String>>(a, "to")?, arg::<Option<String>>(a, "note")?.as_deref())),
+        "recommend_inbox" => res(crate::recommend::inbox(app)),
+        "recommend_dismiss" => res(crate::recommend::dismiss(app, &arg::<String>(a, "id")?)),
+        "recommend_into" => res(crate::recommend::into(app).await),
+        "recommend_who" => res(crate::recommend::who(app, &arg::<String>(a, "kind")?, &arg::<Value>(a, "card")?).await),
         "notify_state" => res(crate::notify::state(app, &arg(a, "target")?)),
         "notify_set" => res(crate::notify::set(app, &arg(a, "target")?, arg(a, "on")?, arg::<Option<bool>>(a, "auto")?.unwrap_or(false))),
         "notify_list" => res(crate::notify::list(app)),
