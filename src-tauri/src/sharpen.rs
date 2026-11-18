@@ -62,7 +62,14 @@ struct Saved {
     as_is: Vec<String>,
     /// Chapters Real-ESRGAN failed on, so they aren't tried every minute.
     failed: Vec<String>,
+    /// Which FAILED_ROUND `failed` was made in. A fix that should let the
+    /// failed ones through bumps FAILED_ROUND, and they're all tried again once.
+    failed_round: u32,
 }
+
+/// 1: packing went to 16 pages a run (PACK_BATCH); the 31 chapters that failed
+/// on 80 at once get another go (2026-11-18).
+const FAILED_ROUND: u32 = 1;
 
 #[derive(Default)]
 struct Live {
@@ -84,7 +91,14 @@ fn path(app: &AppHandle) -> Option<PathBuf> {
 
 fn with<R>(app: &AppHandle, f: impl FnOnce(&mut Saved) -> R) -> R {
     let mut g = STATE.lock().unwrap_or_else(|e| e.into_inner());
-    let s = g.get_or_insert_with(|| path(app).and_then(|p| std::fs::read_to_string(p).ok()).and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default());
+    let s = g.get_or_insert_with(|| {
+        let mut s: Saved = path(app).and_then(|p| std::fs::read_to_string(p).ok()).and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+        if s.failed_round < FAILED_ROUND {
+            s.failed.clear();
+            s.failed_round = FAILED_ROUND;
+        }
+        s
+    });
     f(s)
 }
 
