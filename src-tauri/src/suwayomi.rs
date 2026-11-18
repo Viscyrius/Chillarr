@@ -757,6 +757,86 @@ async fn one_source(source_id: String, source: String, names: Vec<String>) -> Op
     None
 }
 
+/// The sites a search also asks directly (read::search), by Suwayomi's display
+/// name. Big, fast, mostly manhwa: what they carry that the catalogs (AniList,
+/// MangaUpdates) don't list yet shows up anyway. Shadow Slave's manhwa was on
+/// Asura Scans and in neither catalog (2026-11-18).
+const SEARCH_SITES: [&str; 4] = ["Asura Scans", "Flame Comics", "Weeb Central", "MangaFire"];
+/// How long a search waits for them. The catalogs answer first; a slow site
+/// never holds a search up longer than this.
+const SITE_SEARCH_SECS: u64 = 6;
+
+/// One series a site had: its name there and which site.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SiteHit {
+    pub title: String,
+    pub source: String,
+}
+
+/// The series `term` names on the SEARCH_SITES, best match first. Never starts
+/// the manga downloader (a search shouldn't wait two minutes for Java), and
+/// never fails: a site that's down or slow just isn't in the answer.
+pub async fn site_search(term: &str, lang: &str) -> Vec<SiteHit> {
+    let work = async {
+        let Ok(srcs) = gql("{sources{nodes{id displayName lang}}}", json!({})).await else { return vec![] };
+        let nodes = srcs["sources"]["nodes"].as_array().cloned().unwrap_or_default();
+        let picked: Vec<(String, String)> = nodes
+            .iter()
+            .filter(|n| n["lang"].as_str().is_some_and(|l| l == lang || l == "all"))
+            .filter_map(|n| Some((n["id"].as_str()?.to_string(), n["displayName"].as_str()?.to_string())))
+            .filter(|(_, name)| SEARCH_SITES.iter().any(|w| name.split(" (").next() == Some(*w)))
+            .collect();
+        let names = vec![term.to_string()];
+        let mut set = tokio::task::JoinSet::new();
+        for (id, source) in picked {
+            let q = term.to_string();
+            set.spawn(async move {
+                let found = gql(
+                    "mutation($s:LongString!,$q:String){fetchSourceManga(input:{source:$s,type:SEARCH,page:1,query:$q}){mangas{title}}}",
+                    json!({ "s": id, "q": q }),
+                )
+                .await
+                .ok()?;
+                let titles: Vec<String> = found["fetchSourceManga"]["mangas"].as_array()?.iter().filter_map(|m| m["title"].as_str().map(String::from)).collect();
+                Some((source, titles))
+            });
+        }
+        let mut out: Vec<(f64, SiteHit)> = Vec::new();
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(SITE_SEARCH_SECS);
+        while let Ok(Some(r)) = tokio::time::timeout_at(deadline, set.join_next()).await {
+            let Ok(Some((source, titles))) = r else { continue };
+            for t in titles.into_iter().take(10) {
+                let score = read_core::best_title_score(&t, &names);
+                if score >= read_core::SAME_TITLE {
+                    out.push((score, SiteHit { title: t, source: source.clone() }));
+                }
+            }
+        }
+        set.abort_all();
+        out.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+        out.into_iter().map(|(_, h)| h).collect()
+    };
+    tokio::time::timeout(Duration::from_secs(SITE_SEARCH_SECS + 1), work).await.unwrap_or_default()
+}
+
+/// A site's name for a series with its extras taken off, for telling which
+/// hits are the same series: "Shadow Slave (Official)" and "Shadow Slave [Webtoon]"
+/// are both "shadow slave".
+pub fn site_key(title: &str) -> String {
+    let mut plain = String::new();
+    let mut depth = 0i32;
+    for c in title.chars() {
+        match c {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = (depth - 1).max(0),
+            c if depth == 0 => plain.push(c),
+            _ => {}
+        }
+    }
+    let words: Vec<String> = crate::read_mu::norm(&plain).split(' ').filter(|w| !matches!(*w, "official" | "webtoon" | "manhwa" | "manhua" | "comic" | "")).map(String::from).collect();
+    words.join(" ")
+}
+
 /// Three pages from a chapter near the start (past any prologue).
 async fn sample_pages(chs: &[(i64, f64)]) -> Vec<Sample> {
     let mut sorted = chs.to_vec();
@@ -895,6 +975,14 @@ mod tests {
     /// 2026-11-14: a blue screen left Suwayomi's config, settings and database as
     /// zeros. Its Java stayed up and never opened the port, so Chillarr said
     /// "The manga downloader didn't start" until the files were replaced.
+    #[test]
+    fn site_names_lose_their_extras() {
+        assert_eq!(site_key("Shadow Slave (Official)"), "shadow slave");
+        assert_eq!(site_key("Shadow Slave [Webtoon]"), "shadow slave");
+        assert_eq!(site_key("SHADOW SLAVE"), "shadow slave");
+        assert_ne!(site_key("Shadow Slave"), site_key("Shadow Slave 2"));
+    }
+
     #[test]
     fn crash_zeroed_files_are_found_and_set_aside_but_good_ones_are_kept() {
         let d = scratch("zeroed");

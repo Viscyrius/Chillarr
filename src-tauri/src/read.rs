@@ -2633,7 +2633,8 @@ pub async fn search(app: &AppHandle, term: &str, adult: bool, porn: bool) -> Res
     let q = format!("query($s:String){{Page(perPage:30){{media(type:MANGA,{only_safe}search:$s,sort:SEARCH_MATCH){{{MEDIA_FIELDS}}}}}}}");
     // MangaUpdates at the same time: the names AniList doesn't have (read_mu.rs).
     let ask = json!({ "query": q, "variables": { "s": term } });
-    let (v, mu) = tokio::join!(crate::media::anilist(&ask), crate::read_mu::search(term));
+    // And the big manhwa sites themselves, for what neither catalog lists yet (suwayomi::site_search).
+    let (v, mu, sites) = tokio::join!(crate::media::anilist(&ask), crate::read_mu::search(term), crate::suwayomi::site_search(term, "en"));
     let mut cards: Vec<Value> = v?["data"]["Page"]["media"].as_array().map(|a| a.iter().map(card).collect()).unwrap_or_default();
     // Its series go first: each matched the very name typed.
     let mut first: Vec<Value> = Vec::new();
@@ -2657,7 +2658,33 @@ pub async fn search(app: &AppHandle, term: &str, adult: bool, porn: bool) -> Res
         }
     }
     first.extend(cards);
+    first.extend(site_cards(&first, sites));
     Ok(first)
+}
+
+/// A card for each series the sites had that no card above is already: one
+/// per series however many sites carry it (they're told apart by
+/// suwayomi::site_key). A novel doesn't count as having it, so Shadow Slave's
+/// novel and its manhwa both show. Opening one finds its chapters the usual
+/// way, by name, on every site (suwayomi::candidates).
+fn site_cards(cards: &[Value], hits: Vec<crate::suwayomi::SiteHit>) -> Vec<Value> {
+    let comic = |c: &&Value| c["format"].as_str() != Some("NOVEL");
+    let mut known: HashSet<String> = cards.iter().filter(comic).flat_map(card_names).map(|n| crate::suwayomi::site_key(&n)).collect();
+    let mut out = Vec::new();
+    for h in hits {
+        let key = crate::suwayomi::site_key(&h.title);
+        if key.is_empty() || !known.insert(key.clone()) {
+            continue;
+        }
+        // Asura and Flame carry Korean comics; for the rest the country isn't known.
+        let country = if h.source.starts_with("Asura") || h.source.starts_with("Flame") { Some("KR") } else { None };
+        out.push(json!({
+            "anilist": null, "mu": null, "site": key, "site_name": h.source.split(" (").next().unwrap_or(&h.source),
+            "title": h.title, "names": [], "cover": null, "color": null, "banner": null, "country": country,
+            "format": "MANGA", "status": null, "chapters": null, "score": null, "genres": [], "description": null, "year": null, "adult": false,
+        }));
+    }
+    out
 }
 
 /// A card's title and every other name.
@@ -2697,6 +2724,23 @@ fn search_args(adult: bool, porn: bool) -> &'static str {
 mod tests {
     use super::*;
     use crate::suwayomi::Chapter;
+
+    #[test]
+    fn site_cards_skip_what_is_there_but_not_for_a_novel() {
+        use crate::suwayomi::SiteHit;
+        let novel = json!({ "title": "Shadow Slave", "names": [], "format": "NOVEL" });
+        let manga = json!({ "title": "Solo Leveling", "names": [], "format": "MANGA" });
+        let hits = vec![
+            SiteHit { title: "Shadow Slave".into(), source: "Asura Scans (EN)".into() },
+            SiteHit { title: "Shadow Slave (Official)".into(), source: "Flame Comics".into() },
+            SiteHit { title: "Solo Leveling".into(), source: "Asura Scans (EN)".into() },
+        ];
+        let out = site_cards(&[novel, manga], hits);
+        assert_eq!(out.len(), 1, "one Shadow Slave manhwa, and Solo Leveling is already a card");
+        assert_eq!(out[0]["title"], "Shadow Slave");
+        assert_eq!(out[0]["site_name"], "Asura Scans");
+        assert_eq!(out[0]["country"], "KR");
+    }
 
     #[test]
     fn a_chapter_written_during_a_crash_is_found_out() {

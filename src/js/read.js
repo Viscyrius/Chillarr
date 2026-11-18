@@ -33,7 +33,7 @@ let followedByAnilist = new Map();
 // Series followed from a MangaUpdates card (no AniList id), by title.
 let followedByTitle = new Map();
 // The key of the series this card is, when it's followed.
-const followedOf = (c) => (c.anilist ? followedByAnilist.get(c.anilist) : c.mu ? followedByTitle.get(String(c.title || "").toLowerCase()) : undefined);
+const followedOf = (c) => (c.anilist ? followedByAnilist.get(c.anilist) : c.mu || c.site ? followedByTitle.get(String(c.title || "").toLowerCase()) : undefined);
 let followedLang = new Map();
 let listKeys = new Set();
 let myBooks = [];
@@ -51,7 +51,7 @@ function cover(src, title) {
   return box;
 }
 
-const cardKey = (c) => (c.anilist ? `al:${c.anilist}` : c.olid ? `ol:${c.olid}` : c.mu ? `mu:${c.mu}` : "");
+const cardKey = (c) => (c.anilist ? `al:${c.anilist}` : c.olid ? `ol:${c.olid}` : c.mu ? `mu:${c.mu}` : c.site ? `site:${c.site}` : "");
 
 /* ---------- hover cards, like Movies' ----------
    Resting on a cover opens it like a door: the cover stays where it is, a little
@@ -1431,7 +1431,7 @@ function shell(c) {
   const hero = el("div", { class: "detail-hero read-hero" + (c.banner ? "" : " no-banner") });
   if (c.banner) hero.style.backgroundImage = css(c.banner);
   else if (c.cover) hero.append(el("div", { class: "read-hero-blur", style: `background-image:${css(c.cover)}` }));
-  const meta = el("p", { class: "meta" }, ...[kindOf(c), STATUS[c.status], c.chapters ? `${c.chapters} chapters` : null, c.score ? `${c.score}%` : null, ...(c.genres || []).slice(0, 3)]
+  const meta = el("p", { class: "meta" }, ...[kindOf(c), c.site_name ? `Found on ${c.site_name}` : null, STATUS[c.status], c.chapters ? `${c.chapters} chapters` : null, c.score ? `${c.score}%` : null, ...(c.genres || []).slice(0, 3)]
     .filter(Boolean).flatMap((x, i) => (i ? [el("span", { class: "sep" }), el("span", { text: x })] : [el("span", { text: x })])));
   const options = el("div", { class: "read-options" });
   const actions = el("div", { class: "actions" });
