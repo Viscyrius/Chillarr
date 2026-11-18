@@ -144,11 +144,23 @@ document.addEventListener("click", (e) => {
 });
 // Recent searches, in Chillarr's own dropdown (the browser's is off).
 const searched = recentSearches($("#search"), (term) => { clearTimeout(searchTimer); runSearch(term); });
+// Searching starts on Enter only: searching while typing sent one search per
+// pause, and the leftovers queued up on AniList's shared limit ahead of the
+// one you wanted. Clearing the box still leaves the results at once.
 $("#search").addEventListener("input", (e) => {
   clearTimeout(searchTimer);
+  if (!e.target.value.trim()) runSearch("");
+});
+$("#search").addEventListener("keydown", (e) => {
+  // A recent search picked with the arrows was already run by its dropdown.
+  if (e.key !== "Enter" || e.defaultPrevented || e.isComposing) return;
+  e.preventDefault();
+  clearTimeout(searchTimer);
   const term = e.target.value.trim();
-  // Local results answer at once now, so the wait after typing can be short.
-  searchTimer = setTimeout(() => runSearch(term), 180);
+  if (term.length < 2) return;
+  runSearch(term);
+  // On a phone this puts the keyboard away so the results can be seen.
+  if (matchMedia("(pointer: coarse)").matches) e.target.blur();
 });
 // No browser autofill dropdown on any text box, including ones added later.
 document.addEventListener("focusin", (e) => {
