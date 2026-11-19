@@ -1826,6 +1826,12 @@ html.tv .pf-tile:focus { outline: none !important; }
 html.tv .pf-tile:focus .pf-face { box-shadow: 0 0 0 5px var(--accent); transform: scale(1.08); }
 /* No blur (the slowest thing on a TV) and almost no motion. */
 html.tv *, html.tv *::before, html.tv *::after { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
+/* Soft shadows and blurred pictures are next: a 40-120px shadow is redrawn on
+   every scroll and focus move, and a TV's processor can't keep up. Flat on a
+   TV; the focus rings (drawn as shadows) come back right after. */
+html.tv *, html.tv *::before, html.tv *::after { box-shadow: none !important; text-shadow: none !important; will-change: auto !important; }
+html.tv .tile:focus .art { box-shadow: 0 0 0 4px var(--accent) !important; }
+html.tv .pf-tile:focus .pf-face { box-shadow: 0 0 0 5px var(--accent) !important; }
 html.tv *, html.tv *::before, html.tv *::after { animation-duration: 0.01ms !important; animation-delay: 0s !important; animation-iteration-count: 1 !important; transition-duration: 0.12s !important; transition-delay: 0s !important; }
 /* Except what says "still working": the buffering spinner, skeletons, search
    still asking, an app busy, someone watching along. Without them a slow TV
@@ -3262,10 +3268,11 @@ dialog.rec-dlg.sheet .rec-go .btn { flex: 1; justify-content: center; min-height
 .read-markbar-tools { display: flex; gap: 8px; justify-content: flex-end; }
 .read-markbar-tools .btn.on { background: rgba(var(--accent-rgb), 0.2); box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), 0.5); }
 .read-markbar svg { width: 16px; height: 16px; }
-.sel-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px; border-radius: 10px; background: var(--raised); border: 1px solid rgba(var(--accent-rgb), 0.4); color: var(--text); }
-.sel-bar[hidden] { display: none; }
-.sel-bar .sel-hint { color: var(--muted); }
-.sel-bar .sel-del { color: #ff9aa2; }
+/* Its own class, not .sel-bar: that one is the floating bar under a grid (select.js), parked off the bottom of the screen until it slides in, which hid Download and Delete here. */
+.ch-selbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px; border-radius: 10px; background: var(--raised); border: 1px solid rgba(var(--accent-rgb), 0.4); color: var(--text); }
+.ch-selbar[hidden] { display: none; }
+.ch-selbar .sel-hint { color: var(--muted); }
+.ch-selbar .sel-del { color: #ff9aa2; }
 .sel-x { width: 34px; height: 34px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); display: grid; place-items: center; cursor: pointer; }
 .sel-x svg { stroke: currentColor; stroke-width: 2; fill: none; }
 .sel-box { display: none; width: 18px; height: 18px; margin: 0 4px 0 6px; accent-color: var(--accent); flex-shrink: 0; }
@@ -3280,9 +3287,9 @@ dialog.rec-dlg.sheet .rec-go .btn { flex: 1; justify-content: center; min-height
   .detail-head .actions.tidy > .play, .detail-head .actions.tidy > .primary { flex-direction: row; font-size: 15px; gap: 8px; }
   .detail-head .actions.tidy > :not(.btn) { grid-column: 1 / -1; }
   .more-btn .more-label { display: inline; }
-  .sel-bar { position: sticky; bottom: calc(10px + env(safe-area-inset-bottom)); z-index: 2; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5); }
-  .sel-bar .sel-hint { flex-basis: 100%; order: 9; font-size: 12px; }
-  .sel-bar .btn { flex: 1; min-height: 44px; justify-content: center; }
+  .ch-selbar { position: sticky; bottom: calc(10px + env(safe-area-inset-bottom)); z-index: 2; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5); }
+  .ch-selbar .sel-hint { flex-basis: 100%; order: 9; font-size: 12px; }
+  .ch-selbar .btn { flex: 1; min-height: 44px; justify-content: center; }
   .rec-track { grid-auto-columns: 86%; }
   .into-track { grid-auto-columns: 120px; }
 }

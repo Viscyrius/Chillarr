@@ -1,6 +1,6 @@
 // The detail panel: what a title is, Play / Resume / Download, My List, and episodes.
 import { hideButton, markHidden } from "./hidden.js";
-import { $, ask, canDelete, closeDialog, el, genresAZ, getPref, icon, ICON, invoke, listen, metaBits, picProps, setPref, store, toast } from "./api.js";
+import { $, ask, canDelete, closeDialog, el, genresAZ, getPref, icon, ICON, invoke, listen, metaBits, picProps, setPref, store, toast, tvPic } from "./api.js";
 import { canWatchNow, isWatchNow, loadHls, movieLike, play, removeWatchNow, startEpisode, watchNow } from "./player.js";
 import { completedActions, confirmRedownload, isWatched, listable, loadWatched, onMyList, removeContinue, resumable, setMyList } from "./mylist.js";
 import { subtitlesControl } from "./subpick.js";
@@ -830,6 +830,29 @@ function downloadControls(t, isPickable, inPicker = false) {
 }
 
 export async function openDetail(t, opts = {}) {
+  try { return await fillDetail(t, opts); }
+  catch (e) {
+    // Something in building the panel broke (seen on an LG TV: the panel came
+    // up with no buttons at all). Say so in the PC's log, and still give the
+    // basics, so a title can always be played or downloaded.
+    invoke("web_error", { message: `Title panel: ${e && e.message ? e.message : e}`, where: String((e && e.stack) || "").split("\n").slice(0, 3).join(" | "), device: "detail" }).catch(() => {});
+    const actions = $("#detail-actions");
+    if (actions && !actions.querySelector("button:not(.more-btn)")) {
+      try {
+        if (t.jf_id && movieLike(t)) actions.append(el("button", { class: "btn play", onclick: () => { shut(); play({ ...t, chose: true }); } }, icon(ICON.play), "Play"));
+        else {
+          const now = watchNowButton(t, true);
+          const { get, quality } = downloadControls(t, t.kind === "series" || (t.kind === "anime" && t.format !== "MOVIE"));
+          if (now) get.classList.replace("play", "soft");
+          actions.append(...[now, get, quality].filter(Boolean));
+        }
+        if (listable(t)) actions.append(myListButton(t));
+      } catch (e2) { /* the basics broke too: the log already has it */ }
+    }
+  }
+}
+
+async function fillDetail(t, opts = {}) {
   // Started part way: it can come off Continue watching from here (an episode, from its show's panel).
   const started = resumable(t) ? t : null;
   // More info on an episode (Continue Watching) is about its show.
@@ -857,7 +880,7 @@ export async function openDetail(t, opts = {}) {
   loadAbout(t);
   loadSimilar(t);
   loadComments(t);
-  const pic = t.backdrop || t.poster;
+  const pic = tvPic(t.backdrop || t.poster);
   $("#detail-hero").style.backgroundImage = pic ? `url("${pic.replace(/"/g, "%22")}")` : "none";
   $("#detail-title").textContent = t.title;
   $("#detail-meta").replaceChildren(...metaBits(t));

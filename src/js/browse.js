@@ -1,7 +1,7 @@
 // Home, Movies, Series, Anime and My downloads: a hero, genre chips and rows
 // of posters; hover previews; Top 10; and "Explore all" pages that keep loading.
 import { isHidden, markHidden } from "./hidden.js";
-import { away, $, ask, canDelete, canStop, choose, WEB, el, expandRow, genresAZ, getPref, icon, ICON, invoke, listen, metaBits, personKey, picProps, store, toast } from "./api.js";
+import { away, $, ask, canDelete, canStop, choose, WEB, el, expandRow, genresAZ, getPref, icon, ICON, invoke, listen, metaBits, personKey, picProps, store, toast, tvPic } from "./api.js";
 import { openDetail, playShowNow } from "./detail.js";
 import { canWatchNow, confirmRemove, isWatchNow, movieLike, play, removeWatchNow, watchNow } from "./player.js";
 import { completedActions, confirmRedownload, listable, markWatched, onMyList, removeCompleted, removeContinue, resumable, setMyList } from "./mylist.js";
@@ -592,7 +592,7 @@ function hero(picks, keep = null) {
   const all = picks;
   picks = picks.filter((p) => !isHidden(p.t));
   if (!picks.length) return heroLook(el("section", { class: "hero empty" }));
-  const bgUrl = (p) => `url("${p.t.backdrop.replace(/"/g, "%22")}")`;
+  const bgUrl = (p) => `url("${tvPic(p.t.backdrop).replace(/"/g, "%22")}")`;
   let at = Math.max(0, picks.findIndex((p) => p.t.key === keep));
   heroKey = picks[at].t.key;
   const bgA = el("div", { class: "hero-bg", style: `background-image:${bgUrl(picks[at])}` });

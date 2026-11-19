@@ -323,6 +323,8 @@ fn open_while_locked(cmd: &str) -> bool {
 
 fn need(cmd: &str) -> Option<Need> {
     Some(match cmd {
+        // A script error on a TV or phone page (shim.js): into the log file, so it can be fixed.
+        "web_error" => Need::Viewer,
         "web_viewer" | "media_status" | "media_rows" | "watch_week" | "media_episodes" | "media_search" | "media_search_live" | "media_play" | "media_report" | "media_forget_resume" | "media_get" | "media_get_picked" | "media_seasons" | "media_trailer"
         | "media_explore" | "media_filter" | "media_filter_genres" | "media_filter_studios" | "media_anime_tags" | "media_details" | "media_similar" | "media_maker" | "media_my_list" | "media_my_list_marks" | "media_completed"
         | "media_watched_keys" | "completed_remove" | "media_show_episodes" | "marker_set" | "marker_restart" | "media_set_watched" | "media_segments" | "subs_search" | "subs_download" | "subs_sync" | "subs_choice" | "subs_set"
@@ -410,6 +412,12 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
     let app = app.clone();
     let app = &app;
     match cmd {
+        "web_error" => {
+            // Text from the page: printable only and cut short, so it can't flood or forge lines.
+            let clean = |k: &str, n: usize| a[k].as_str().unwrap_or("").chars().map(|c| if c.is_control() { ' ' } else { c }).take(n).collect::<String>();
+            crate::log::detail(format!("Page error on {}'s {}: {} at {}", me.session.user, clean("device", 60), clean("message", 300), clean("where", 300)));
+            ok(true)
+        }
         "web_viewer" => {
             // This browser went back to Jellyfin's own pages last time (shim.js says why).
             if let Some(x) = a.get("exit").filter(|x| x.is_object()) {

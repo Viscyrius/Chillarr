@@ -2000,7 +2000,7 @@ function markBar(key, chs, c0, list) {
   } }, icon(TRASH), "Delete") : null;
   const allBtn = el("button", { class: "linkish", type: "button", onclick: () => { const on = picked.size !== chs.length; rows().forEach((li) => set(li, on)); paint(); } }, "All");
   const done = el("button", { class: "sel-x", type: "button", "aria-label": "Stop selecting", onclick: () => toggle(false) }, icon("M6 6l12 12M18 6L6 18"));
-  const selBar = el("div", { class: "sel-bar", hidden: true }, count, hint, el("span", { class: "read-markbar-gap" }), allBtn, markBtn, getBtn, delBtn, done);
+  const selBar = el("div", { class: "ch-selbar", hidden: true }, count, hint, el("span", { class: "read-markbar-gap" }), allBtn, markBtn, getBtn, delBtn, done);
   const selectBtn = el("button", { class: "btn soft small", type: "button", "aria-pressed": "false", onclick: () => toggle(!selecting) },
     icon("M4 4h16v16H4z", "M8 12l3 3 5-6"), "Select");
   const whole = el("button", { class: "btn soft small", type: "button", onclick: (e) => send(all ? chs.map((r) => r.id) : chs.filter((r) => !r.read).map((r) => r.id), !all, e.currentTarget) },

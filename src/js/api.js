@@ -119,6 +119,17 @@ export function picAt(u, w, h = w * 1.5) {
  * (height = width x `ratio`), the same URL once. A picture from anywhere else
  * keeps its one `src`.
  */
+/**
+ * A big backdrop at a size a TV can draw. TMDB's "original" is up to 3840
+ * wide and several MB: a TV's processor spends seconds decoding each one,
+ * and every menu stutters while it does. 1280 wide is sharp on a 1080p TV.
+ * Anything else, and every non-TV, gets the picture unchanged.
+ */
+export function tvPic(u) {
+  if (!u || !document.documentElement.classList.contains("tv")) return u;
+  return u.replace(/\/original\//, "/w1280/").replace(/fillWidth=(\d+)/, (m, w) => (Number(w) > 1280 ? "fillWidth=1280" : m));
+}
+
 export function picProps(u, widths, ratio, sizes) {
   if (!u || !(TMDB_RE.test(u) || JF_RE.test(u) || TVMAZE_RE.test(u) || ANILIST_RE.test(u))) return { src: u };
   // TVmaze and AniList have one small copy (210 and 230 wide). It stands in up

@@ -627,6 +627,33 @@
   window.__CHILLARR_REMOTE__ = { key: remoteKey, setKey: setRemoteKey };
 
   window.__TAURI__ = { core: { invoke }, event: { listen } };
+
+  /* ---------- Errors go to the PC's log ---------- */
+  // A TV has no console anyone can open: a script that breaks there (a button
+  // row that never drew) was invisible. Each one goes to Chillarr's log file
+  // once (bridge.rs web_error), at most 15 a page, and sending never throws.
+  const sentErrors = {};
+  let errorCount = 0;
+  const reportError = (message, where) => {
+    const key = message + "|" + where;
+    if (sentErrors[key] || errorCount >= 15) return;
+    sentErrors[key] = true;
+    errorCount++;
+    const ua = navigator.userAgent || "";
+    const device = (ua.match(/Web0S|webOS|Tizen|Android TV|AFT[A-Z]+|iPhone|iPad|Android|Windows|Mac OS X/) || ["browser"])[0] + " Chrome/" + ((ua.match(/Chrome\/(\d+)/) || [0, "?"])[1]);
+    invoke("web_error", { message: String(message).slice(0, 300), where: String(where).slice(0, 300), device }).catch(() => {});
+  };
+  const stackTop = (err) => String((err && err.stack) || "").split("\n").slice(0, 3).join(" | ");
+  window.addEventListener("error", (e) => {
+    if (!e || !e.message) return; // a picture or script that didn't load: not a script error
+    reportError(e.message, (e.filename || "").split("/").pop() + ":" + e.lineno + ":" + e.colno + " " + stackTop(e.error));
+  });
+  window.addEventListener("unhandledrejection", (e) => {
+    const r = e && e.reason;
+    // Only real code errors: a refused command (a string) is the page's own business.
+    if (!(r instanceof Error)) return;
+    reportError(r.name + ": " + r.message, stackTop(r));
+  });
   window.__CHILLARR_WEB__ = true;
   // The reader builds page addresses on the bridge (read.rs serves them).
   window.__CHILLARR_BRIDGE__ = () => base();
