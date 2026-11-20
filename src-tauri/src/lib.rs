@@ -813,6 +813,51 @@ async fn music_radio(song: music::Song, skip: Option<Vec<String>>) -> Vec<music:
 }
 
 #[tauri::command]
+fn music_playlist_new(app: AppHandle, name: String, song: Option<music::Song>) -> Result<music::Playlist, String> {
+    music::playlist_new(&app, &name, song)
+}
+
+#[tauri::command]
+fn music_playlist_add(app: AppHandle, id: String, song: music::Song) -> Result<bool, String> {
+    music::playlist_add(&app, &id, song)
+}
+
+#[tauri::command]
+fn music_playlist_remove(app: AppHandle, id: String, song_id: String) -> Result<(), String> {
+    music::playlist_remove(&app, &id, &song_id)
+}
+
+#[tauri::command]
+fn music_playlist_rename(app: AppHandle, id: String, name: String) -> Result<(), String> {
+    music::playlist_rename(&app, &id, &name)
+}
+
+#[tauri::command]
+fn music_playlist_delete(app: AppHandle, id: String) -> Result<(), String> {
+    music::playlist_delete(&app, &id)
+}
+
+#[tauri::command]
+fn music_playlist_move(app: AppHandle, id: String, from: usize, to: usize) -> Result<(), String> {
+    music::playlist_move(&app, &id, from, to)
+}
+
+#[tauri::command]
+fn music_settings(app: AppHandle) -> serde_json::Value {
+    music::settings(&app)
+}
+
+#[tauri::command]
+fn music_set_cache(app: AppHandle, mins: u64) -> Result<(), String> {
+    music::set_cache_mins(&app, mins)
+}
+
+#[tauri::command]
+fn music_clear_cache() -> usize {
+    music::clear_cache()
+}
+
+#[tauri::command]
 fn music_forget(app: AppHandle, id: String) -> Result<(), String> {
     music::forget(&app, &id)
 }
@@ -1511,6 +1556,15 @@ pub fn run() {
             music_played,
             music_for_you,
             music_radio,
+            music_playlist_new,
+            music_playlist_add,
+            music_playlist_remove,
+            music_playlist_rename,
+            music_playlist_delete,
+            music_playlist_move,
+            music_settings,
+            music_set_cache,
+            music_clear_cache,
             read_base,
             read_rows,
             read_search,
@@ -1738,6 +1792,7 @@ pub fn run() {
                 no_autofill(&w);
             }
             // Songs played (not downloaded) last time go.
+            music::load_settings(app.handle());
             std::thread::spawn(|| music::sweep(true));
             let path = settings_path(app.handle());
             let (mut s, first_run) = settings::load(&path);

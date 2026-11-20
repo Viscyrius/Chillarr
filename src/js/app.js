@@ -19,7 +19,7 @@ import { applyLook, drawPickers, onStyle } from "./look.js";
 const view = $("#view");
 const TABS = ["home", "movies", "series", "anime", "downloads", "mylist", "hidden", "settings", "explore", "filter", "maker",
   "r-home", "r-manhwa", "r-manhua", "r-manga", "r-novels", "r-books", "r-downloads", "r-mylist", "r-hidden", "r-all", "r-author", "r-maker",
-  "m-home", "m-library", "m-album", "m-artist"];
+  "m-home", "m-library", "m-album", "m-artist", "m-playlist"];
 
 /* ---------- watching and reading ----------
    Two Chillarrs in one: the book button switches to reading (its own tabs,
@@ -126,7 +126,7 @@ function route(redraw = false) {
   const { id, fresh } = place.entry();
   document.querySelectorAll("[data-tab]").forEach((a) => a.classList.toggle("on", a.dataset.tab === tab));
   setTabTint(tab);
-  if (tab === current && tab !== "settings" && tab !== "explore" && tab !== "filter" && tab !== "r-all" && tab !== "maker" && tab !== "r-author" && tab !== "r-maker" && tab !== "m-album" && tab !== "m-artist" && tab !== "m-library") return;
+  if (tab === current && tab !== "settings" && tab !== "explore" && tab !== "filter" && tab !== "r-all" && tab !== "maker" && tab !== "r-author" && tab !== "r-maker" && tab !== "m-album" && tab !== "m-artist" && tab !== "m-library" && tab !== "m-playlist") return;
   // Leaving a page: remember where you were on it. Search results aren't a
   // page of their own; the place from before the search stays.
   if (left && left !== id && current && current !== "search") place.remember(left);

@@ -5,7 +5,7 @@
 // What there is comes from the iTunes catalog; the sound is fetched on the PC
 // (music.rs) and streamed from the bridge. Play: fetched, played and deleted
 // again later. Download: kept in Music\Chillarr.
-import { $, el, icon, invoke, toast, WEB, viewer, fmtTime, getPref, setPref } from "./api.js";
+import { $, ask, el, icon, invoke, toast, WEB, viewer, fmtTime, getPref, setPref } from "./api.js";
 
 const I = {
   play: "M7 4.5v15l12-7.5z",
@@ -25,7 +25,17 @@ const I = {
   chevron: "M6 9l6 6 6-6",
   clock: "M12 7v5l3 2M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z",
   note: "M9 18V5l11-2v13M9 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0zM20 16a3 3 0 1 1-6 0 3 3 0 0 1 6 0z",
+  add: "M12 5v14M5 12h14",
+  addto: "M3 6h12M3 12h12M3 18h7M18 13v8M14 17h8",
+  list: "M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01",
+  pen: "M4 20h4L19 9l-4-4L4 16zM14 6l4 4",
+  expand: "M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7",
 };
+// A playlist made, renamed or changed: a Library or Home page on screen shows it.
+window.addEventListener("chillarr:music-lists", () => {
+  const h = location.hash;
+  if (document.body.dataset.mode === "music" && (h.startsWith("#m-library/playlists") || h === "#m-home")) window.dispatchEvent(new Event("hashchange"));
+});
 const ic = (k, cls) => { const s = icon(I[k]); if (cls) s.classList.add(cls); return s; };
 const err = (e) => String(e?.message || e);
 
@@ -103,6 +113,78 @@ function keepBtn(song) {
   paintKeep(b);
   return b;
 }
+
+/* ---------- playlists ---------- */
+const lists = () => mine.playlists || [];
+let menu = null;
+function closeMenu() { if (!menu) return; const m = menu; menu = null; m.classList.remove("in"); setTimeout(() => m.remove(), 160); }
+document.addEventListener("pointerdown", (e) => { if (menu && !menu.contains(e.target)) closeMenu(); }, true);
+window.addEventListener("hashchange", closeMenu);
+// Only a change of width closes it: a phone's keyboard coming up changes the height.
+let menuW = innerWidth;
+window.addEventListener("resize", () => { if (innerWidth !== menuW) { menuW = innerWidth; closeMenu(); } });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeMenu(); });
+
+/** A small menu by `anchor`. On a phone it comes up from the bottom. */
+function popMenu(anchor, kids) {
+  closeMenu();
+  menu = el("div", { class: "look-pop mu-menu", role: "menu" }, kids);
+  document.body.append(menu);
+  const r = anchor.getBoundingClientRect();
+  if (matchMedia("(max-width: 640px)").matches) menu.classList.add("sheet");
+  else {
+    const w = 260;
+    menu.style.width = `${w}px`;
+    const h = menu.offsetHeight;
+    const below = r.bottom + 8 + h < innerHeight - 8;
+    menu.style.top = `${Math.round(below ? r.bottom + 8 : Math.max(8, r.top - 8 - h))}px`;
+    menu.style.left = `${Math.round(Math.min(Math.max(8, r.right - w), innerWidth - 8 - w))}px`;
+  }
+  requestAnimationFrame(() => menu && menu.classList.add("in"));
+  return menu;
+}
+
+/** "Add to playlist": every playlist, and a new one named right here. */
+function addToMenu(anchor, song) {
+  const name = el("input", { type: "text", class: "mu-name", placeholder: "New playlist", maxlength: "100", "aria-label": "New playlist's name" });
+  const make = async () => {
+    const n = name.value.trim() || `My playlist #${lists().length + 1}`;
+    try {
+      const p = await invoke("music_playlist_new", { name: n, song });
+      mine.playlists = [p, ...lists()];
+      toast(`Added to ${p.name}`);
+      closeMenu();
+      refreshLists();
+    } catch (e) { toast(err(e), true); }
+  };
+  name.addEventListener("keydown", (e) => { if (e.key === "Enter") make(); });
+  popMenu(anchor, [
+    el("p", { class: "lk-h", text: "Add to playlist" }),
+    el("div", { class: "mu-new" }, name, el("button", { class: "mu-ib", "aria-label": "Make it", title: "New playlist", onclick: make }, ic("add"))),
+    el("div", { class: "mu-menu-list" }, lists().map((p) => el("button", { class: "mu-menu-item", role: "menuitem", onclick: async () => {
+      closeMenu();
+      try {
+        const added = await invoke("music_playlist_add", { id: p.id, song });
+        if (added) { p.songs.push(song); toast(`Added to ${p.name}`); refreshLists(); } else toast(`Already in ${p.name}`);
+      } catch (e) { toast(err(e), true); }
+    } }, cover4(p.songs, "sm"), el("span", { class: "mu-tt" }, el("b", { text: p.name }), el("span", { text: `${p.songs.length} songs` }))))),
+  ]);
+  if (!matchMedia("(pointer: coarse)").matches) name.focus();
+}
+function addBtn(song) {
+  return el("button", { class: "mu-ib mu-addto", title: "Add to playlist", "aria-label": "Add to playlist", onclick: (e) => { e.stopPropagation(); addToMenu(e.currentTarget, song); } }, ic("addto"));
+}
+/** A playlist's cover: its first four songs' art, or one, or a note. */
+function cover4(songs, cls = "") {
+  const arts = [...new Set(songs.map((s) => s.art).filter(Boolean))].slice(0, 4);
+  const box = el("span", { class: `mu-mosaic ${cls}${arts.length >= 4 ? " four" : ""}` });
+  if (arts.length >= 4) arts.forEach((a) => box.append(el("img", { src: a, alt: "", loading: "lazy" })));
+  else if (arts.length) box.append(el("img", { src: arts[0], alt: "", loading: "lazy" }));
+  else box.append(ic("note"));
+  return box;
+}
+/** A page showing playlists is drawn again when one changes. */
+function refreshLists() { window.dispatchEvent(new Event("chillarr:music-lists")); }
 
 /* ---------- the player ---------- */
 const audio = new Audio();
@@ -182,6 +264,7 @@ async function start(i) {
   const song = P.queue[i];
   const seq = ++P.seq;
   P.counted = "";
+  document.querySelectorAll(".mu-seek").forEach((s) => { delete s.dataset.held; s.value = "0"; rangeFill(s); });
   drawBar(true);
   audio.pause();
   try {
@@ -271,7 +354,14 @@ function rangeFill(r) { r.style.setProperty("--fill", `${(r.value / r.max) * 100
 function seekBar() {
   const seek = el("input", { type: "range", class: "mu-range mu-seek", min: "0", max: "1000", value: "0", "aria-label": "Position" });
   // Moves while it is dragged, not on release.
-  seek.addEventListener("input", () => { rangeFill(seek); if (audio.duration) audio.currentTime = (seek.value / 1000) * audio.duration; });
+  // While held it shows where it's dragged to; let go, it follows the song again
+  // (it used to wait for the focus to leave it, so it stayed where it was dropped).
+  seek.addEventListener("input", () => { seek.dataset.held = "1"; rangeFill(seek); if (audio.duration) audio.currentTime = (seek.value / 1000) * audio.duration; });
+  const letGo = () => { delete seek.dataset.held; drawTime(); };
+  seek.addEventListener("change", letGo);
+  seek.addEventListener("pointerup", letGo);
+  seek.addEventListener("pointercancel", letGo);
+  seek.addEventListener("blur", letGo);
   return seek;
 }
 const ctlButtons = () => [
@@ -291,7 +381,7 @@ function makeBar() {
   vol.addEventListener("change", () => setPref("chillarr-music-vol", String(audio.volume)));
   bar = el("section", { class: "mu-bar", id: "mu-bar", "aria-label": "Music player", hidden: true },
     el("div", { class: "mu-now" },
-      el("button", { class: "mu-art-btn", "aria-label": "Now playing", title: "Now playing", onclick: () => openFull() }, el("img", { class: "mu-art", alt: "" })),
+      el("button", { class: "mu-art-btn", "aria-label": "Now playing", title: "Now playing", onclick: () => { if (bar.classList.contains("min")) setMin(false); else openFull(); } }, el("img", { class: "mu-art", alt: "" })),
       el("div", { class: "mu-txt", onclick: () => { if (matchMedia("(max-width: 980px)").matches) openFull(); } }, el("b", { class: "mu-title" }), el("a", { class: "mu-artist" })),
       el("span", { class: "mu-like-slot" })),
     el("div", { class: "mu-mid" },
@@ -301,12 +391,22 @@ function makeBar() {
       el("span", { class: "mu-keep-slot" }),
       el("button", { class: "mu-ib mu-qbtn", "aria-label": "Queue", title: "Queue", onclick: () => openFull() }, ic("queue")),
       volIc, vol,
+      el("button", { class: "mu-ib mu-min", "aria-label": "Fold away", title: "Fold away", onclick: () => setMin(true) }, icon("M5 12h14")),
       el("button", { class: "mu-ib mu-stop", "aria-label": "Stop", title: "Stop", onclick: stopAll }, ic("close"))),
     el("div", { class: "mu-mini-line" }));
   document.body.append(bar);
   paintModes();
   return bar;
 }
+
+/** The corner player (in Movies and Reading) folded to its cover, or open. */
+function setMin(on) {
+  bar.classList.toggle("min", on);
+  setPref("music-min", on ? "1" : "0");
+}
+// Folding is only for the corner player: back in Music it's the full bar.
+new MutationObserver(() => { if (bar) bar.classList.toggle("min", document.body.dataset.mode !== "music" && getPref("music-min") === "1"); })
+  .observe(document.body, { attributes: true, attributeFilter: ["data-mode"] });
 
 function toggleShuffle() {
   P.shuffle = !P.shuffle;
@@ -352,6 +452,8 @@ function drawBar(loading) {
   bar.hidden = false;
   document.body.classList.add("mu-on");
   bar.classList.toggle("loading", !!loading);
+  bar.classList.toggle("spin", !audio.paused && !loading);
+  if (document.body.dataset.mode !== "music" && getPref("music-min") === "1") bar.classList.add("min");
   const art = $(".mu-art", bar);
   if (art.getAttribute("src") !== s.art) art.src = s.art || "logo.svg";
   $(".mu-title", bar).textContent = s.title;
@@ -361,7 +463,7 @@ function drawBar(loading) {
   const playing = !audio.paused && !loading;
   document.querySelectorAll(".mu-pp").forEach((pp) => { pp.replaceChildren(ic(playing ? "pause" : "play")); pp.setAttribute("aria-label", playing ? "Pause" : "Play"); pp.classList.toggle("busy", !!loading); });
   $(".mu-keep-slot", bar).replaceChildren(keepBtn(s));
-  $(".mu-like-slot", bar).replaceChildren(likeBtn(s));
+  $(".mu-like-slot", bar).replaceChildren(likeBtn(s), addBtn(s));
   markPlaying();
   drawTime();
   drawFull();
@@ -380,7 +482,7 @@ function drawTime() {
   const t = audio.currentTime || 0;
   document.querySelectorAll(".mu-t0").forEach((x) => (x.textContent = fmtTime(t)));
   document.querySelectorAll(".mu-t1").forEach((x) => (x.textContent = fmtTime(d)));
-  document.querySelectorAll(".mu-seek").forEach((seek) => { if (document.activeElement !== seek && d) { seek.value = String(Math.round((t / d) * 1000)); rangeFill(seek); } });
+  document.querySelectorAll(".mu-seek").forEach((seek) => { if (!seek.dataset.held && d) { seek.value = String(Math.round((t / d) * 1000)); rangeFill(seek); } });
   const ml = $(".mu-mini-line", bar);
   if (ml) ml.style.width = d ? `${(t / d) * 100}%` : "0";
 }
@@ -436,7 +538,7 @@ function drawFull() {
   a.textContent = s.artist;
   if (s.artist_id) a.href = `#m-artist/${s.artist_id}`; else a.removeAttribute("href");
   $(".mu-full-from", full).textContent = P.from ? `Playing from ${P.from}${P.radio ? ", then songs like it" : ""}` : "Now playing";
-  $(".mu-full-acts", full).replaceChildren(likeBtn(s), keepBtn(s));
+  $(".mu-full-acts", full).replaceChildren(likeBtn(s), addBtn(s), keepBtn(s));
   drawQueue();
 }
 function drawQueue() {
@@ -515,7 +617,7 @@ function trackList(list, { removable = false, numbered = true, album = true, fro
         el("span", { class: "mu-n" }, el("span", { class: "mu-n-num", text: numbered ? String(i + 1) : "" }), el("button", { class: "mu-n-play", "aria-label": `Play ${s.title}`, onclick: (e) => { e.stopPropagation(); play(); } }, ic("play")), el("span", { class: "mu-eq", "aria-hidden": "true" }, el("i"), el("i"), el("i"))),
         el("span", { class: "mu-ti" }, el("img", { src: s.art, alt: "", loading: "lazy" }), el("span", { class: "mu-tt" }, el("b", { text: s.title }), artistLink(s))),
         album ? (s.album_id ? el("a", { class: "mu-col-album", href: `#m-album/${s.album_id}`, text: s.album, onclick: (e) => e.stopPropagation() }) : el("span", { class: "mu-col-album", text: s.album })) : null,
-        el("span", { class: "mu-row-btns" }, likeBtn(s), removable ? removeBtn(s) : keepBtn(s),
+        el("span", { class: "mu-row-btns" }, likeBtn(s), addBtn(s), typeof removable === "function" ? removable(s) : removable ? removeBtn(s) : keepBtn(s),
           el("button", { class: "mu-ib mu-hover", title: "Play next", "aria-label": "Play next", onclick: (e) => { e.stopPropagation(); playNext(s); } }, ic("queue"))),
         el("span", { class: "mu-len", text: s.secs ? fmtTime(s.secs) : "" }));
       // A double click plays on a PC; one tap on a phone.
@@ -560,6 +662,7 @@ export async function renderMusic(view, hash) {
   if (tab === "m-library") return library(page, decodeURIComponent(arg || ""), alive);
   if (tab === "m-album") return albumPage(page, decodeURIComponent(arg || ""), alive);
   if (tab === "m-artist") return artistPage(page, decodeURIComponent(arg || ""), alive);
+  if (tab === "m-playlist") return playlistPage(page, decodeURIComponent(arg || ""), alive);
   return home(page, alive);
 }
 
@@ -576,11 +679,13 @@ async function home(page, alive) {
   const top = rows.find((r) => r.id === "top");
   const fromRecent = mine.recent.length >= 4;
   const picks = (fromRecent ? mine.recent : top?.items || []).slice(0, 8);
+  const myLists = lists().filter((p) => p.songs.length).slice(0, 3);
   const pickFrom = fromRecent ? "Recently played" : "Top songs";
   const liked = mine.liked;
   quick.replaceChildren(
     liked.length ? el("a", { class: "mu-qtile", href: "#m-library/liked" }, el("span", { class: "mu-qart liked-art" }, ic("heart")), el("b", { text: "Liked songs" }), playBadge(() => playList(liked, 0, "Liked songs"))) : null,
-    ...picks.slice(0, liked.length ? 7 : 8).map((s, i) => el("div", { class: "mu-qtile", role: "button", tabindex: "0", onclick: () => playList(picks, i, pickFrom), onkeydown: (e) => { if (e.key === "Enter") playList(picks, i, pickFrom); } },
+    ...myLists.map((p) => el("a", { class: "mu-qtile", href: `#m-playlist/${p.id}` }, cover4(p.songs, "mu-qart"), el("b", { text: p.name }), playBadge(() => playList(p.songs, 0, p.name)))),
+    ...picks.slice(0, Math.max(0, 8 - myLists.length - (liked.length ? 1 : 0))).map((s, i) => el("div", { class: "mu-qtile", role: "button", tabindex: "0", onclick: () => playList(picks, i, pickFrom), onkeydown: (e) => { if (e.key === "Enter") playList(picks, i, pickFrom); } },
       el("img", { class: "mu-qart", src: s.art, alt: "" }), el("b", { text: s.title }), playBadge(() => playList(picks, i, pickFrom)))));
 
   const GENRE_ROWS = rows.filter((r) => r.kind === "songs" && r.id !== "top");
@@ -614,13 +719,96 @@ async function home(page, alive) {
   draw();
 }
 
+async function playlistsGrid(box, alive) {
+  await loadMine(true);
+  if (!alive()) return;
+  const create = el("button", { class: "mu-card mu-create", onclick: async () => {
+    try {
+      const p = await invoke("music_playlist_new", { name: `My playlist #${lists().length + 1}`, song: null });
+      mine.playlists = [p, ...lists()];
+      location.hash = `#m-playlist/${p.id}`;
+    } catch (e) { toast(err(e), true); }
+  } }, el("span", { class: "mu-cover mu-create-art" }, ic("add")), el("b", { text: "Create playlist" }), el("span", { class: "mu-sub", text: "Name it, then add songs" }));
+  box.replaceChildren(el("div", { class: "mu-grid" }, create,
+    el("a", { class: "mu-card", href: "#m-library/liked" }, el("span", { class: "mu-cover liked-art mu-cover-ic" }, ic("heart")), el("b", { text: "Liked songs" }), el("span", { class: "mu-sub", text: `${mine.liked.length} songs` })),
+    lists().map((p) => el("a", { class: "mu-card", href: `#m-playlist/${p.id}` },
+      el("span", { class: "mu-cover" }, cover4(p.songs), p.songs.length ? playBadge(() => playList(p.songs, 0, p.name)) : null),
+      el("b", { text: p.name }), el("span", { class: "mu-sub", text: `Playlist · ${p.songs.length} songs` })))));
+}
+
+async function playlistPage(page, id, alive) {
+  page.append(skeleton());
+  await Promise.all([loadMine(true), loadKept()]);
+  if (!alive()) return;
+  const p = lists().find((x) => x.id === id);
+  if (!p) { page.replaceChildren(note("That playlist is gone.")); return; }
+  const mins = Math.round(p.songs.reduce((n, s) => n + (s.secs || 0), 0) / 60);
+  // The name changes where it is: press it (or the pencil) and type.
+  const title = el("h1", { text: p.name, class: "mu-editable", title: "Rename", tabindex: "0" });
+  const rename = () => {
+    const box = el("input", { type: "text", class: "mu-rename", value: p.name, maxlength: "100", "aria-label": "Playlist name" });
+    const done = async (save) => {
+      const n = box.value.trim();
+      box.replaceWith(title);
+      if (!save || !n || n === p.name) return;
+      try { await invoke("music_playlist_rename", { id, name: n }); p.name = n; title.textContent = n; refreshLists(); } catch (e) { toast(err(e), true); }
+    };
+    box.addEventListener("keydown", (e) => { if (e.key === "Enter") done(true); if (e.key === "Escape") done(false); });
+    box.addEventListener("blur", () => done(true));
+    title.replaceWith(box);
+    box.focus();
+    box.select();
+  };
+  title.addEventListener("click", rename);
+  title.addEventListener("keydown", (e) => { if (e.key === "Enter") rename(); });
+  const del = el("button", { class: "mu-ib mu-big-ib", title: "Delete playlist", "aria-label": "Delete playlist", onclick: async () => {
+    if (!(await askSure(`Delete "${p.name}"?`))) return;
+    try { await invoke("music_playlist_delete", { id }); mine.playlists = lists().filter((x) => x.id !== id); refreshLists(); location.hash = "#m-library/playlists"; } catch (e) { toast(err(e), true); }
+  } }, ic("trash"));
+  const remove = (s) => el("button", { class: "mu-ib", title: "Remove from this playlist", "aria-label": "Remove from this playlist", onclick: async (e) => {
+    e.stopPropagation();
+    const li = e.currentTarget.closest("li");
+    try { await invoke("music_playlist_remove", { id, songId: s.id }); p.songs = p.songs.filter((x) => x.id !== s.id); li?.remove(); toast(`Removed ${s.title}`); refreshLists(); } catch (er) { toast(err(er), true); }
+  } }, ic("close"));
+  const acts = p.songs.length ? bigPlay(p.songs, p.name) : el("div", { class: "mu-acts" });
+  acts.append(el("button", { class: "mu-ib mu-big-ib", title: "Rename", "aria-label": "Rename", onclick: rename }, ic("pen")), del);
+  const recBox = el("section", { class: "mu-row mu-rec" });
+  page.replaceChildren(
+    p.songs[0]?.art ? el("div", { class: "mu-tint", style: `--art:url("${p.songs[0].art}")` }) : null,
+    el("header", { class: "mu-hero" }, cover4(p.songs, "mu-hero-art"),
+      el("div", {}, el("small", { text: "Playlist" }), title, el("p", { text: [`${p.songs.length} ${p.songs.length === 1 ? "song" : "songs"}`, mins ? `${mins} min` : ""].filter(Boolean).join(" · ") }))),
+    acts,
+    p.songs.length ? trackList(p.songs, { removable: remove, from: p.name }) : note("Nothing in it yet. Add songs with the + on any song, or from the ones below."),
+    recBox);
+  markPlaying();
+  // Recommended: songs like the ones in it, each with Add.
+  const seed = p.songs.length ? p.songs[Math.floor(Math.random() * p.songs.length)] : mine.recent[0] || mine.liked[0];
+  if (!seed) return;
+  const rec = await invoke("music_radio", { song: seed, skip: p.songs.map((s) => s.id) }).catch(() => []);
+  if (!alive() || !rec.length) return;
+  const addHere = (s) => el("button", { class: "mu-pill-btn", onclick: async (e) => {
+    e.stopPropagation();
+    const b = e.currentTarget;
+    try { await invoke("music_playlist_add", { id, song: s }); p.songs.push(s); b.textContent = "Added"; b.disabled = true; refreshLists(); } catch (er) { toast(err(er), true); }
+  } }, "Add");
+  recBox.replaceChildren(el("div", { class: "mu-row-head" }, el("div", {}, el("h2", { text: "Recommended" }), el("p", { class: "mu-row-note", text: p.songs.length ? `Based on what's in ${p.name}` : "Based on what you listen to" }))),
+    trackList(rec.slice(0, 10), { removable: addHere, numbered: false, from: "Recommended" }));
+  markPlaying();
+}
+
+/** A themed "are you sure" (api.js ask), not the browser's own. */
+function askSure(q) {
+  return ask(q, "This can't be undone.", [], "Delete", "Cancel");
+}
+
 async function library(page, which, alive) {
-  const tabs = [["liked", "Liked songs"], ["downloaded", "Downloaded"], ["recent", "Recently played"]];
+  const tabs = [["playlists", "Playlists"], ["liked", "Liked songs"], ["downloaded", "Downloaded"], ["recent", "Recently played"]];
   if (!tabs.some(([k]) => k === which)) which = getPref("music-lib") || "liked";
   setPref("music-lib", which);
   const box = el("div", {}, skeleton());
   page.append(el("header", { class: "mu-hello" }, el("h1", { text: "Your library" })),
     el("div", { class: "mu-chips" }, tabs.map(([k, label]) => el("a", { class: `mu-chip${k === which ? " on" : ""}`, href: `#m-library/${k}` }, label))), box);
+  if (which === "playlists") return playlistsGrid(box, alive);
   const [list] = await Promise.all([which === "downloaded" ? loadKept(true) : loadMine(true).then((m) => (which === "liked" ? m.liked : m.recent)), loadKept(), loadMine()]);
   if (!alive()) return;
   const title = tabs.find(([k]) => k === which)[1];
