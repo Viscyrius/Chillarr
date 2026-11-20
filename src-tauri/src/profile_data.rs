@@ -180,6 +180,7 @@ pub struct Export {
     /// Liked songs, and what was played lately (newest first).
     pub music_liked: Vec<crate::music::Song>,
     pub music_recent: Vec<crate::music::Song>,
+    pub music_playlists: Vec<crate::music::Playlist>,
     /// The Hidden list, when it was unlocked at export (None: left out).
     pub hidden: Option<Vec<crate::hidden::Portable>>,
     /// The profile's settings on the device it was exported from (the page's
@@ -669,7 +670,7 @@ pub async fn export(app: &AppHandle, prefs: BTreeMap<String, String>) -> Result<
     }
     out.music = crate::music::kept_by(app, &uid);
     let mine = crate::music::mine_of(app, &uid);
-    (out.music_liked, out.music_recent) = (mine.liked, mine.recent);
+    (out.music_liked, out.music_recent, out.music_playlists) = (mine.liked, mine.recent, mine.playlists);
     out.hidden = crate::hidden::portable(app);
     out.prefs = clean_prefs(&prefs);
     Ok(out)
@@ -1174,6 +1175,10 @@ pub async fn import(app: &AppHandle, text: &str) -> Result<Report, String> {
     let (liked, heard) = crate::music::take_mine(app, &uid, &file.music_liked, &file.music_recent);
     if liked > 0 || heard > 0 {
         rep.lines.push(format!("Music: {} liked, {} in Recently played.", plural(liked, "song", "songs"), plural(heard, "song", "songs")));
+    }
+    let lists = crate::music::take_playlists(app, &uid, &file.music_playlists);
+    if lists > 0 {
+        rep.lines.push(format!("Music: {}.", plural(lists, "playlist", "playlists")));
     }
     let songs = crate::music::take(app, &uid, file.music.clone());
     if songs > 0 {

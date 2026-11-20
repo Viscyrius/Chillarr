@@ -3457,8 +3457,12 @@ a.mu-alink:hover { color: var(--text); text-decoration: underline; }
 .mu-col-album { color: var(--muted); font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-decoration: none; }
 a.mu-col-album:hover { color: var(--text); text-decoration: underline; }
 .mu-row-btns { display: flex; align-items: center; gap: 2px; }
-.mu-row-btns .mu-ib:not(.on):not([data-state="done"]):not([data-state="busy"]) { opacity: 0; }
-.mu-track:hover .mu-row-btns .mu-ib, .mu-track:focus-within .mu-row-btns .mu-ib { opacity: 1; }
+.mu-row-btns .mu-ib { color: rgba(255, 255, 255, 0.55); }
+.mu-row-btns .mu-ib:hover { color: var(--text); }
+.mu-row-btns .mu-hover { opacity: 0; }
+.mu-track:hover .mu-row-btns .mu-hover, .mu-track:focus-within .mu-row-btns .mu-hover { opacity: 1; }
+.mu-row-btns .mu-like.on, .mu-row-btns .mu-keep[data-state="done"] { color: var(--accent); }
+body[data-rshade="light"] .mu-row-btns .mu-ib { color: rgba(15, 20, 30, 0.5); }
 .mu-len { color: var(--muted); font-size: 14px; font-variant-numeric: tabular-nums; text-align: right; }
 
 /* search */
@@ -3557,7 +3561,7 @@ a.mu-full-artist[href]:hover { color: #fff; text-decoration: underline; }
 .mu-ctl.big .mu-ib svg { width: 24px; height: 24px; }
 .mu-ctl.big .mu-pp { width: 64px; height: 64px; }
 .mu-ctl.big .mu-pp svg { width: 26px; height: 26px; }
-.mu-full-q { display: flex; flex-direction: column; min-height: 0; padding: 20px; border-radius: 14px; background: rgba(0, 0, 0, 0.28); }
+.mu-full-q { display: flex; flex-direction: column; align-self: center; max-height: 100%; min-height: 0; padding: 20px; border-radius: 14px; background: rgba(0, 0, 0, 0.28); }
 .mu-full-q h3 { margin: 0 0 12px; font: 800 1.1rem var(--display); }
 .mu-qlist { list-style: none; margin: 0; padding: 0; overflow-y: auto; scrollbar-width: thin; }
 .mu-q { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 6px 8px; border-radius: 6px; cursor: pointer; }
@@ -3634,3 +3638,79 @@ body[data-rshade="light"] .mu-top-n { -webkit-text-stroke-color: rgba(15, 20, 30
   .mu-card, .mu-qtile, .mu-track, .mu-top { -webkit-tap-highlight-color: transparent; }
 }
 @media (prefers-reduced-motion: reduce) { .mu-full, .mu-bar, .mu-play-badge { transition: none; animation: none; } }
+
+/* ---------- Music: playlists ---------- */
+.mu-menu { padding: 10px; }
+.mu-menu.sheet { left: 0 !important; right: 0; top: auto !important; bottom: 0; width: auto !important; max-height: 70vh; border-radius: 16px 16px 0 0; padding: 14px 14px calc(14px + env(safe-area-inset-bottom)); transform: translateY(100%); transform-origin: bottom; }
+.mu-menu.sheet.in { transform: none; }
+.mu-new { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.mu-name, .mu-rename { flex: 1; min-width: 0; height: 36px; padding: 0 12px; border: 1px solid var(--line-2); border-radius: 8px; background: rgba(255, 255, 255, 0.06); color: var(--text); font: 600 14px var(--display); }
+.mu-name:focus, .mu-rename:focus { outline: none; border-color: var(--accent); }
+.mu-rename { height: auto; padding: 4px 10px; font: 900 clamp(2rem, 5vw, 4.6rem)/1.05 var(--display); letter-spacing: -0.04em; width: 100%; margin: 6px 0 10px; }
+.mu-menu-list { display: flex; flex-direction: column; max-height: 300px; overflow-y: auto; }
+.mu-menu.sheet .mu-menu-list { max-height: 48vh; }
+.mu-menu-item { display: flex; align-items: center; gap: 10px; padding: 6px; border: 0; border-radius: 8px; background: none; color: var(--text); text-align: left; cursor: pointer; }
+.mu-menu-item:hover, .mu-menu-item:focus-visible { background: rgba(255, 255, 255, 0.08); outline: none; }
+.mu-menu-item .mu-tt span { color: var(--muted); font-size: 12px; }
+.mu-mosaic { display: grid; place-items: center; overflow: hidden; background: linear-gradient(135deg, #2b2f3a, #14161c); color: rgba(255, 255, 255, 0.6); }
+.mu-mosaic img { width: 100%; height: 100%; object-fit: cover; }
+.mu-mosaic.four { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+.mu-mosaic svg { width: 40%; height: 40%; }
+.mu-cover > .mu-mosaic { width: 100%; height: 100%; }
+.mu-mosaic.sm { flex: none; width: 40px; height: 40px; border-radius: 4px; }
+.mu-qart.mu-mosaic { width: 60px; height: 60px; }
+.mu-hero-art.mu-mosaic { display: grid; }
+.mu-create-art { display: grid; place-items: center; background: rgba(255, 255, 255, 0.06); box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.12); color: var(--text); }
+.mu-create-art svg { width: 38%; height: 38%; }
+.mu-create { border: 0; background: none; font: inherit; }
+.mu-cover-ic { display: grid; place-items: center; }
+.mu-cover.liked-art { background: linear-gradient(135deg, #4a2bd8, #8fb8e8); color: #fff; }
+.mu-cover-ic svg { width: 36%; height: 36%; fill: currentColor; stroke: none; }
+.mu-editable { cursor: text; border-radius: 6px; }
+.mu-editable:hover { background: rgba(255, 255, 255, 0.05); }
+.mu-pill-btn { height: 30px; padding: 0 14px; border: 1px solid rgba(255, 255, 255, 0.4); border-radius: 15px; background: none; color: var(--text); font: 700 13px var(--display); cursor: pointer; }
+.mu-pill-btn:hover:not(:disabled) { border-color: #fff; transform: scale(1.04); }
+.mu-pill-btn:disabled { opacity: 0.6; cursor: default; }
+.mu-rec { margin-top: 36px; }
+.mu-rec .mu-thead { display: none; }
+
+/* ---------- Music playing in Movies or Reading: a small player in the corner ---------- */
+body:not([data-mode="music"]) .mu-bar { left: auto; right: 18px; bottom: 18px; width: 340px; height: auto; display: grid; grid-template-columns: 1fr; gap: 6px; padding: 10px 12px 12px; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 14px; box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55); overflow: hidden; }
+body:not([data-mode="music"]) .mu-bar .mu-art { width: 46px; height: 46px; border-radius: 6px; }
+body:not([data-mode="music"]) .mu-bar .mu-mid { gap: 2px; }
+body:not([data-mode="music"]) .mu-bar .mu-line { max-width: none; }
+body:not([data-mode="music"]) .mu-bar .mu-ctl { gap: 8px; }
+body:not([data-mode="music"]) .mu-bar .mu-side { position: absolute; top: 8px; right: 8px; }
+body:not([data-mode="music"]) .mu-bar .mu-side > :not(.mu-stop) { display: none; }
+body:not([data-mode="music"]) .mu-bar .mu-now { padding-right: 34px; }
+body:not([data-mode="music"]) .mu-bar .mu-addto { display: none; }
+body:not([data-mode="music"]).mu-on main { padding-bottom: 0; }
+/* Out of the way of the film player and the reader. */
+body:not([data-mode="music"]):has(#player:not([hidden])) .mu-bar { opacity: 0; pointer-events: none; }
+/* Over the reader, so you can skip while you read. */
+body:has(.reader) .mu-bar { z-index: 2147483000; bottom: 84px; }
+body:has(.reader) .mu-full { z-index: 2147483001; }
+.mu-min { display: none; }
+body:not([data-mode="music"]) .mu-bar .mu-side > .mu-min { display: inline-grid; }
+/* Folded away: only the cover, turning while it plays. Press it to open again. */
+.mu-bar.min { width: 64px !important; height: 64px !important; padding: 0 !important; border-radius: 50% !important; left: auto !important; display: block; }
+.mu-bar.min > :not(.mu-now) , .mu-bar.min .mu-txt, .mu-bar.min .mu-like-slot { display: none !important; }
+.mu-bar.min .mu-now { padding: 0 !important; }
+.mu-bar.min .mu-art-btn { border-radius: 50%; }
+.mu-bar.min .mu-art { width: 64px !important; height: 64px !important; border-radius: 50%; }
+.mu-bar.min.spin .mu-art { animation: mu-spin 8s linear infinite; }
+@keyframes mu-spin { to { transform: rotate(360deg); } }
+.mu-bar.min .mu-art-btn::after { display: none; }
+
+@media (max-width: 980px) {
+  body:not([data-mode="music"]) .mu-bar { left: 8px; right: 8px; width: auto; bottom: calc(66px + env(safe-area-inset-bottom)); height: 58px; padding: 0 8px; grid-template-columns: minmax(0, 1fr) auto; border: 0; border-radius: 8px; }
+  body:not([data-mode="music"]) .mu-bar .mu-side { display: none; }
+  body:not([data-mode="music"]) .mu-bar .mu-now { padding-right: 0; }
+  body:not([data-mode="music"]) .mu-bar .mu-art { width: 42px; height: 42px; }
+  body:not([data-mode="music"]).mu-on main { padding-bottom: calc(140px + env(safe-area-inset-bottom)); }
+  .mu-like-slot { display: flex; }
+  .mu-now .mu-addto { display: none; }
+  .mu-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .mu-rename { font-size: 2rem; }
+  .mu-full-q { align-self: stretch; }
+}

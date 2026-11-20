@@ -359,7 +359,12 @@ fn need(cmd: &str) -> Option<Need> {
         | "read_delete_plan" => Need::Viewer,
         // Music (music.rs): the charts, search, playing, and downloading a song for keeping.
         "music_rows" | "music_search" | "music_album" | "music_play" | "music_keep" | "music_library"
-        | "music_artist" | "music_mine" | "music_like" | "music_played" | "music_for_you" | "music_radio" => Need::Viewer,
+        | "music_artist" | "music_mine" | "music_like" | "music_played" | "music_for_you" | "music_radio"
+        // Each profile's own playlists (music.rs `change` acts on the viewer's).
+        | "music_playlist_new" | "music_playlist_add" | "music_playlist_remove" | "music_playlist_rename" | "music_playlist_delete" | "music_playlist_move"
+        | "music_settings" => Need::Viewer,
+        // How long played songs stay on the PC, and clearing them: the PC's.
+        "music_set_cache" | "music_clear_cache" => Need::Admin,
         // Deleting a downloaded song's file: whoever may delete.
         "music_forget" => Need::Delete,
         // The viewer's own data, out and in (profile_data.rs): only ever theirs.
@@ -469,6 +474,15 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
         "music_like" => res(crate::music::like(app, arg(a, "song")?, arg(a, "on")?)),
         "music_played" => res(crate::music::played(app, arg(a, "song")?)),
         "music_for_you" => ok(crate::music::for_you(app).await),
+        "music_playlist_new" => res(crate::music::playlist_new(app, &arg::<String>(a, "name")?, arg(a, "song")?)),
+        "music_playlist_add" => res(crate::music::playlist_add(app, &arg::<String>(a, "id")?, arg(a, "song")?)),
+        "music_playlist_remove" => res(crate::music::playlist_remove(app, &arg::<String>(a, "id")?, &arg::<String>(a, "songId")?)),
+        "music_playlist_rename" => res(crate::music::playlist_rename(app, &arg::<String>(a, "id")?, &arg::<String>(a, "name")?)),
+        "music_playlist_delete" => res(crate::music::playlist_delete(app, &arg::<String>(a, "id")?)),
+        "music_playlist_move" => res(crate::music::playlist_move(app, &arg::<String>(a, "id")?, arg(a, "from")?, arg(a, "to")?)),
+        "music_settings" => ok(crate::music::settings(app)),
+        "music_set_cache" => res(crate::music::set_cache_mins(app, arg(a, "mins")?)),
+        "music_clear_cache" => ok(crate::music::clear_cache()),
         "music_radio" => ok(crate::music::radio(arg(a, "song")?, arg::<Option<Vec<String>>>(a, "skip")?.unwrap_or_default()).await),
         "music_forget" => res(crate::music::forget(app, &arg::<String>(a, "id")?)),
         "readparty_start" => res(crate::readparty::start(app, &arg::<String>(a, "key")?, arg(a, "chapter")?, arg(a, "page")?)),

@@ -4,7 +4,8 @@
 //!
 //! Two ways to listen:
 //! * **Play**: the song is fetched into a cache folder, played, and deleted
-//!   once nobody has touched it for a while (`CACHE_LIFE`). Nothing stays.
+//!   once nobody has touched it for a while (`cache_life`, Settings > Library
+//!   & storage; 30 minutes unless changed). Nothing stays.
 //! * **Download**: the song is kept in `Music\Chillarr` and listed in the
 //!   Library tab; it plays from there with no fetching at all.
 //!
@@ -22,7 +23,81 @@ use tauri::{AppHandle, Manager};
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 /// A played (not downloaded) song is deleted after this long untouched.
-const CACHE_LIFE: Duration = Duration::from_secs(30 * 60);
+/// Minutes a played (not downloaded) song is kept untouched before it is
+/// deleted. Settings > Library & storage; read from music-settings.json at start.
+static CACHE_MINS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(30);
+/// The choices Settings offers, in minutes.
+pub const CACHE_CHOICES: &[u64] = &[5, 10, 30, 60, 180, 720, 1440];
+
+fn cache_life() -> Duration {
+    Duration::from_secs(CACHE_MINS.load(std::sync::atomic::Ordering::Relaxed) * 60)
+}
+
+#[derive(Serialize, Deserialize, Default)]
+#[serde(default)]
+struct Settings {
+    cache_mins: Option<u64>,
+}
+
+fn settings_file(app: &AppHandle) -> Option<PathBuf> {
+    Some(app.path().app_data_dir().ok()?.join("music-settings.json"))
+}
+
+/// Reads the saved cache time, at start.
+pub fn load_settings(app: &AppHandle) {
+    let s: Settings = settings_file(app).and_then(|p| std::fs::read(p).ok()).and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+    if let Some(n) = s.cache_mins.filter(|n| CACHE_CHOICES.contains(n)) {
+        CACHE_MINS.store(n, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// Settings > Library & storage: how long played songs stay, and the room
+/// played and downloaded songs take.
+pub fn settings(app: &AppHandle) -> Value {
+    let size_of = |d: &Path| -> (u64, usize) {
+        std::fs::read_dir(d).map(|rd| rd.flatten().filter_map(|e| e.metadata().ok()).filter(|m| m.is_file()).fold((0, 0), |(b, n), m| (b + m.len(), n + 1))).unwrap_or((0, 0))
+    };
+    let (cache_bytes, cache_count) = size_of(&cache_dir());
+    let kept = library(app);
+    let kept_bytes: u64 = load(app).iter().filter_map(|k| std::fs::metadata(&k.file).ok()).map(|m| m.len()).sum();
+    json!({
+        "cache_mins": CACHE_MINS.load(std::sync::atomic::Ordering::Relaxed),
+        "choices": CACHE_CHOICES,
+        "cache_bytes": cache_bytes,
+        "cache_count": cache_count,
+        "kept_bytes": kept_bytes,
+        "kept_count": kept.len(),
+        "kept_dir": music_dir().to_string_lossy(),
+    })
+}
+
+/// Sets how long played songs stay, and sweeps by it at once.
+pub fn set_cache_mins(app: &AppHandle, mins: u64) -> Result<(), String> {
+    if !CACHE_CHOICES.contains(&mins) {
+        return Err("That isn't one of the choices.".into());
+    }
+    CACHE_MINS.store(mins, std::sync::atomic::Ordering::Relaxed);
+    let p = settings_file(app).ok_or("Chillarr isn't ready yet.")?;
+    if let Some(d) = p.parent() {
+        let _ = std::fs::create_dir_all(d);
+    }
+    std::fs::write(&p, serde_json::to_vec(&Settings { cache_mins: Some(mins) }).map_err(|e| e.to_string())?).map_err(|e| format!("Couldn't save it: {e}"))?;
+    sweep(false);
+    Ok(())
+}
+
+/// Deletes every played song now, except the ones playing in the last minute.
+pub fn clear_cache() -> usize {
+    let Ok(rd) = std::fs::read_dir(cache_dir()) else { return 0 };
+    let mut n = 0;
+    for e in rd.flatten() {
+        let busy = e.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|a| a < Duration::from_secs(60));
+        if !busy && std::fs::remove_file(e.path()).is_ok() {
+            n += 1;
+        }
+    }
+    n
+}
 const TICKET_LIFE: Duration = Duration::from_secs(6 * 3600);
 /// Longest one fetch may take before it is given up.
 const FETCH_WAIT: Duration = Duration::from_secs(120);
@@ -319,6 +394,134 @@ pub struct Mine {
     pub recent: Vec<Song>,
     /// How many times each song was played (by id).
     pub plays: HashMap<String, u32>,
+    /// The profile's own playlists, newest first.
+    pub playlists: Vec<Playlist>,
+}
+
+#[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
+#[serde(default)]
+pub struct Playlist {
+    pub id: String,
+    pub name: String,
+    pub songs: Vec<Song>,
+    pub created: u64,
+}
+
+const MAX_PLAYLISTS: usize = 500;
+const MAX_IN_PLAYLIST: usize = 5000;
+
+fn now_secs() -> u64 {
+    SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+}
+
+fn clean_name(n: &str) -> Option<String> {
+    let n: String = n.trim().chars().filter(|c| !c.is_control()).take(100).collect();
+    (!n.trim().is_empty()).then_some(n)
+}
+
+/// Changes one profile's music under its lock, and saves.
+fn change<T>(app: &AppHandle, f: impl FnOnce(&mut Mine) -> Result<T, String>) -> Result<T, String> {
+    let uid = me(app);
+    let _g = MINE_LOCK.lock().unwrap();
+    let mut m = mine_of(app, &uid);
+    let out = f(&mut m)?;
+    save_mine(app, &uid, &m)?;
+    FOR_YOU.lock().unwrap().as_mut().map(|c| c.remove(&uid));
+    Ok(out)
+}
+
+/// A new playlist (with a first song, if one is given). Returns it.
+pub fn playlist_new(app: &AppHandle, name: &str, song: Option<Song>) -> Result<Playlist, String> {
+    let name = clean_name(name).ok_or("Give it a name.")?;
+    let mut b = [0u8; 8];
+    getrandom::getrandom(&mut b).map_err(|e| e.to_string())?;
+    let p = Playlist { id: b.iter().map(|x| format!("{x:02x}")).collect(), name, songs: song.as_ref().and_then(clean).into_iter().collect(), created: now_secs() };
+    change(app, |m| {
+        if m.playlists.len() >= MAX_PLAYLISTS {
+            return Err("That's a lot of playlists. Delete one first.".into());
+        }
+        m.playlists.insert(0, p.clone());
+        Ok(p)
+    })
+}
+
+/// Adds a song to a playlist (once). Returns false when it was in it already.
+pub fn playlist_add(app: &AppHandle, id: &str, song: Song) -> Result<bool, String> {
+    let s = clean(&song).ok_or("That isn't a song.")?;
+    change(app, |m| {
+        let p = m.playlists.iter_mut().find(|p| p.id == id).ok_or("That playlist is gone.")?;
+        if p.songs.iter().any(|x| x.id == s.id) {
+            return Ok(false);
+        }
+        if p.songs.len() >= MAX_IN_PLAYLIST {
+            return Err("That playlist is full.".into());
+        }
+        p.songs.push(s);
+        Ok(true)
+    })
+}
+
+pub fn playlist_remove(app: &AppHandle, id: &str, song_id: &str) -> Result<(), String> {
+    change(app, |m| {
+        let p = m.playlists.iter_mut().find(|p| p.id == id).ok_or("That playlist is gone.")?;
+        p.songs.retain(|x| x.id != song_id);
+        Ok(())
+    })
+}
+
+pub fn playlist_rename(app: &AppHandle, id: &str, name: &str) -> Result<(), String> {
+    let name = clean_name(name).ok_or("Give it a name.")?;
+    change(app, |m| {
+        m.playlists.iter_mut().find(|p| p.id == id).ok_or("That playlist is gone.")?.name = name;
+        Ok(())
+    })
+}
+
+pub fn playlist_delete(app: &AppHandle, id: &str) -> Result<(), String> {
+    change(app, |m| {
+        m.playlists.retain(|p| p.id != id);
+        Ok(())
+    })
+}
+
+/// Moves a song within a playlist, from one place to another.
+pub fn playlist_move(app: &AppHandle, id: &str, from: usize, to: usize) -> Result<(), String> {
+    change(app, |m| {
+        let p = m.playlists.iter_mut().find(|p| p.id == id).ok_or("That playlist is gone.")?;
+        if from >= p.songs.len() || to >= p.songs.len() {
+            return Err("That song isn't there.".into());
+        }
+        let s = p.songs.remove(from);
+        p.songs.insert(to, s);
+        Ok(())
+    })
+}
+
+/// A profile file's playlists, added (a name already here gets its songs merged).
+pub fn take_playlists(app: &AppHandle, uid: &str, list: &[Playlist]) -> usize {
+    let _g = MINE_LOCK.lock().unwrap();
+    let mut m = mine_of(app, uid);
+    let mut n = 0;
+    for p in list.iter().take(MAX_PLAYLISTS) {
+        let Some(name) = clean_name(&p.name) else { continue };
+        let songs: Vec<Song> = p.songs.iter().filter_map(clean).take(MAX_IN_PLAYLIST).collect();
+        match m.playlists.iter_mut().find(|x| x.name == name) {
+            Some(x) => {
+                for s in songs {
+                    if !x.songs.iter().any(|y| y.id == s.id) {
+                        x.songs.push(s);
+                    }
+                }
+            }
+            None => {
+                let id = if p.id.len() <= 32 && !p.id.is_empty() && p.id.bytes().all(|b| b.is_ascii_hexdigit()) { p.id.clone() } else { format!("{:x}", now_secs() + n as u64) };
+                m.playlists.push(Playlist { id, name, songs, created: p.created });
+                n += 1;
+            }
+        }
+    }
+    let _ = save_mine(app, uid, &m);
+    n
 }
 
 const MAX_RECENT: usize = 300;
@@ -382,7 +585,10 @@ pub fn played(app: &AppHandle, s: Song) -> Result<(), String> {
         let keep: std::collections::HashSet<String> = m.recent.iter().chain(m.liked.iter()).map(|x| x.id.clone()).collect();
         m.plays.retain(|k, _| keep.contains(k));
     }
-    save_mine(app, &uid, &m)
+    save_mine(app, &uid, &m)?;
+    // What you listen to changes what's recommended: the next Home asks again.
+    FOR_YOU.lock().unwrap().as_mut().map(|c| c.remove(&uid));
+    Ok(())
 }
 
 /// A profile file's likes and history, merged into this profile's.
@@ -427,6 +633,9 @@ fn top_artists(m: &Mine) -> Vec<(String, String, f64)> {
     }
     for s in &m.liked {
         add(s, 3.0);
+    }
+    for s in m.playlists.iter().flat_map(|p| p.songs.iter()) {
+        add(s, 2.0);
     }
     score.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
     score
@@ -673,13 +882,13 @@ fn touch(p: &Path) {
     }
 }
 
-/// Deletes every played song nobody has touched for `CACHE_LIFE`
+/// Deletes every played song nobody has touched for `cache_life()`
 /// (`all`: every one, at start). A song still being listened to is touched
 /// each time the player asks for more of it, so it stays.
 pub fn sweep(all: bool) {
     let Ok(rd) = std::fs::read_dir(cache_dir()) else { return };
     for e in rd.flatten() {
-        let old = e.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).map_or(true, |a| a > CACHE_LIFE);
+        let old = e.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).map_or(true, |a| a > cache_life());
         if all || old {
             let _ = std::fs::remove_file(e.path());
         }

@@ -298,7 +298,7 @@ async function library(panel) {
   const foldersBox = el("div");
   const roomBox = el("div");
   const settingsBox = el("div");
-  panel.append(drivesBox, foldersBox, roomBox, readingBox(), settingsBox);
+  panel.append(drivesBox, foldersBox, roomBox, readingBox(), musicBox(), settingsBox);
   const [o, stats, f] = await Promise.all([
     invoke("storage_overview").catch(() => null),
     invoke("library_stats").catch(() => []),
@@ -353,6 +353,39 @@ function folderCards(stats, disks) {
 
 /** Clean up watched, Delete watched now, and what takes the most room. */
 /** Manga, manhwa and books: where they go, and deleting chapters once read. */
+/** Music: how long a played (not downloaded) song stays on the PC, and the room songs take. */
+function musicBox() {
+  const MIN = (m) => (m < 60 ? `${m} minutes` : m < 1440 ? `${m / 60} hour${m === 60 ? "" : "s"}` : `${m / 1440} day${m === 1440 ? "" : "s"}`);
+  const mb = (b) => (b >= 1e9 ? `${(b / 1e9).toFixed(1)} GB` : `${Math.round(b / 1e6)} MB`);
+  const room = el("small", { text: "Measuring..." });
+  const kept = el("small", { text: "" });
+  const pick = el("select", { class: "quality", "aria-label": "Delete played songs after" });
+  const clear = el("button", { class: "btn small ghost", type: "button" }, "Clear now");
+  const mayChange = !WEB || viewer.admin;
+  const draw = async () => {
+    try {
+      const m = await invoke("music_settings");
+      pick.replaceChildren(...m.choices.map((c) => el("option", { value: String(c), text: MIN(c), selected: c === m.cache_mins })));
+      room.textContent = `Songs you play are fetched to this PC, played, and deleted once nobody has played them for ${MIN(m.cache_mins)}, so they don't fill the drive. The next song is fetched while one plays. Played songs here now: ${m.cache_count}, ${mb(m.cache_bytes)}.`;
+      kept.textContent = `${m.kept_count} downloaded, ${mb(m.kept_bytes)}, in ${m.kept_dir}. Downloaded songs stay until you delete them in Music > Library > Downloaded.`;
+    } catch (e) { room.textContent = String(e); }
+  };
+  pick.addEventListener("change", async () => {
+    try { await invoke("music_set_cache", { mins: Number(pick.value) }); toast(`Played songs now go after ${MIN(Number(pick.value))}.`); draw(); } catch (e) { toast(String(e), true); }
+  });
+  clear.addEventListener("click", async () => {
+    clear.disabled = true;
+    try { const n = await invoke("music_clear_cache"); toast(n ? `Deleted ${n} played ${n === 1 ? "song" : "songs"}.` : "Nothing to delete (a song playing right now stays)."); draw(); } catch (e) { toast(String(e), true); }
+    clear.disabled = false;
+  });
+  draw();
+  return el("div", {}, subhead("Music"),
+    el("div", { class: "box" },
+      el("div", { class: "opt" }, el("span", {}, el("b", { text: "Delete played songs after" }), room),
+        mayChange ? el("div", { class: "acts" }, pick, clear) : el("small", { text: "Set in Chillarr on the PC." })),
+      el("div", { class: "opt" }, el("span", {}, el("b", { text: "Downloaded songs" }), kept))));
+}
+
 function readingBox() {
   // On the web the folder and clean-up can't be changed (only the PC has
   // them): what's in the folder still shows, with a note, not dead controls.
