@@ -3613,5 +3613,24 @@ body[data-rshade="light"] .mu-top-n { -webkit-text-stroke-color: rgba(15, 20, 30
   .mu-full-body { padding: 10px 24px 24px; gap: 26px; }
   .mu-full-art { width: min(80vw, 46vh); }
   .mu-full-meta, .mu-full .mu-line { width: min(80vw, 46vh); }
+  .mu-full-q { padding: 14px 10px; }
+  .mu-full-top { padding-left: 12px; padding-right: 12px; }
+  /* The artist's picture runs up under the top bar here too. */
+  .mu-artist-hero { margin-top: calc(-78px - env(safe-area-inset-top)); padding-top: calc(110px + env(safe-area-inset-top)); min-height: 300px; }
+  .mu-hello { margin-top: 0; }
+  .mu-quick { gap: 8px; margin-bottom: 24px; }
+  .mu-qtile { height: 56px; padding-right: 10px; }
+  .mu-qart { width: 56px; height: 56px; }
+  .mu-qtile b { font-size: 13px; }
+  .mu-row-head h2 { font-size: 1.2rem; }
+  .mu-ib { width: 40px; height: 40px; }
+  .mu-big-play { width: 54px; height: 54px; }
+  .mu-best h3 { font-size: 1.6rem; }
+  .mu-chip { height: 34px; line-height: 34px; }
+}
+@media (max-width: 980px) and (pointer: coarse) {
+  .mu-qtile .mu-play-badge { display: none; }
+  .mu-track:active, .mu-card:active, .mu-qtile:active { background: rgba(255, 255, 255, 0.1); }
+  .mu-card, .mu-qtile, .mu-track, .mu-top { -webkit-tap-highlight-color: transparent; }
 }
 @media (prefers-reduced-motion: reduce) { .mu-full, .mu-bar, .mu-play-badge { transition: none; animation: none; } }

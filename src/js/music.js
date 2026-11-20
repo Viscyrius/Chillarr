@@ -126,12 +126,38 @@ function ready(song) {
   return p;
 }
 
+/* Phones (iPhones above all) only let a page start sound straight from a tap.
+   A song takes seconds to fetch, so the tap itself starts a moment of silence
+   on the player: from then on the same player may play whatever it is given. */
+let unlocked = false;
+let quiet = "";
+function silence() {
+  if (quiet) return quiet;
+  const n = 800, b = new Uint8Array(44 + n), v = new DataView(b.buffer);
+  const s = (o, t) => [...t].forEach((c, i) => (b[o + i] = c.charCodeAt(0)));
+  s(0, "RIFF"); v.setUint32(4, 36 + n, true); s(8, "WAVEfmt "); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, 8000, true); v.setUint32(28, 8000, true); v.setUint16(32, 1, true); v.setUint16(34, 8, true); s(36, "data"); v.setUint32(40, n, true);
+  b.fill(128, 44);
+  quiet = URL.createObjectURL(new Blob([b], { type: "audio/wav" }));
+  return quiet;
+}
+function unlock() {
+  if (unlocked) return;
+  unlocked = true;
+  try {
+    audio.src = silence();
+    const p = audio.play();
+    if (p) p.then(() => audio.pause()).catch(() => { unlocked = false; });
+  } catch (e) { unlocked = false; }
+}
+
 function shuffled(a) { const b = a.slice(); for (let i = b.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [b[i], b[j]] = [b[j], b[i]]; } return b; }
 
 /** Plays `list[i]`, with the rest of `list` as what comes next. `from` names the list. */
 export function playList(list, i = 0, from = "") {
   const pick = list[i];
   if (!pick) return;
+  unlock();
   P.from = from;
   P.radio = false;
   if (P.shuffle) {
@@ -198,14 +224,18 @@ function next() {
   return start(P.at + 1);
 }
 const prev = () => (audio.currentTime > 4 ? (audio.currentTime = 0) : start(Math.max(0, P.at - 1)));
-const toggle = () => { if (!audio.src) return; audio.paused ? audio.play().catch(() => {}) : audio.pause(); };
+const toggle = () => { if (!audio.src || P.at < 0) return; audio.paused ? audio.play().catch(() => {}) : audio.pause(); };
 
+/** The moment of silence that unlocks a phone's player isn't a song. */
+const silent = () => audio.src.startsWith("blob:");
 audio.addEventListener("ended", () => {
+  if (silent()) return;
   if (P.repeat === "one") { audio.currentTime = 0; audio.play().catch(() => {}); return; }
   if (P.at + 1 < P.queue.length || P.repeat === "all") next(); else drawBar(false);
 });
-for (const ev of ["play", "pause"]) audio.addEventListener(ev, () => drawBar(false));
+for (const ev of ["play", "pause"]) audio.addEventListener(ev, () => { if (!silent()) drawBar(false); });
 audio.addEventListener("timeupdate", () => {
+  if (silent()) return;
   drawTime();
   // Counts as played after 20 seconds (or half a short song), once.
   const s = P.queue[P.at];
@@ -223,7 +253,17 @@ function media(s) {
   navigator.mediaSession.setActionHandler("pause", () => audio.pause());
   navigator.mediaSession.setActionHandler("nexttrack", next);
   navigator.mediaSession.setActionHandler("previoustrack", prev);
+  try { navigator.mediaSession.setActionHandler("seekto", (d) => { if (d.seekTime != null) audio.currentTime = d.seekTime; }); } catch (e) { /* not on this browser */ }
 }
+/** The phone's lock screen shows where the song is. */
+function lockPosition() {
+  if (!("mediaSession" in navigator) || !navigator.mediaSession.setPositionState || !isFinite(audio.duration)) return;
+  try { navigator.mediaSession.setPositionState({ duration: audio.duration, position: Math.min(audio.currentTime, audio.duration), playbackRate: 1 }); } catch (e) { /* not on this browser */ }
+}
+audio.addEventListener("loadedmetadata", lockPosition);
+audio.addEventListener("seeked", lockPosition);
+audio.addEventListener("play", () => { if ("mediaSession" in navigator) navigator.mediaSession.playbackState = "playing"; lockPosition(); });
+audio.addEventListener("pause", () => { if ("mediaSession" in navigator) navigator.mediaSession.playbackState = "paused"; });
 
 /* ---------- the bar ---------- */
 let bar = null;
@@ -366,6 +406,11 @@ function openFull() {
           el("div", { class: "mu-ctl big" }, ctlButtons())),
         el("aside", { class: "mu-full-q" }, el("h3", { text: "Up next" }), el("ol", { class: "mu-qlist" }))));
     full.addEventListener("click", (e) => { if (e.target.closest("a[href]")) closeFull(); });
+    // On a phone, a swipe down from the top half closes it.
+    let y0 = null, dy = 0;
+    full.addEventListener("touchstart", (e) => { const t = e.touches[0]; y0 = t.clientY < innerHeight * 0.6 && !e.target.closest(".mu-full-q, input") && $(".mu-full-body", full).scrollTop <= 0 ? t.clientY : null; dy = 0; }, { passive: true });
+    full.addEventListener("touchmove", (e) => { if (y0 == null) return; dy = Math.max(0, e.touches[0].clientY - y0); full.style.transform = `translateY(${dy}px)`; full.style.transition = "none"; }, { passive: true });
+    full.addEventListener("touchend", () => { if (y0 == null) return; full.style.transition = ""; full.style.transform = ""; if (dy > 110) closeFull(); y0 = null; });
     document.body.append(full);
     paintModes();
   }
