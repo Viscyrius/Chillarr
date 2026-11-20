@@ -1495,6 +1495,89 @@ pub async fn stop_chapters(app: &AppHandle, key: &str) -> Result<String, String>
     Ok(format!("Stopped the downloads of {}.", f.title))
 }
 
+/// Failed chapters already looked for elsewhere, and when (one look per 30 minutes each).
+static FALLBACK_TRIED: Mutex<Option<HashMap<i64, Instant>>> = Mutex::new(None);
+
+/// A chapter whose site gives no pages (the site moved, or its plugin broke)
+/// is got from another site: first from the series' other copies, then from
+/// any site that has that chapter with pages, which becomes one of its
+/// copies (as Follow's "fill" does), so its chapters read as one series. The
+/// failed one leaves the queue. Returns lines for the log.
+pub async fn fallback_failed(app: &AppHandle) -> Vec<String> {
+    let failed = crate::suwayomi::failed().await;
+    if failed.is_empty() {
+        return vec![];
+    }
+    let mut log = Vec::new();
+    for (chapter_id, manga_id, number, name) in failed {
+        let Some(n) = number else { continue };
+        {
+            let mut t = FALLBACK_TRIED.lock().unwrap();
+            let t = t.get_or_insert_with(HashMap::new);
+            if t.get(&chapter_id).is_some_and(|at| at.elapsed() < Duration::from_secs(30 * 60)) {
+                continue;
+            }
+            t.insert(chapter_id, Instant::now());
+        }
+        let Some(f) = followed(app).into_iter().find(|f| f.has_manga(manga_id)) else { continue };
+        let from_site = f.copies().into_iter().find(|c| c.0 == manga_id).map(|c| c.1).unwrap_or_default();
+        // 1. Another copy the series already has.
+        let mut got: Option<(i64, String)> = None;
+        for (copy, source, _) in f.copies().into_iter().filter(|c| c.0 != manga_id) {
+            let _ = crate::suwayomi::refresh(copy).await;
+            if let Some(c) = crate::suwayomi::chapters(copy).await.unwrap_or_default().into_iter().find(|c| c.number == Some(n)) {
+                if c.downloaded || crate::suwayomi::page_count(c.id).await > 0 {
+                    if !c.downloaded {
+                        let _ = crate::suwayomi::enqueue(&[c.id]).await;
+                    }
+                    got = Some((c.id, source));
+                    break;
+                }
+            }
+        }
+        // 2. Any other site that has it with pages: it joins the series as a copy.
+        if got.is_none() {
+            let mut names = vec![f.title.clone()];
+            names.extend(f.names.iter().cloned());
+            if !f.source_title.is_empty() {
+                names.push(f.source_title.clone());
+            }
+            names.dedup();
+            let lang = f.lang.clone().unwrap_or_else(|| "en".into());
+            let mut list = crate::suwayomi::candidates(&names, &lang, false).await.unwrap_or_default();
+            crate::suwayomi::rank(&mut list);
+            for cand in list.into_iter().filter(|c| !f.has_manga(c.manga_id) && c.latest.is_none_or(|l| l >= n)).take(6) {
+                let _ = crate::suwayomi::refresh(cand.manga_id).await;
+                let Some(c) = crate::suwayomi::chapters(cand.manga_id).await.unwrap_or_default().into_iter().find(|c| c.number == Some(n)) else { continue };
+                if crate::suwayomi::page_count(c.id).await == 0 {
+                    continue;
+                }
+                let Ok((source, source_title)) = crate::suwayomi::folder_names(cand.manga_id).await else { continue };
+                // In the library (so it's kept up with), nothing downloaded but this chapter.
+                if crate::suwayomi::follow(cand.manga_id, None, Some(&[])).await.is_err() {
+                    continue;
+                }
+                update_followed(app, &f.key, |x| {
+                    if !x.has_manga(cand.manga_id) {
+                        x.fill.push(Fill { manga_id: cand.manga_id, source: source.clone(), source_title, width: cand.width });
+                    }
+                });
+                let _ = crate::suwayomi::enqueue(&[c.id]).await;
+                got = Some((c.id, source));
+                break;
+            }
+        }
+        match got {
+            Some((_, site)) => {
+                let _ = crate::suwayomi::dequeue(&[chapter_id]).await;
+                log.push(format!("{name}: {from_site} gave no pages, so it's coming from {site} instead."));
+            }
+            None => log.push(format!("{name}: {from_site} gives no pages and no other site has it yet. Trying again in 30 minutes.")),
+        }
+    }
+    log
+}
+
 /// Follows the series from `pick` (a candidate from `sources`), downloading
 /// every chapter from `from` on. Following it again from another source
 /// replaces the old one; what was read is kept.

@@ -5,6 +5,7 @@
 // profile. Getting a series: pick the translation, then Best (the sharpest
 // complete copy, found by asking every source) or a copy of your choice,
 // then which chapters.
+import { usualDay } from "./week.js";
 import { hideButton, isHidden, markHidden } from "./hidden.js";
 import { away, ask, choose, closeDialog, el, expandRow, getPref, icon, ICON, invoke, listen, personKey, setPref, toast } from "./api.js";
 import { selectable, stopSelecting } from "./select.js";
@@ -703,7 +704,7 @@ async function followedWithChapters(series, most = 16) {
   return got.filter(Boolean).map(({ s, d }) => {
     const chs = d.chapters.filter((c) => c.downloaded || c.uploaded).slice().sort((a, b) => (b.number ?? 0) - (a.number ?? 0));
     const newest = Math.max(0, ...d.chapters.map((c) => Number(c.uploaded) || 0));
-    return { s, d, chs, newest, card: { ...asCard(s), banner: d.followed && d.followed.banner, description: d.followed && d.followed.description, genres: d.followed && d.followed.genres } };
+    return { s, d, chs, newest, day: usualDay(d.chapters), card: { ...asCard(s), banner: d.followed && d.followed.banner, description: d.followed && d.followed.description, genres: d.followed && d.followed.genres } };
   }).sort((a, b) => b.newest - a.newest);
 }
 
@@ -898,7 +899,7 @@ async function classicHome(view, my) {
     const list = await followedWithChapters(series);
     if (!alive(my)) return;
     const today = new Date().getDay();
-    const day = (x) => (x.newest ? new Date(x.newest).getDay() : -1);
+    const day = (x) => x.day;
     const tabs = WEEK.map((d, i) => [i === today ? `${d} (today)` : d, async () => list.filter((x) => day(x) === i)]);
     // Today first, then the days after it.
     const order = [...WEEK.keys()].map((k) => (today + k) % 7);
