@@ -150,7 +150,7 @@ main { min-height: 100dvh; outline: none; }
 
 /* Rows */
 .rows { position: relative; z-index: 3; margin-top: -8vh; padding-bottom: 60px; }
-.page-top { padding-top: 96px; }
+.page-top { --page-top: 96px; padding-top: var(--page-top); }
 .row { margin: 0 0 34px; }
 .row-head { display: flex; align-items: baseline; gap: 12px; padding: 0 var(--gutter); margin-bottom: 12px; }
 .row-head h2 { font: 600 1.2rem var(--display); letter-spacing: -0.01em; margin: 0; }
@@ -1453,7 +1453,7 @@ body.app-full #fs-btn .fs-out { display: inline; }
   .search input { font-size: 16px; } /* under 16px, iPhone zooms into the box */
   .icon-btn { width: 38px; height: 38px; flex: none; }
   #fs-btn { display: none; }
-  .page-top { padding-top: calc(78px + env(safe-area-inset-top)); }
+  .page-top { --page-top: calc(78px + env(safe-area-inset-top)); }
 
   /* Hero: the picture behind, the words full width over a darker foot. */
   .hero { min-height: min(74svh, 640px); padding: 0 var(--gutter) 44px; }
@@ -1790,7 +1790,7 @@ html.tv .brand { font-size: 24px; }
 html.tv .tabs a { font-size: 19px; }
 html.tv .icon-btn { width: 48px; height: 48px; }
 html.tv .search { height: 46px; width: 300px; font-size: 17px; background: rgba(var(--bg-rgb),  0.82); } /* solid: no picture showing through the words */
-html.tv .page-top { padding-top: 116px; }
+html.tv .page-top { --page-top: 116px; }
 html.tv .hero h1 { font-size: 4.2rem; }
 html.tv .hero .meta { font-size: 18px; }
 html.tv .hero .overview { font-size: 19px; }
@@ -3328,7 +3328,7 @@ dialog.more-menu.sheet.closing, dialog.rec-dlg.sheet.closing { animation: sheet-
 .mu-ib svg.fill { fill: currentColor; }
 .mu-ib.on { color: var(--accent); position: relative; }
 .mu-shuf.on::after, .mu-rep.on::after { content: ""; position: absolute; bottom: 1px; left: 50%; width: 4px; height: 4px; margin-left: -2px; border-radius: 50%; background: var(--accent); }
-.mu-rep .mu-one { display: none; position: absolute; top: 3px; right: 3px; font: 800 9px/1 var(--display); font-style: normal; }
+.mu-rep .mu-one { display: none; position: absolute; top: 1px; right: 0; min-width: 13px; height: 13px; border-radius: 7px; background: var(--accent); color: var(--accent-ink); font: 800 10px/13px var(--display); text-align: center; font-style: normal; }
 .mu-rep.one .mu-one { display: block; }
 .mu-like.on { color: var(--accent); }
 .mu-like.on svg { fill: currentColor; animation: mu-pop 0.35s var(--spring); }
@@ -3398,7 +3398,7 @@ a.mu-alink:hover { color: var(--text); text-decoration: underline; }
 /* Top 10: big numbers */
 .mu-top { position: relative; flex: none; display: grid; grid-template-columns: auto 150px; grid-template-rows: auto auto; align-items: end; column-gap: 0; width: 230px; padding: 12px 12px 12px 0; border-radius: 10px; cursor: pointer; scroll-snap-align: start; transition: background 0.25s; }
 .mu-top:hover { background: rgba(255, 255, 255, 0.05); }
-.mu-top-n { grid-row: 1; align-self: end; margin-right: -14px; font: 900 118px/0.78 var(--display); letter-spacing: -0.08em; color: transparent; -webkit-text-stroke: 2px rgba(255, 255, 255, 0.55); z-index: 0; }
+.mu-top-n { grid-row: 1; align-self: end; margin-right: -14px; font: 900 118px/0.78 var(--display); letter-spacing: -0.08em; color: transparent; -webkit-text-stroke: 2.5px rgba(255, 255, 255, 0.7); text-shadow: 0 2px 14px rgba(0, 0, 0, 0.45); z-index: 0; }
 .mu-top .mu-cover { grid-row: 1; z-index: 1; }
 .mu-top-txt { grid-column: 2; display: flex; flex-direction: column; gap: 2px; margin-top: 10px; min-width: 0; }
 .mu-top-txt b { font: 700 14px var(--display); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -3413,12 +3413,12 @@ a.mu-alink:hover { color: var(--text); text-decoration: underline; }
 .mu-hero p { margin: 0; color: var(--muted); font-size: 14px; }
 .mu-hero p a, .mu-hero p b { color: var(--text); font-weight: 700; text-decoration: none; }
 .mu-hero p a:hover { text-decoration: underline; }
-.mu-tint { position: absolute; inset: calc(-1 * var(--top-h, 0px)) 0 auto; height: 460px; z-index: 0; pointer-events: none; overflow: hidden; }
+.mu-tint { position: absolute; inset: calc(-1 * var(--page-top, 0px)) 0 auto; height: 460px; z-index: 0; pointer-events: none; overflow: hidden; }
 .mu-tint::before { content: ""; position: absolute; inset: -60px; background: var(--art) center / cover; filter: blur(70px) saturate(1.6); opacity: 0.55; }
 .mu-tint::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, transparent 0%, var(--bg) 100%); }
 
 /* artist hero: the picture big, the name over it */
-.mu-artist-hero { position: relative; display: flex; align-items: flex-end; min-height: clamp(240px, 34vh, 380px); margin: -96px 0 18px; padding: 120px var(--gutter) 24px; overflow: hidden; }
+.mu-artist-hero { position: relative; display: flex; align-items: flex-end; min-height: clamp(240px, 34vh, 380px); margin: calc(-1 * var(--page-top, 96px)) 0 18px; padding: calc(var(--page-top, 96px) + 24px) var(--gutter) 24px; overflow: hidden; }
 .mu-artist-hero::before { content: ""; position: absolute; inset: -40px; background: var(--art) center 30% / cover; filter: blur(2px) saturate(1.1); transform: scale(1.05); }
 .mu-artist-hero::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(0, 0, 0, 0.15), rgba(0, 0, 0, 0.35) 55%, var(--bg)); }
 .mu-artist-hero > div { position: relative; z-index: 1; color: #fff; }
@@ -3434,7 +3434,7 @@ a.mu-alink:hover { color: var(--text); text-decoration: underline; }
 .mu-thead .mu-col-len { display: flex; justify-content: flex-end; }
 .mu-thead svg { width: 16px; height: 16px; }
 .mu-tracks { list-style: none; margin: 0; padding: 0; }
-.mu-track { height: 58px; border-radius: 6px; cursor: default; transition: background 0.12s; }
+.mu-track { height: 58px; border-radius: 6px; cursor: pointer; transition: background 0.12s; }
 .mu-track:hover, .mu-track:focus-visible, .mu-track:focus-within { background: rgba(255, 255, 255, 0.07); outline: none; }
 .mu-n { position: relative; display: grid; place-items: center; height: 100%; color: var(--muted); font-variant-numeric: tabular-nums; }
 .mu-n > * { grid-area: 1 / 1; }
@@ -3501,7 +3501,9 @@ body[data-rshade="light"] .mu-row-btns .mu-ib { color: rgba(15, 20, 30, 0.5); }
 /* the player bar */
 .mu-bar { position: fixed; left: 0; right: 0; bottom: 0; z-index: calc(var(--z-overlay) - 1); display: grid; grid-template-columns: minmax(180px, 1fr) minmax(0, 1.5fr) minmax(180px, 1fr); align-items: center; gap: 16px; height: 84px;
   padding: 0 max(18px, env(safe-area-inset-right)) env(safe-area-inset-bottom) max(18px, env(safe-area-inset-left));
-  background: rgba(8, 8, 10, 0.94); -webkit-backdrop-filter: blur(20px) saturate(1.3); backdrop-filter: blur(20px) saturate(1.3); border-top: 1px solid rgba(255, 255, 255, 0.06); animation: mu-up 0.35s var(--out) both; }
+  background: rgba(8, 8, 10, 0.94); -webkit-backdrop-filter: blur(20px) saturate(1.3); backdrop-filter: blur(20px) saturate(1.3); border-top: 1px solid rgba(255, 255, 255, 0.06); animation: mu-up 0.35s var(--out) both; isolation: isolate; overflow: hidden; }
+.mu-bar::before { content: ""; position: absolute; inset: -40px; z-index: -1; background: var(--art, none) center / cover; filter: blur(50px) saturate(1.6); opacity: 0.22; transition: opacity 0.6s; pointer-events: none; }
+.mu-bar.min::before { display: none; }
 @keyframes mu-up { from { transform: translateY(100%); } }
 .mu-bar[hidden] { display: none; }
 body.mu-on main { padding-bottom: 100px; }
@@ -3534,6 +3536,10 @@ a.mu-artist[href]:hover { color: #fff; text-decoration: underline; }
 .mu-side { display: flex; align-items: center; justify-content: flex-end; gap: 4px; }
 .mu-vol { width: 96px; }
 .mu-mini-line { display: none; }
+.mu-ly-mini { display: none; }
+.mu-full-top .mu-full-ly { width: auto; height: 36px; gap: 6px; padding: 0 14px; border-radius: 18px; background: rgba(255, 255, 255, 0.12); font: 700 13px var(--display); display: inline-flex; }
+.mu-full-top .mu-full-ly svg { width: 18px; height: 18px; }
+.mu-full[data-panel="lyrics"] .mu-full-ly { background: #fff; color: #000; }
 
 /* Now playing, full screen */
 .mu-full { position: fixed; inset: 0; z-index: calc(var(--z-overlay) + 4); display: flex; flex-direction: column; background: #050506; color: #fff; opacity: 0; visibility: hidden; transform: translateY(40px); transition: opacity 0.3s, transform 0.4s var(--out), visibility 0s 0.4s; }
@@ -3578,7 +3584,12 @@ body.mu-full-on { overflow: hidden; }
 body[data-rshade="light"] .mu-chip, body[data-rshade="light"] .mu-qtile, body[data-rshade="light"] .mu-best { background: rgba(15, 20, 30, 0.06); }
 body[data-rshade="light"] .mu-card:hover, body[data-rshade="light"] .mu-track:hover { background: rgba(15, 20, 30, 0.06); }
 body[data-rshade="light"] .mu-chip.on { background: var(--text); color: var(--bg); }
-body[data-rshade="light"] .mu-top-n { -webkit-text-stroke-color: rgba(15, 20, 30, 0.45); }
+body[data-rshade="light"] .mu-arrow { background: rgba(15, 20, 30, 0.07); }
+body[data-rshade="light"] .mu-page .mu-range { background: linear-gradient(90deg, var(--text) var(--fill, 0%), rgba(15, 20, 30, 0.18) var(--fill, 0%)); }
+body[data-rshade="light"] .mu-page .mu-range:hover { background: linear-gradient(90deg, var(--accent) var(--fill, 0%), rgba(15, 20, 30, 0.18) var(--fill, 0%)); }
+body[data-rshade="light"] .mu-pill { background: rgba(15, 20, 30, 0.08); }
+body[data-rshade="light"] .mu-page .mu-empty { color: var(--muted); }
+body[data-rshade="light"] .mu-top-n { -webkit-text-stroke-color: rgba(15, 20, 30, 0.6); text-shadow: none; }
 
 /* tablets and phones */
 @media (max-width: 1100px) {
@@ -3595,6 +3606,7 @@ body[data-rshade="light"] .mu-top-n { -webkit-text-stroke-color: rgba(15, 20, 30
   .mu-art-btn::after { display: none; }
   .mu-mid { flex-direction: row; }
   .mu-mid .mu-line, .mu-mid .mu-shuf, .mu-mid .mu-rep, .mu-mid .mu-prev { display: none; }
+  .mu-ly-mini { display: grid; }
   .mu-ctl { gap: 4px; }
   .mu-bar .mu-pp { background: none; color: #fff; }
   .mu-bar .mu-pp svg { width: 22px; height: 22px; }
@@ -3690,6 +3702,22 @@ body:not([data-mode="music"]):has(#player:not([hidden])) .mu-bar { opacity: 0; p
 /* Over the reader, so you can skip while you read. */
 body:has(.reader) .mu-bar { z-index: 2147483000; bottom: 84px; }
 body:has(.reader) .mu-full { z-index: 2147483001; }
+/* A phone reading: the bar would sit over the page you are reading. While the
+   reader's own bars are hidden it tucks into a small turning cover in the
+   corner (tap it for the full player, with lyrics); when you bring the
+   reader's bars up, it comes back as a bar just above them. */
+@media (max-width: 980px) {
+  body:has(.reader:not(.bars)) .mu-bar:not(.min) { left: auto !important; right: calc(12px + env(safe-area-inset-right)); bottom: calc(16px + env(safe-area-inset-bottom)); width: 48px; height: 48px; padding: 0; display: block; border-radius: 50%; background: rgba(20, 20, 24, 0.7); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45); opacity: 0.85; animation: mu-dock 0.28s var(--out) both; }
+  body:has(.reader:not(.bars)) .mu-bar:not(.min) > :not(.mu-now), body:has(.reader:not(.bars)) .mu-bar:not(.min) .mu-txt, body:has(.reader:not(.bars)) .mu-bar:not(.min) .mu-like-slot, body:has(.reader:not(.bars)) .mu-bar::before { display: none !important; }
+  body:has(.reader:not(.bars)) .mu-bar:not(.min) .mu-now { padding: 0; }
+  body:has(.reader:not(.bars)) .mu-bar:not(.min) .mu-art-btn { border-radius: 50%; }
+  body:has(.reader:not(.bars)) .mu-bar:not(.min) .mu-art { width: 48px; height: 48px; border-radius: 50%; }
+  body:has(.reader:not(.bars)) .mu-bar.spin:not(.min) .mu-art { animation: mu-spin 8s linear infinite; }
+  body:has(.reader.bars) .mu-bar:not(.min) { bottom: calc(84px + env(safe-area-inset-bottom)); animation: mu-rise 0.26s var(--out) both; }
+}
+@keyframes mu-dock { from { opacity: 0; transform: scale(0.6); } }
+@keyframes mu-rise { from { opacity: 0; transform: translateY(12px); } }
+@media (prefers-reduced-motion: reduce) { body:has(.reader) .mu-bar { animation: none !important; } }
 .mu-min { display: none; }
 body:not([data-mode="music"]) .mu-bar .mu-side > .mu-min { display: inline-grid; }
 /* Folded away: only the cover, turning while it plays. Press it to open again. */

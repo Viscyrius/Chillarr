@@ -43,6 +43,13 @@ window.addEventListener("chillarr:music-lists", () => {
 });
 const ic = (k, cls) => { const s = icon(I[k]); if (cls) s.classList.add(cls); return s; };
 const err = (e) => String(e?.message || e);
+// Covers come from Apple at whatever size is asked for (and YouTube in two):
+// the 600px one only where it is shown big. A phone listing forty songs
+// fetched forty big covers before; a row's 42px picture now costs a fifth.
+const thumb = (u, px) => !u ? u
+  : /\/\d+x\d+bb\.(jpg|png|webp)$/.test(u) ? u.replace(/\/\d+x\d+bb\.\w+$/, `/${px}x${px}bb.jpg`)
+  : px <= 200 && u.includes("i.ytimg.com/") ? u.replace("/hqdefault.", "/mqdefault.") : u;
+const img = (u, px, cls) => el("img", { class: cls, src: thumb(u, px), alt: "", loading: "lazy", decoding: "async" });
 
 /* ---------- what this profile has: downloads, likes, plays ---------- */
 let keptIds = new Set();
@@ -191,7 +198,7 @@ function songMenu(anchor, song, extra = []) {
   const liked = likedIds.has(song.id);
   const kept = keptIds.has(song.id);
   popMenu(anchor, [
-    el("div", { class: "mu-menu-head" }, el("img", { src: song.art, alt: "" }), el("span", { class: "mu-tt" }, el("b", { text: song.title }), el("span", { text: song.artist }))),
+    el("div", { class: "mu-menu-head" }, img(song.art, 120), el("span", { class: "mu-tt" }, el("b", { text: song.title }), el("span", { text: song.artist }))),
     item("addto", "Add to playlist", () => addToMenu(anchor, song)),
     item("heart", liked ? "Remove from Liked songs" : "Save to Liked songs", () => toggleLike(song), liked ? "on fill" : ""),
     item("queue", "Play next", () => playNext(song)),
@@ -218,8 +225,8 @@ function addBtn(song) {
 function cover4(songs, cls = "") {
   const arts = [...new Set(songs.map((s) => s.art).filter(Boolean))].slice(0, 4);
   const box = el("span", { class: `mu-mosaic ${cls}${arts.length >= 4 ? " four" : ""}` });
-  if (arts.length >= 4) arts.forEach((a) => box.append(el("img", { src: a, alt: "", loading: "lazy" })));
-  else if (arts.length) box.append(el("img", { src: arts[0], alt: "", loading: "lazy" }));
+  if (arts.length >= 4) arts.forEach((a) => box.append(img(a, 160)));
+  else if (arts.length) box.append(img(arts[0], 300));
   else box.append(ic("note"));
   return box;
 }
@@ -426,7 +433,7 @@ function makeBar() {
       el("div", { class: "mu-txt", onclick: () => { if (matchMedia("(max-width: 980px)").matches) openFull(); } }, el("b", { class: "mu-title" }), el("a", { class: "mu-artist" })),
       el("span", { class: "mu-like-slot" })),
     el("div", { class: "mu-mid" },
-      el("div", { class: "mu-ctl" }, ctlButtons()),
+      el("div", { class: "mu-ctl" }, ctlButtons(), el("button", { class: "mu-ib mu-ly-mini", "aria-label": "Lyrics", title: "Lyrics", onclick: (e) => { e.stopPropagation(); openFull("lyrics"); } }, ic("mic"))),
       el("div", { class: "mu-line" }, el("span", { class: "mu-t0", text: "0:00" }), seekBar(), el("span", { class: "mu-t1", text: "0:00" }))),
     el("div", { class: "mu-side" },
       el("span", { class: "mu-keep-slot" }),
@@ -497,7 +504,8 @@ function drawBar(loading) {
   bar.classList.toggle("spin", !audio.paused && !loading);
   if (document.body.dataset.mode !== "music" && getPref("music-min") === "1") bar.classList.add("min");
   const art = $(".mu-art", bar);
-  if (art.getAttribute("src") !== s.art) art.src = s.art || "logo.svg";
+  const small = thumb(s.art, 160) || "logo.svg";
+  if (art.getAttribute("src") !== small) { art.src = small; bar.style.setProperty("--art", s.art ? `url("${small}")` : "none"); }
   $(".mu-title", bar).textContent = s.title;
   const a = $(".mu-artist", bar);
   a.textContent = loading ? "Getting it ready…" : s.artist;
@@ -540,7 +548,7 @@ function openFull(panel) {
       el("header", { class: "mu-full-top" },
         el("button", { class: "mu-ib", "aria-label": "Close", title: "Close", onclick: closeFull }, ic("chevron")),
         el("span", { class: "mu-full-from" }),
-        el("span")),
+        el("button", { class: "mu-ib mu-full-ly", "aria-label": "Lyrics", title: "Lyrics", onclick: () => setPanel(full.dataset.panel === "lyrics" ? "queue" : "lyrics") }, ic("mic"), "Lyrics")),
       el("div", { class: "mu-full-body" },
         el("div", { class: "mu-full-np" },
           el("img", { class: "mu-full-art", alt: "" }),
@@ -680,7 +688,7 @@ function drawQueue() {
   if (!full) return;
   const list = P.queue.slice(P.at + 1, P.at + 51);
   $(".mu-qlist", full).replaceChildren(...(list.length ? list.map((s, k) => el("li", { class: "mu-q", onclick: () => start(P.at + 1 + k) },
-    el("img", { src: s.art, alt: "", loading: "lazy" }), el("span", { class: "mu-tt" }, el("b", { text: s.title }), el("span", { text: s.artist })),
+    img(s.art, 120), el("span", { class: "mu-tt" }, el("b", { text: s.title }), el("span", { text: s.artist })),
     el("button", { class: "mu-ib", title: "Take out", "aria-label": "Take out of the queue", onclick: (e) => { e.stopPropagation(); P.queue.splice(P.at + 1 + k, 1); drawQueue(); } }, ic("close")))) : [el("li", { class: "mu-empty", text: "Nothing after this one yet. Songs like it follow on their own." })]));
 }
 
@@ -707,21 +715,21 @@ const isYt = (s) => String(s.id).startsWith("yt-");
 const views = (s) => (s.views >= 1e6 ? `${(s.views / 1e6).toFixed(1).replace(/\.0$/, "")}M views` : s.views >= 1e3 ? `${Math.round(s.views / 1e3)}K views` : s.views ? `${s.views} views` : "YouTube");
 
 const songCard = (s, list, i, from) => withMenu(el("div", { class: `mu-card${isYt(s) ? " yt" : ""}`, role: "button", tabindex: "0", title: `${s.title} — ${s.artist}`, onclick: () => playList(list, i, from), onkeydown: (e) => { if (e.key === "Enter") playList(list, i, from); } },
-  el("span", { class: "mu-cover" }, el("img", { src: s.art, alt: "", loading: "lazy" }), playBadge(() => playList(list, i, from)), moreBtn(s)),
+  el("span", { class: "mu-cover" }, img(s.art, 320), playBadge(() => playList(list, i, from)), moreBtn(s)),
   el("b", { text: s.title }), artistLink(s)), s);
 
 const albumCard = (a) => el("a", { class: "mu-card", href: `#m-album/${a.id}`, title: `${a.title} — ${a.artist}` },
-  el("span", { class: "mu-cover" }, el("img", { src: a.art, alt: "", loading: "lazy" }), playBadge(() => playAlbum(a.id, a.title))),
+  el("span", { class: "mu-cover" }, img(a.art, 320), playBadge(() => playAlbum(a.id, a.title))),
   el("b", { text: a.title }), el("span", { class: "mu-sub", text: [a.year, a.artist].filter(Boolean).join(" · ") }));
 
 const artistCard = (a) => el("a", { class: "mu-card mu-artist-card", href: `#m-artist/${a.id}`, title: a.name },
-  el("span", { class: "mu-cover round" }, el("img", { src: a.art, alt: "", loading: "lazy" }), playBadge(() => playArtist(a.id, a.name))),
+  el("span", { class: "mu-cover round" }, img(a.art, 320), playBadge(() => playArtist(a.id, a.name))),
   el("b", { text: a.name }), el("span", { class: "mu-sub", text: "Artist" }));
 
 /** A big numbered card for the Top 10. */
 const topCard = (s, list, i) => withMenu(el("div", { class: "mu-top", role: "button", tabindex: "0", onclick: () => playList(list, i, "Top 10"), onkeydown: (e) => { if (e.key === "Enter") playList(list, i, "Top 10"); } },
   el("span", { class: "mu-top-n", text: String(i + 1) }),
-  el("span", { class: "mu-cover" }, el("img", { src: s.art, alt: "", loading: "lazy" }), playBadge(() => playList(list, i, "Top 10")), moreBtn(s)),
+  el("span", { class: "mu-cover" }, img(s.art, 320), playBadge(() => playList(list, i, "Top 10")), moreBtn(s)),
   el("span", { class: "mu-top-txt" }, el("b", { text: s.title }), artistLink(s))), s);
 
 async function playAlbum(id, title) {
@@ -753,7 +761,7 @@ function trackList(list, { removable = false, numbered = true, album = true, fro
       const play = () => { if (P.queue[P.at]?.id === s.id) toggle(); else playList(list, i, from); };
       const r = el("li", { class: "mu-track", dataset: { id: s.id }, tabindex: "0", onkeydown: (e) => { if (e.key === "Enter") play(); } },
         el("span", { class: "mu-n" }, el("span", { class: "mu-n-num", text: numbered ? String(i + 1) : "" }), el("button", { class: "mu-n-play", "aria-label": `Play ${s.title}`, onclick: (e) => { e.stopPropagation(); play(); } }, ic("play")), el("span", { class: "mu-eq", "aria-hidden": "true" }, el("i"), el("i"), el("i"))),
-        el("span", { class: "mu-ti" }, el("img", { src: s.art, alt: "", loading: "lazy" }),
+        el("span", { class: "mu-ti" }, img(s.art, 120),
           el("span", { class: "mu-tt" }, el("b", { text: s.title }),
             el("span", { class: "mu-byline" }, keptIds.has(s.id) ? el("i", { class: "mu-dl-mark", title: "Downloaded" }, ic("down")) : null, isYt(s) ? el("i", { class: "mu-yt-mark", title: "From YouTube" }, "YT") : null, artistLink(s)))),
         album ? (s.album_id ? el("a", { class: "mu-col-album", href: `#m-album/${s.album_id}`, text: s.album, onclick: (e) => e.stopPropagation() }) : el("span", { class: "mu-col-album", text: isYt(s) ? views(s) : s.album })) : null,
@@ -828,7 +836,7 @@ async function home(page, alive) {
     liked.length ? el("a", { class: "mu-qtile", href: "#m-library/liked" }, el("span", { class: "mu-qart liked-art" }, ic("heart")), el("b", { text: "Liked songs" }), playBadge(() => playList(liked, 0, "Liked songs"))) : null,
     ...myLists.map((p) => el("a", { class: "mu-qtile", href: `#m-playlist/${p.id}` }, cover4(p.songs, "mu-qart"), el("b", { text: p.name }), playBadge(() => playList(p.songs, 0, p.name)))),
     ...picks.slice(0, Math.max(0, 8 - myLists.length - (liked.length ? 1 : 0))).map((s, i) => withMenu(el("div", { class: "mu-qtile", role: "button", tabindex: "0", onclick: () => playList(picks, i, pickFrom), onkeydown: (e) => { if (e.key === "Enter") playList(picks, i, pickFrom); } },
-      el("img", { class: "mu-qart", src: s.art, alt: "" }), el("b", { text: s.title }), playBadge(() => playList(picks, i, pickFrom))), s)));
+      img(s.art, 120, "mu-qart"), el("b", { text: s.title }), playBadge(() => playList(picks, i, pickFrom))), s)));
 
   const GENRE_ROWS = rows.filter((r) => r.kind === "songs" && r.id !== "top");
   const CHIPS = [["all", "All"], ...(fy.rows.length ? [["foryou", "For you"]] : []), ["charts", "Charts"], ["albums", "Albums"], ...GENRE_ROWS.map((r) => [r.id, r.title])];
@@ -850,8 +858,11 @@ async function home(page, alive) {
     }
     if (chip === "all" && mine.recent.length) out.push(row("Recently played", mine.recent.slice(0, 20).map((s, i, a) => songCard(s, a, i, "Recently played")), { id: "recent", more: el("a", { class: "mu-more", href: "#m-library/recent", text: "Show all" }) }));
     if (want("albums")) for (const r of rows.filter((r) => r.kind === "albums")) out.push(row("New and top albums", r.items.map(albumCard), { id: r.id }));
+    let genres = 0;
     for (const r of GENRE_ROWS) {
       if (!want(r.id)) continue;
+      // "All" keeps to three genres; the chips have the rest.
+      if (chip === "all" && ++genres > 3) break;
       if (chip === r.id) out.push(el("section", { class: "mu-row" }, el("div", { class: "mu-row-head" }, el("h2", { text: r.title })), bigPlay(r.items, r.title), trackList(r.items, { from: r.title })));
       else out.push(row(r.title, r.items.map((s, i) => songCard(s, r.items, i, r.title)), { id: r.id, more: el("button", { class: "mu-more", onclick: () => { chip = r.id; draw(); window.scrollTo({ top: 0, behavior: "smooth" }); } }, "Show all") }));
     }
@@ -1041,8 +1052,8 @@ export async function renderMusicSearch(view, term) {
         const a0 = artists[0];
         const isArtist = a0 && a0.name.toLowerCase().includes(term.toLowerCase().trim()) ;
         const best = isArtist
-          ? el("a", { class: "mu-best", href: `#m-artist/${a0.id}` }, el("img", { class: "round", src: a0.art, alt: "" }), el("h3", { text: a0.name }), el("span", { class: "mu-pill", text: "Artist" }), playBadge(() => playArtist(a0.id, a0.name)))
-          : songs[0] ? el("div", { class: "mu-best", role: "button", tabindex: "0", onclick: () => playList(songs, 0, "Search") }, el("img", { src: songs[0].art, alt: "" }), el("h3", { text: songs[0].title }), el("span", {}, el("span", { class: "mu-pill", text: "Song" }), ` ${songs[0].artist}`), playBadge(() => playList(songs, 0, "Search"))) : null;
+          ? el("a", { class: "mu-best", href: `#m-artist/${a0.id}` }, img(a0.art, 240, "round"), el("h3", { text: a0.name }), el("span", { class: "mu-pill", text: "Artist" }), playBadge(() => playArtist(a0.id, a0.name)))
+          : songs[0] ? el("div", { class: "mu-best", role: "button", tabindex: "0", onclick: () => playList(songs, 0, "Search") }, img(songs[0].art, 240), el("h3", { text: songs[0].title }), el("span", {}, el("span", { class: "mu-pill", text: "Song" }), ` ${songs[0].artist}`), playBadge(() => playList(songs, 0, "Search"))) : null;
         out.push(el("div", { class: "mu-search-top" },
           el("section", {}, el("h2", { text: "Top result" }), best),
           el("section", {}, el("h2", { text: "Songs" }), trackList(songs.slice(0, 4), { album: false, numbered: false, from: "Search" }))));
