@@ -132,6 +132,9 @@ pub struct SeriesRead {
     pub format: Option<String>,
     pub following: bool,
     pub place: Option<Place>,
+    /// The translation it was read in ("en", "pt-BR"), so following it again
+    /// on another PC finds the same one.
+    pub lang: Option<String>,
 }
 
 /// A book or comic this profile has, and where it is in it (parts of the book
@@ -445,6 +448,7 @@ pub fn clean_series_read(s: &SeriesRead) -> Option<SeriesRead> {
         country: s.country.as_deref().map(str::trim).filter(|c| c.len() == 2 && c.bytes().all(|b| b.is_ascii_uppercase())).map(String::from),
         format: s.format.as_deref().map(str::trim).filter(|f| !f.is_empty() && f.len() <= 20 && f.bytes().all(|b| b.is_ascii_uppercase() || b == b'_')).map(String::from),
         following: s.following,
+        lang: s.lang.as_deref().map(str::trim).filter(|l| crate::read::lang_ok(l)).map(String::from),
         place: s.place.as_ref().map(|p| Place {
             chapter: clean_chapter(&p.chapter),
             page: p.page.min(100_000),
@@ -658,6 +662,7 @@ pub async fn export(app: &AppHandle, prefs: BTreeMap<String, String>) -> Result<
             format: f.format.clone(),
             following,
             place,
+            lang: f.lang.clone(),
         });
     }
     for b in crate::books::all(app) {
@@ -674,6 +679,67 @@ pub async fn export(app: &AppHandle, prefs: BTreeMap<String, String>) -> Result<
     out.hidden = crate::hidden::portable(app);
     out.prefs = clean_prefs(&prefs);
     Ok(out)
+}
+
+/// What a series from a file is looked for by: its titles, AniList's facts.
+fn meta_of(s: &SeriesRead) -> crate::read::Meta {
+    let mut names = vec![];
+    if !s.source_title.is_empty() && s.source_title != s.title {
+        names.push(s.source_title.clone());
+    }
+    crate::read::Meta {
+        anilist: s.anilist,
+        title: s.title.clone(),
+        names,
+        cover: s.cover.clone(),
+        banner: None,
+        country: s.country.clone(),
+        format: s.format.clone(),
+        status: None,
+        description: None,
+        genres: s.genres.clone(),
+        adult: adult(&s.genres),
+    }
+}
+
+/// Of the copies found, the one to follow: the same site and title as before
+/// first, then the same site, then the one Follow would pick itself.
+fn pick_copy(s: &SeriesRead, c: &crate::read::Copies) -> Option<usize> {
+    let same = |a: &str, b: &str| !a.is_empty() && a.trim().eq_ignore_ascii_case(b.trim());
+    c.list.iter().position(|x| same(&x.source, &s.source) && same(&x.title, &s.source_title))
+        .or_else(|| c.list.iter().position(|x| same(&x.source, &s.source)))
+        .or(c.kept)
+        .or(c.best)
+}
+
+/// Follows again, one after another, the series a profile followed where its
+/// file was made and nobody follows here: same site where it can be found,
+/// same "from chapter" and "new chapters too". Each follow puts the profile's
+/// waiting place in (`apply_waiting`). Runs as the importing profile.
+async fn follow_again(app: &AppHandle, list: Vec<SeriesRead>) {
+    let (mut ok, mut missed) = (Vec::new(), Vec::new());
+    for s in list {
+        let meta = meta_of(&s);
+        let lang = s.lang.clone().unwrap_or_else(|| "en".into());
+        let found = match crate::read::sources(app, &meta, &lang).await {
+            Ok(c) => pick_copy(&s, &c).map(|i| (c.list[i].clone(), c.fill.filter(|f| Some(*f) != pick_copy(&s, &c)).map(|f| c.list[f].clone()))),
+            Err(_) => None,
+        };
+        let Some((pick, fill)) = found else {
+            missed.push(s.title.clone());
+            continue;
+        };
+        let sel = crate::read::Pick { ids: None, from: s.from, new_too: s.new_too };
+        match crate::read::follow(app, meta, pick, fill, sel, Some(lang)).await {
+            Ok(_) => ok.push(s.title.clone()),
+            Err(_) => missed.push(s.title.clone()),
+        }
+    }
+    let mut msg = format!("Import: followed {} again.", plural(ok.len(), "series", "series"));
+    if !missed.is_empty() {
+        msg.push_str(&format!(" Couldn't find {} on any site: {}. Your place in {} waits on the reading list until you follow {} there.", plural(missed.len(), "series", "series"), missed.join(", "), if missed.len() == 1 { "it" } else { "them" }, if missed.len() == 1 { "it" } else { "them" }));
+    }
+    crate::log::log(app, crate::model::Level::Ok, msg);
 }
 
 /// The file's name: "Chillarr - Sam - 2026-11-15.json".
@@ -1083,6 +1149,7 @@ pub async fn import(app: &AppHandle, text: &str) -> Result<Report, String> {
     let (mut joined, mut placed, mut unplaced) = (0usize, 0usize, 0usize);
     let mut cards: Vec<Value> = Vec::new();
     let mut waiting: Vec<SeriesRead> = Vec::new();
+    let mut refollow: Vec<SeriesRead> = Vec::new();
     for s in file.reading.iter().filter_map(clean_series_read) {
         if kids && adult(&s.genres) {
             continue;
@@ -1094,6 +1161,10 @@ pub async fn import(app: &AppHandle, text: &str) -> Result<Report, String> {
             // Its place waits for the day it's followed here (`apply_waiting`).
             if s.place.is_some() || s.following {
                 waiting.push(s.clone());
+            }
+            // Followed where it was exported: followed here too, in the background.
+            if s.following {
+                refollow.push(s.clone());
             }
             rep.missing += 1;
             continue;
@@ -1112,6 +1183,12 @@ pub async fn import(app: &AppHandle, text: &str) -> Result<Report, String> {
         }
     }
     let kept_waiting = keep_waiting(&dir, &uid, waiting)?;
+    // The places are waiting now: following each one puts this profile back on its chapter.
+    let following_again = refollow.len();
+    if following_again > 0 {
+        let app = app.clone();
+        tauri::async_runtime::spawn(crate::viewer::carry(async move { follow_again(&app, refollow).await }));
+    }
     let books_here = crate::books::all(app);
     let mut books_in = 0usize;
     for b in file.books.iter().filter_map(clean_book) {
@@ -1155,6 +1232,13 @@ pub async fn import(app: &AppHandle, text: &str) -> Result<Report, String> {
     if !reading.is_empty() {
         rep.lines.push(format!("Reading: {}.", reading.join(", ")));
     }
+    if following_again > 0 {
+        rep.lines.push(format!(
+            "Reading: following {} again in the background, from the same site where it can be found, with new chapters as before. Each one puts you back on your chapter once it's in; this can take a few minutes.",
+            plural(following_again, "series", "series")
+        ));
+    }
+    let kept_waiting = kept_waiting.saturating_sub(following_again);
     if kept_waiting > 0 {
         rep.lines.push(format!(
             "{} {} followed on this PC yet. Follow {} from the reading list and you're put back on your chapter, with the ones before it counted as read.",
@@ -1404,5 +1488,21 @@ mod tests {
         assert!(clean(&Song { id: "12".into(), title: "x".into(), art: "javascript:alert(1)".into(), ..Default::default() }).unwrap().art.is_empty());
         assert!(clean(&Song { id: "../x".into(), title: "x".into(), ..Default::default() }).is_none());
         assert!(clean(&Song { id: "12".into(), title: " ".into(), ..Default::default() }).is_none());
+    }
+    #[test]
+    fn following_again_picks_the_same_site_first() {
+        let c = |id: i64, src: &str, title: &str| crate::suwayomi::Candidate { source_id: id.to_string(), source: src.into(), manga_id: id, title: title.into(), chapters: 10, latest: None, quality: 0.0, width: 0, density: 0.0 };
+        let copies = crate::read::Copies { list: vec![c(1, "Asura", "Solo"), c(2, "Weeb Central (EN)", "Solo Leveling Alt"), c(3, "Weeb Central (EN)", "Solo Leveling")], best: Some(0), fill: None, kept: None };
+        let s = SeriesRead { title: "Solo Leveling".into(), source: "Weeb Central (EN)".into(), source_title: "Solo Leveling".into(), following: true, ..SeriesRead::default() };
+        assert_eq!(pick_copy(&s, &copies), Some(2), "same site and title");
+        let s2 = SeriesRead { source_title: "Other".into(), ..s.clone() };
+        assert_eq!(pick_copy(&s2, &copies), Some(1), "same site");
+        let s3 = SeriesRead { source: "Gone site".into(), ..s.clone() };
+        assert_eq!(pick_copy(&s3, &copies), Some(0), "else what Follow would pick");
+        let m = meta_of(&SeriesRead { title: "Solo Leveling".into(), source_title: "Ore dake".into(), ..SeriesRead::default() });
+        assert_eq!(m.names, vec!["Ore dake".to_string()]);
+        // An older file without the language still reads.
+        let back = clean_series_read(&SeriesRead { title: "X".into(), source_title: "X".into(), lang: Some("bad lang!".into()), ..SeriesRead::default() }).unwrap();
+        assert_eq!(back.lang, None);
     }
 }
