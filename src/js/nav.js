@@ -10,7 +10,7 @@ import { closeProfiles } from "./profiles.js";
 
 const WATCH_TABS = ["home", "movies", "series", "anime", "downloads", "mylist"];
 const READ_TABS = ["r-home", "r-manhwa", "r-manhua", "r-manga", "r-novels", "r-books", "r-downloads", "r-mylist"];
-const MUSIC_TABS = ["m-home", "m-library"];
+const MUSIC_TABS = ["m-home", "m-library", "m-playlists", "m-downloads"];
 const SELECTOR = "button, a[href], input, select, textarea, [tabindex]:not([tabindex='-1'])";
 
 /** The layer on top: an open dialog, the player, or the page. */

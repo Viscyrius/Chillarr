@@ -3714,3 +3714,49 @@ body:not([data-mode="music"]) .mu-bar .mu-side > .mu-min { display: inline-grid;
   .mu-rename { font-size: 2rem; }
   .mu-full-q { align-self: stretch; }
 }
+
+/* ---------- Music: one menu per song, cleaner rows, YouTube ---------- */
+.mu-thead, .mu-track { grid-template-columns: 36px minmax(0, 1.6fr) minmax(0, 1fr) auto 52px 36px; gap: 14px; }
+.mu-table.no-album .mu-thead, .mu-table.no-album .mu-track { grid-template-columns: 36px minmax(0, 1fr) auto 52px 36px; }
+/* The heart and ⋯ always show (quiet), brighter on the row you're on. */
+.mu-more-btn { color: var(--muted); }
+.mu-track .mu-more-btn, .mu-row-btns .mu-like:not(.on) { opacity: 0.55; }
+.mu-track:hover .mu-more-btn, .mu-track:focus-within .mu-more-btn, .mu-track:hover .mu-row-btns .mu-like, .mu-track:focus-within .mu-row-btns .mu-like { opacity: 1; }
+.mu-byline { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.mu-byline .mu-sub { min-width: 0; }
+.mu-dl-mark { flex: none; display: grid; place-items: center; width: 15px; height: 15px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); }
+.mu-dl-mark svg { width: 10px; height: 10px; stroke-width: 3; }
+.mu-yt-mark { flex: none; padding: 1px 4px; border-radius: 3px; background: rgba(255, 255, 255, 0.14); color: var(--text); font: 800 9px/1.3 var(--display); font-style: normal; letter-spacing: 0.04em; }
+.mu-yt-ic { width: 22px; height: 22px; margin: 0 8px -4px 0; color: #ff3b30; fill: currentColor; stroke: none; }
+.mu-chip svg { width: 15px; height: 15px; margin: 0 6px -3px 0; fill: currentColor; stroke: none; }
+.mu-chip:not(.on) svg { color: #ff3b30; }
+.mu-card.yt .mu-cover { aspect-ratio: 16 / 9; }
+.mu-card.yt .mu-cover img { object-position: center; }
+.mu-skel-track { height: 52px; margin: 0 0 6px; border-radius: 6px; background: linear-gradient(90deg, rgba(255,255,255,0.04), rgba(255,255,255,0.08), rgba(255,255,255,0.04)); background-size: 200% 100%; animation: mu-shine 1.3s linear infinite; }
+.mu-chips-top { margin-top: 4px; }
+/* The card's ⋯: in the cover's corner. */
+.mu-cover .mu-more-btn { position: absolute; top: 6px; right: 6px; width: 32px; height: 32px; background: rgba(0, 0, 0, 0.55); color: #fff; opacity: 0; transition: opacity 0.15s; }
+.mu-card:hover .mu-cover .mu-more-btn, .mu-top:hover .mu-cover .mu-more-btn, .mu-card:focus-within .mu-cover .mu-more-btn { opacity: 1; }
+.mu-cover .mu-more-btn svg { width: 18px; height: 18px; stroke-width: 3; }
+.mu-more-btn svg { stroke-width: 3; }
+/* The menu: a head with the song, then what it can do. */
+.mu-menu-head { display: flex; align-items: center; gap: 10px; padding: 4px 6px 10px; margin-bottom: 4px; border-bottom: 1px solid var(--line); }
+.mu-menu-head img { width: 40px; height: 40px; border-radius: 4px; object-fit: cover; }
+.mu-menu-head .mu-tt b { font-size: 14px; }
+.mu-menu-head .mu-tt span { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mu-mi { gap: 12px; padding: 9px 8px; font: 600 14px var(--display); }
+.mu-mi svg { flex: none; width: 18px; height: 18px; color: var(--muted); }
+.mu-mi.on svg { color: var(--accent); }
+.mu-mi.fill svg { fill: currentColor; }
+@media (pointer: coarse) {
+  .mu-track .mu-more-btn, .mu-row-btns .mu-like, .mu-cover .mu-more-btn { opacity: 1; }
+  .mu-cover .mu-more-btn { background: rgba(0, 0, 0, 0.45); }
+}
+@media (max-width: 1100px) {
+  .mu-thead, .mu-track { grid-template-columns: 36px minmax(0, 1fr) auto 52px 36px; }
+}
+@media (max-width: 980px) {
+  .mu-thead, .mu-track, .mu-table.no-album .mu-track { grid-template-columns: minmax(0, 1fr) auto 36px; gap: 4px; }
+  .mu-card.yt { width: 220px; }
+  .mu-mi { padding: 12px 8px; font-size: 15px; }
+}

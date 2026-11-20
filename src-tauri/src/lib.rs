@@ -843,6 +843,11 @@ fn music_playlist_move(app: AppHandle, id: String, from: usize, to: usize) -> Re
 }
 
 #[tauri::command]
+async fn music_youtube(term: String) -> Result<Vec<music::Song>, String> {
+    music::youtube(&term).await
+}
+
+#[tauri::command]
 fn music_settings(app: AppHandle) -> serde_json::Value {
     music::settings(&app)
 }
@@ -1563,6 +1568,7 @@ pub fn run() {
             music_playlist_delete,
             music_playlist_move,
             music_settings,
+            music_youtube,
             music_set_cache,
             music_clear_cache,
             read_base,
