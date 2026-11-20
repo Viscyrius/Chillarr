@@ -10,6 +10,7 @@ import { closeProfiles } from "./profiles.js";
 
 const WATCH_TABS = ["home", "movies", "series", "anime", "downloads", "mylist"];
 const READ_TABS = ["r-home", "r-manhwa", "r-manhua", "r-manga", "r-novels", "r-books", "r-downloads", "r-mylist"];
+const MUSIC_TABS = ["m-home", "m-library"];
 const SELECTOR = "button, a[href], input, select, textarea, [tabindex]:not([tabindex='-1'])";
 
 /** The layer on top: an open dialog, the player, or the page. */
@@ -111,8 +112,8 @@ export function back() {
 /* Pages Back steps out of (to where they were opened from), reading ones too. */
 const BACK_PAGES = /^#(explore|filter|settings|maker|r-all|r-author|r-maker)/;
 /* In reading mode, Home is the reading Home: a TV remote's Back used to land on watching Home. */
-const homeHash = () => (document.body.dataset.mode === "read" ? "r-home" : "home");
-const atHome = () => /^#?(home)?$/.test(location.hash) || (document.body.dataset.mode === "read" && location.hash === "#r-home");
+const homeHash = () => (document.body.dataset.mode === "read" ? "r-home" : document.body.dataset.mode === "music" ? "m-home" : "home");
+const atHome = () => /^#?(home)?$/.test(location.hash) || (document.body.dataset.mode === "read" && location.hash === "#r-home") || (document.body.dataset.mode === "music" && location.hash === "#m-home");
 const canGoBack = () => layer() !== document.body || !$("#profiles").hidden || !!$("#search").value || !atHome();
 function appBack() {
   if (!$("#profiles").hidden) { closeProfiles(); return; }
@@ -146,7 +147,7 @@ function select() {
 }
 
 function tab(step) {
-  const TABS = document.body.dataset.mode === "read" ? READ_TABS : WATCH_TABS;
+  const TABS = document.body.dataset.mode === "read" ? READ_TABS : document.body.dataset.mode === "music" ? MUSIC_TABS : WATCH_TABS;
   const cur = (location.hash.slice(1) || "home").split("/")[0];
   const i = TABS.indexOf(cur);
   location.hash = `#${TABS[(i < 0 ? 0 : i + step + TABS.length) % TABS.length]}`;

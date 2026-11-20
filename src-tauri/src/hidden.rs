@@ -313,6 +313,52 @@ pub fn set(app: &AppHandle, keys: &[String], hide: bool, label: Option<&str>, it
     Ok(hide)
 }
 
+/// A hidden title as it goes in a profile file: every id hidden together,
+/// its name and its card.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+#[serde(default)]
+pub struct Portable {
+    pub keys: Vec<String>,
+    pub label: String,
+    pub item: Option<serde_json::Value>,
+}
+
+/// The Hidden list for a profile file: only while it is unlocked, so a file
+/// never shows it to someone who doesn't know the password. None: locked
+/// (or no password, which means nothing is hidden).
+pub fn portable(app: &AppHandle) -> Option<Vec<Portable>> {
+    let uid = uid(app).ok()?;
+    let s = load(app, &uid);
+    if s.password.is_none() || !is_open(app, &uid) {
+        return None;
+    }
+    let mut out: Vec<Portable> = s
+        .groups
+        .iter()
+        .map(|(first, keys)| Portable { keys: keys.clone(), label: s.labels.get(first).cloned().unwrap_or_default(), item: s.items.get(first).cloned() })
+        .collect();
+    // Ids hidden before groups were kept: one entry each.
+    let grouped: std::collections::HashSet<&String> = s.groups.values().flatten().collect();
+    out.extend(s.keys.iter().filter(|k| !grouped.contains(k)).map(|k| Portable { keys: vec![k.clone()], label: s.labels.get(k).cloned().unwrap_or_default(), item: None }));
+    Some(out)
+}
+
+/// Hides what a profile file had hidden. Needs this profile's own hidden
+/// password set first (the file never carries one). Returns how many.
+pub fn take(app: &AppHandle, list: &[Portable]) -> Result<usize, String> {
+    let mut n = 0;
+    for p in list.iter().take(MAX_KEYS) {
+        let label = (!p.label.trim().is_empty()).then_some(p.label.as_str());
+        if set(app, &p.keys, true, label, p.item.clone()).is_ok() {
+            n += 1;
+        }
+    }
+    if n == 0 && !list.is_empty() && load(app, &uid(app)?).password.is_none() {
+        return Err("Set a hidden password first.".into());
+    }
+    Ok(n)
+}
+
 #[derive(Serialize)]
 pub struct Entry {
     pub key: String,

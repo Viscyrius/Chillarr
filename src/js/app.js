@@ -6,6 +6,7 @@ import { renderTab, renderSearch, renderExplore, renderMaker, stopBrowse, warmTa
 import { renderFilter } from "./filter.js";
 import { renderRead, renderReadSearch, softRefresh, stopRead } from "./read.js";
 import { renderSettings, stopSettings } from "./settings.js";
+import { renderMusic, renderMusicSearch } from "./music.js";
 import { openSetup } from "./setup.js";
 import { knowPerson, startProfiles, startProfilesWeb, unlockWeb } from "./profiles.js";
 import * as place from "./place.js";
@@ -17,28 +18,35 @@ import { applyLook, drawPickers, onStyle } from "./look.js";
 
 const view = $("#view");
 const TABS = ["home", "movies", "series", "anime", "downloads", "mylist", "hidden", "settings", "explore", "filter", "maker",
-  "r-home", "r-manhwa", "r-manhua", "r-manga", "r-novels", "r-books", "r-downloads", "r-mylist", "r-hidden", "r-all", "r-author", "r-maker"];
+  "r-home", "r-manhwa", "r-manhua", "r-manga", "r-novels", "r-books", "r-downloads", "r-mylist", "r-hidden", "r-all", "r-author", "r-maker",
+  "m-home", "m-library", "m-album", "m-artist"];
 
 /* ---------- watching and reading ----------
    Two Chillarrs in one: the book button switches to reading (its own tabs,
    search, list and downloads), the film button back. Each profile keeps the
    one it was in. Settings, Explore and Filters belong to neither. */
-const modeOf = (tab) => (tab.startsWith("r-") ? "read" : ["settings", "explore", "filter"].includes(tab) ? null : "watch");
-const homeOf = (mode) => (mode === "read" ? "r-home" : "home");
+const modeOf = (tab) => (tab.startsWith("r-") ? "read" : tab.startsWith("m-") ? "music" : ["settings", "explore", "filter"].includes(tab) ? null : "watch");
+const MODES = ["watch", "read", "music"];
+const modePref = () => (MODES.includes(getPref("mode")) ? getPref("mode") : "watch");
+const homeOf = (mode) => (mode === "read" ? "r-home" : mode === "music" ? "m-home" : "home");
+const MODE_INFO = {
+  watch: { name: "Movies and shows", note: "Movies, series and anime", search: "Movies, series, anime" },
+  read: { name: "Reading", note: "Manga, manhwa, novels and books", search: "Manga, manhwa, novels, books" },
+  music: { name: "Music", note: "Songs and albums, played or downloaded", search: "Songs, artists, albums" },
+};
 let swapTimer = 0;
 function applyMode(mode, animate) {
   const body = document.body;
   if (body.dataset.mode === mode) return;
   const first = !body.dataset.mode;
   body.dataset.mode = mode;
-  const reading = mode === "read";
   const btn = $("#mode-btn");
-  btn.setAttribute("aria-label", reading ? "Switch to watching" : "Switch to reading");
-  btn.title = reading ? "Movies and shows" : "Reading";
+  btn.setAttribute("aria-label", `Switch: now ${MODE_INFO[mode].name}`);
+  btn.title = `${MODE_INFO[mode].name} (switch)`;
   // A phone's box is a few letters wide: just "Search" there (the narrowest
   // only the magnifier), not the start of a list cut off.
   const narrow = matchMedia("(max-width: 380px)").matches ? "" : matchMedia("(max-width: 430px)").matches ? "Search" : null;
-  $("#search").placeholder = narrow ?? (reading ? "Manga, manhwa, novels, books" : "Movies, series, anime");
+  $("#search").placeholder = narrow ?? MODE_INFO[mode].search;
   // Each mode has its own style and shade.
   applyLook();
   drawPickers();
@@ -51,13 +59,55 @@ function applyMode(mode, animate) {
   }
 }
 // The logo goes home in the mode you're in.
-document.querySelector(".brand").addEventListener("click", (e) => { e.preventDefault(); location.hash = homeOf(document.body.dataset.mode === "read" ? "read" : "watch"); });
-$("#mode-btn").addEventListener("click", () => {
-  const next = document.body.dataset.mode === "read" ? "watch" : "read";
+document.querySelector(".brand").addEventListener("click", (e) => { e.preventDefault(); location.hash = homeOf(MODES.includes(document.body.dataset.mode) ? document.body.dataset.mode : "watch"); });
+
+/* The switch: a menu under the button, like the Look one, with each mode in it. */
+const MODE_ICONS = { watch: ".m-film", read: ".m-book", music: ".m-note" };
+let modePop = null;
+function closeModePop() {
+  if (!modePop) return;
+  const p = modePop;
+  modePop = null;
+  $("#mode-btn").setAttribute("aria-expanded", "false");
+  p.classList.remove("in");
+  setTimeout(() => p.remove(), 180);
+}
+function pickMode(next) {
+  closeModePop();
+  if (next === document.body.dataset.mode) return;
   setPref("mode", next);
   $("#search").value = "";
   location.hash = homeOf(next);
+}
+$("#mode-btn").setAttribute("aria-haspopup", "menu");
+$("#mode-btn").setAttribute("aria-expanded", "false");
+$("#mode-btn").addEventListener("click", () => {
+  if (modePop) { closeModePop(); return; }
+  const btn = $("#mode-btn");
+  const now = document.body.dataset.mode;
+  modePop = el("div", { class: "look-pop mode-pop", role: "menu", "aria-label": "Switch between" },
+    el("p", { class: "lk-h", text: "Switch to" }),
+    el("div", { class: "lk-styles" }, MODES.map((m) => {
+      const ic = btn.querySelector(MODE_ICONS[m]).cloneNode(true);
+      ic.removeAttribute("class");
+      return el("button", { class: `lk-style${m === now ? " on" : ""}`, role: "menuitemradio", "aria-checked": String(m === now), onclick: () => pickMode(m) },
+        el("span", { class: `mp-ic mp-${m}`, "aria-hidden": "true" }, ic),
+        el("span", { class: "lk-name" }, el("b", { text: MODE_INFO[m].name }), el("small", { text: MODE_INFO[m].note })));
+    })));
+  document.body.append(modePop);
+  const r = btn.getBoundingClientRect();
+  const w = Math.min(290, innerWidth - 24);
+  modePop.style.width = `${w}px`;
+  modePop.style.top = `${Math.round(r.bottom + 10)}px`;
+  modePop.style.left = `${Math.round(Math.min(Math.max(12, r.right + 8 - w), innerWidth - 12 - w))}px`;
+  btn.setAttribute("aria-expanded", "true");
+  requestAnimationFrame(() => modePop && modePop.classList.add("in"));
+  modePop.querySelector(".lk-style.on")?.focus();
 });
+document.addEventListener("pointerdown", (e) => { if (modePop && !modePop.contains(e.target) && !$("#mode-btn").contains(e.target)) closeModePop(); }, true);
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && modePop) { closeModePop(); $("#mode-btn").focus(); } });
+window.addEventListener("hashchange", closeModePop);
+window.addEventListener("resize", closeModePop);
 let current = "";
 
 /**
@@ -67,7 +117,7 @@ let current = "";
 function route(redraw = false) {
   // The old Read tab's address goes to reading's home.
   if (location.hash === "#read") { location.replace("#r-home"); return; }
-  const hash = location.hash.slice(1) || homeOf(getPref("mode") === "read" ? "read" : "watch");
+  const hash = location.hash.slice(1) || homeOf(modePref());
   const tab = TABS.includes(hash.split("/")[0]) ? hash.split("/")[0] : "home";
   const tabMode = modeOf(tab);
   if (tabMode) { applyMode(tabMode, true); if (getPref("mode") !== tabMode) setPref("mode", tabMode); }
@@ -76,7 +126,7 @@ function route(redraw = false) {
   const { id, fresh } = place.entry();
   document.querySelectorAll("[data-tab]").forEach((a) => a.classList.toggle("on", a.dataset.tab === tab));
   setTabTint(tab);
-  if (tab === current && tab !== "settings" && tab !== "explore" && tab !== "filter" && tab !== "r-all" && tab !== "maker" && tab !== "r-author" && tab !== "r-maker") return;
+  if (tab === current && tab !== "settings" && tab !== "explore" && tab !== "filter" && tab !== "r-all" && tab !== "maker" && tab !== "r-author" && tab !== "r-maker" && tab !== "m-album" && tab !== "m-artist" && tab !== "m-library") return;
   // Leaving a page: remember where you were on it. Search results aren't a
   // page of their own; the place from before the search stays.
   if (left && left !== id && current && current !== "search") place.remember(left);
@@ -94,6 +144,7 @@ function route(redraw = false) {
   if (tab === "settings") { stopBrowse(); renderSettings(view, hash.split("/")[1]); }
   else if (tab === "hidden" || tab === "r-hidden") { stopBrowse(); drawn = renderHidden(view); }
   else if (tab.startsWith("r-")) { stopBrowse(); drawn = renderRead(view, tab); }
+  else if (tab.startsWith("m-")) { stopBrowse(); drawn = renderMusic(view, hash); }
   else if (tab === "filter") {
     const [, kind, json] = hash.split("/");
     let f = {};
@@ -125,6 +176,7 @@ function runSearch(term) {
     stopSettings();
     document.querySelectorAll("[data-tab]").forEach((a) => a.classList.remove("on"));
     if (document.body.dataset.mode === "read") renderReadSearch(view, term);
+    else if (document.body.dataset.mode === "music") renderMusicSearch(view, term);
     else renderSearch(view, term);
     searched(term);
   } else if (!term) {
@@ -281,7 +333,7 @@ window.addEventListener("chillarr:refresh", () => {
   const samePerson = lastPerson === personKey();
   if (lastPerson !== null && personKey() !== lastPerson) {
     lastPerson = personKey();
-    const want = getPref("mode") === "read" ? "read" : "watch";
+    const want = modePref();
     if (want !== document.body.dataset.mode) { location.hash = homeOf(want); return; }
   }
   lastPerson = personKey();
@@ -289,7 +341,7 @@ window.addEventListener("chillarr:refresh", () => {
   // A search on screen is searched again, not swapped for the tab under it
   // (a download landing used to wipe the box and drop the results coming in).
   const term = $("#search").value.trim();
-  if (current === "search" && term.length >= 2) { document.body.dataset.mode === "read" ? renderReadSearch(view, term) : renderSearch(view, term); return; }
+  if (current === "search" && term.length >= 2) { const m = document.body.dataset.mode; m === "read" ? renderReadSearch(view, term) : m === "music" ? renderMusicSearch(view, term) : renderSearch(view, term); return; }
   // A reading grid (Manga, Explore all...) stays as it is: only what you follow is asked again.
   if (samePerson && current.startsWith("r-") && softRefresh(current)) return;
   current = "";

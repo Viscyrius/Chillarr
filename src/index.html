@@ -59,6 +59,9 @@
       <a href="#r-books" data-tab="r-books" class="rt"><svg class="tab-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5C6.5 4.5 9.5 4.5 12 6c2.5-1.5 5.5-1.5 8-.5V19c-2.5-1-5.5-1-8 .5-2.5-1.5-5.5-1.5-8-.5zM12 6v13.5"/></svg><span>Books</span></a>
       <a href="#r-downloads" data-tab="r-downloads" class="rt rt-wide"><svg class="tab-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg><span>Downloads</span></a>
       <a href="#r-mylist" data-tab="r-mylist" class="rt"><svg class="tab-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span>My List</span></a>
+      <!-- Music's tabs (music.js). -->
+      <a href="#m-home" data-tab="m-home" class="mt"><svg class="tab-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></svg><span>Home</span></a>
+      <a href="#m-library" data-tab="m-library" class="mt"><svg class="tab-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg><span>Library</span></a>
       <a href="#r-hidden" data-tab="r-hidden" class="rt hd-tab" hidden><svg class="tab-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3l18 18M10.6 6.1A9.8 9.8 0 0 1 12 6c5 0 9 6 9 6a17 17 0 0 1-2.6 3.2M6.6 7.6C4.4 9.2 3 12 3 12s4 6 9 6c1.4 0 2.7-.4 3.9-1M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg><span>Hidden</span></a>
     </nav>
     <div class="top-actions">
@@ -66,10 +69,11 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
         <input id="search" type="search" enterkeyhint="search" placeholder="Movies, series, anime" aria-label="Search" spellcheck="false" autocomplete="off">
       </label>
-      <!-- Watching and reading: the book goes to reading, the film comes back. -->
+      <!-- Watching, reading and music: shows the one you are in; a menu switches. -->
       <button class="icon-btn mode-btn" id="mode-btn" aria-label="Switch to reading" title="Reading">
         <svg class="m-book" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5C6.5 4.5 9.5 4.5 12 6c2.5-1.5 5.5-1.5 8-.5V19c-2.5-1-5.5-1-8 .5-2.5-1.5-5.5-1.5-8-.5zM12 6v13.5"/></svg>
         <svg class="m-film" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM8 5v14M16 5v14M4 9.5h4M4 14.5h4M16 9.5h4M16 14.5h4"/></svg>
+        <svg class="m-note" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18V5l11-2v13M9 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0zM20 16a3 3 0 1 1-6 0 3 3 0 0 1 6 0z"/></svg>
       </button>
       <button class="icon-btn together-btn" id="together-btn" aria-label="Watch together" title="Watch together"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 19v-1a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v1"/><circle cx="9.5" cy="7" r="3"/><path d="M21 19v-1a4 4 0 0 0-3-3.9M15.5 4.1a3 3 0 0 1 0 5.8"/></svg></button>
       <button class="icon-btn" id="fs-btn" aria-label="Full screen" title="Full screen (F11)"><svg viewBox="0 0 24 24" aria-hidden="true"><path class="fs-in" d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/><path class="fs-out" d="M9 4v5H4M20 9h-5V4M15 20v-5h5M4 15h5v5"/></svg></button>

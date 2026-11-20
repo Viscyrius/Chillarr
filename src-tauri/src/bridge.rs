@@ -357,6 +357,11 @@ fn need(cmd: &str) -> Option<Need> {
         | "read_languages" | "read_copy_chapters" | "read_get_chapters" | "read_keep_up" | "read_list" | "read_list_set" | "read_explore" | "read_genres" | "read_filter_info" | "read_similar" | "read_about" | "read_downloads"
         | "read_makers" | "read_maker_works" | "read_for_you" | "read_kind_rows"
         | "read_delete_plan" => Need::Viewer,
+        // Music (music.rs): the charts, search, playing, and downloading a song for keeping.
+        "music_rows" | "music_search" | "music_album" | "music_play" | "music_keep" | "music_library"
+        | "music_artist" | "music_mine" | "music_like" | "music_played" | "music_for_you" | "music_radio" => Need::Viewer,
+        // Deleting a downloaded song's file: whoever may delete.
+        "music_forget" => Need::Delete,
         // The viewer's own data, out and in (profile_data.rs): only ever theirs.
         "profile_export" | "profile_import" | "read_waiting" => Need::Viewer,
         // Deleting reading's files: anyone, for what only they read; the
@@ -453,6 +458,19 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
         "watch_week" => res(crate::week::list(app).await),
         "read_rows" => res(crate::read::rows(app).await),
         "read_book_rows" => ok(crate::books::rows().await),
+        "music_rows" => ok(crate::music::rows().await),
+        "music_search" => res(crate::music::search(&arg::<String>(a, "term")?).await),
+        "music_album" => res(crate::music::album(&arg::<String>(a, "id")?).await),
+        "music_play" => res(crate::music::play(app, arg(a, "song")?).await),
+        "music_keep" => res(crate::music::keep(app, arg(a, "song")?).await),
+        "music_library" => ok(crate::music::library(app)),
+        "music_artist" => res(crate::music::artist(&arg::<String>(a, "id")?).await),
+        "music_mine" => ok(crate::music::mine(app)),
+        "music_like" => res(crate::music::like(app, arg(a, "song")?, arg(a, "on")?)),
+        "music_played" => res(crate::music::played(app, arg(a, "song")?)),
+        "music_for_you" => ok(crate::music::for_you(app).await),
+        "music_radio" => ok(crate::music::radio(arg(a, "song")?, arg::<Option<Vec<String>>>(a, "skip")?.unwrap_or_default()).await),
+        "music_forget" => res(crate::music::forget(app, &arg::<String>(a, "id")?)),
         "readparty_start" => res(crate::readparty::start(app, &arg::<String>(a, "key")?, arg(a, "chapter")?, arg(a, "page")?)),
         "readparty_join" => res(crate::readparty::join(app, &arg::<String>(a, "code")?, arg::<Option<String>>(a, "password")?.as_deref())),
         "readparty_state" => res(crate::readparty::state(app, &arg::<String>(a, "code")?)),
@@ -502,7 +520,7 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
         "read_can_delete" => res(crate::read_storage::can_delete(app, &arg::<String>(a, "key")?)),
         "read_book_delete_file" => res(crate::read_storage::delete_book(app, &arg::<String>(a, "key")?, arg::<Option<bool>>(a, "othersOk")?.unwrap_or(false)).await),
         "read_open" => res(crate::read::open(app, &arg::<String>(a, "key")?, arg(a, "chapter")?).await),
-        "profile_export" => res(crate::profile_data::export(app).await),
+        "profile_export" => res(crate::profile_data::export(app, arg::<Option<std::collections::BTreeMap<String, String>>>(a, "prefs")?.unwrap_or_default()).await),
         "profile_import" => res(crate::profile_data::import(app, &arg::<String>(a, "text")?).await),
         "read_waiting" => ok(crate::profile_data::waiting_for(app, arg(a, "anilist")?, &arg::<String>(a, "title")?)),
         "read_progress" => res(crate::read::set_spot(app, &arg::<String>(a, "key")?, arg(a, "chapter")?, arg(a, "page")?, arg(a, "pages")?)),
@@ -923,6 +941,40 @@ async fn reply_page(sock: &mut TcpStream, origin: Option<&str>, status: &str, ki
     sock.shutdown().await
 }
 
+/// A song file, whole or the asked-for range of it.
+async fn send_song(sock: &mut TcpStream, origin: Option<&str>, file: &std::path::Path, range: Option<&str>) -> std::io::Result<()> {
+    use tokio::io::{AsyncReadExt, AsyncSeekExt};
+    let mut f = tokio::fs::File::open(file).await?;
+    let len = f.metadata().await?.len();
+    let kind = crate::music::mime(file);
+    let (status, start, end) = match (range.is_some(), crate::music::range(range, len)) {
+        (_, Some((a, b))) => ("206 Partial Content", a, b),
+        (true, None) => {
+            let head = format!("HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */{len}\r\nContent-Length: 0\r\n{}Connection: close\r\n\r\n", cors(origin));
+            sock.write_all(head.as_bytes()).await?;
+            return sock.shutdown().await;
+        }
+        (false, None) => ("200 OK", 0, len.saturating_sub(1)),
+    };
+    let n = if len == 0 { 0 } else { end - start + 1 };
+    let span = if status.starts_with("206") { format!("Content-Range: bytes {start}-{end}/{len}\r\n") } else { String::new() };
+    let head = format!("HTTP/1.1 {status}\r\nContent-Type: {kind}\r\nContent-Length: {n}\r\nAccept-Ranges: bytes\r\n{span}Cache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\n{}Connection: close\r\n\r\n", cors(origin));
+    sock.write_all(head.as_bytes()).await?;
+    f.seek(std::io::SeekFrom::Start(start)).await?;
+    let mut left = n;
+    let mut buf = vec![0u8; 64 * 1024];
+    while left > 0 {
+        let want = buf.len().min(left as usize);
+        let got = f.read(&mut buf[..want]).await?;
+        if got == 0 {
+            break;
+        }
+        sock.write_all(&buf[..got]).await?;
+        left -= got as u64;
+    }
+    sock.shutdown().await
+}
+
 /// The head of a reading page's reply. Kept apart so a test can check it is
 /// one well-formed HTTP head (a stray line break once ended it after the status).
 fn page_head(status: &str, kind: &str, len: usize, cache: &str, cors: &str) -> String {
@@ -1003,6 +1055,21 @@ async fn serve(app: AppHandle, mut sock: TcpStream, gate: Gate) -> std::io::Resu
         };
         // A phone that stops taking the picture doesn't hold the slot forever.
         return match tokio::time::timeout(PAGE_WRITE_WAIT, reply_page(&mut sock, origin, status, kind, &body)).await {
+            Ok(r) => r,
+            Err(_) => Ok(()),
+        };
+    }
+    // A song. The random ticket is the permission (music::play hands it out to
+    // a signed-in viewer); ranges, so the player can seek and start at once.
+    if method == "GET" && path.starts_with("/music/") {
+        let Some(file) = crate::music::file_for(path) else {
+            return error(&mut sock, origin, "404 Not Found", "Play the song again.").await;
+        };
+        let Some(_slot) = gate.signed_in() else {
+            return error(&mut sock, origin, "503 Service Unavailable", "Chillarr is busy. Try again in a moment.").await;
+        };
+        let range = header(&head, "range").map(String::from);
+        return match tokio::time::timeout(PAGE_WRITE_WAIT, send_song(&mut sock, origin, &file, range.as_deref())).await {
             Ok(r) => r,
             Err(_) => Ok(()),
         };

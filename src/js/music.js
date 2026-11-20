@@ -1,0 +1,671 @@
+// Music, laid out like a streaming app: Home (greeting, quick picks, chips,
+// rows made from what you play, the Top 10, trending, new albums), Library
+// (Liked songs, Downloaded, Recently played), artist and album pages, search
+// with filters, a player bar and a full screen Now playing with the queue.
+// What there is comes from the iTunes catalog; the sound is fetched on the PC
+// (music.rs) and streamed from the bridge. Play: fetched, played and deleted
+// again later. Download: kept in Music\Chillarr.
+import { $, el, icon, invoke, toast, WEB, viewer, fmtTime, getPref, setPref } from "./api.js";
+
+const I = {
+  play: "M7 4.5v15l12-7.5z",
+  pause: "M7 4h3.5v16H7zM13.5 4H17v16h-3.5z",
+  prev: "M6 5v14M19 5 9 12l10 7z",
+  next: "M18 5v14M5 5l10 7-10 7z",
+  down: "M12 4v11M7 10l5 5 5-5M5 20h14",
+  done: "M5 12.5l4.5 4.5L19 7",
+  trash: "M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3",
+  close: "M6 6l12 12M18 6 6 18",
+  vol: "M4 9.5h4L13 5v14l-5-4.5H4zM16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12",
+  mute: "M4 9.5h4L13 5v14l-5-4.5H4zM17 9.5l5 5M22 9.5l-5 5",
+  shuffle: "M4 7h3.5c2.5 0 3.6 1.4 5 4.5S15 16.5 17.5 16.5H20M17 13.5l3 3-3 3M4 16.5h3.5c1.2 0 2-.3 2.8-1M13.7 8.5c.8-.7 1.7-1 3.8-1H20M17 4.5l3 3-3 3",
+  repeat: "M17 2l3 3-3 3M4 11V9a4 4 0 0 1 4-4h12M7 22l-3-3 3-3M20 13v2a4 4 0 0 1-4 4H4",
+  heart: "M12 20.5S3.5 15.2 3.5 9.1A4.6 4.6 0 0 1 12 6.6a4.6 4.6 0 0 1 8.5 2.5c0 6.1-8.5 11.4-8.5 11.4z",
+  queue: "M4 6h12M4 12h12M4 18h7M17 14v7l5-3.5z",
+  chevron: "M6 9l6 6 6-6",
+  clock: "M12 7v5l3 2M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z",
+  note: "M9 18V5l11-2v13M9 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0zM20 16a3 3 0 1 1-6 0 3 3 0 0 1 6 0z",
+};
+const ic = (k, cls) => { const s = icon(I[k]); if (cls) s.classList.add(cls); return s; };
+const err = (e) => String(e?.message || e);
+
+/* ---------- what this profile has: downloads, likes, plays ---------- */
+let keptIds = new Set();
+let keptLoaded = null;
+function loadKept(force = false) {
+  if (!keptLoaded || force) keptLoaded = invoke("music_library").then((l) => { keptIds = new Set(l.map((s) => s.id)); return l; }).catch(() => []);
+  return keptLoaded;
+}
+const fetching = new Set();
+let mine = { liked: [], recent: [], plays: {} };
+let likedIds = new Set();
+let mineLoaded = null;
+function loadMine(force = false) {
+  if (!mineLoaded || force) mineLoaded = invoke("music_mine").then((m) => { mine = m; likedIds = new Set(m.liked.map((s) => s.id)); return m; }).catch(() => mine);
+  return mineLoaded;
+}
+
+async function toggleLike(song) {
+  const on = !likedIds.has(song.id);
+  on ? likedIds.add(song.id) : likedIds.delete(song.id);
+  paintLikes(song.id);
+  try {
+    await invoke("music_like", { song, on });
+    if (on) mine.liked.unshift(song); else mine.liked = mine.liked.filter((s) => s.id !== song.id);
+    toast(on ? "Added to Liked songs" : "Removed from Liked songs");
+  } catch (e) {
+    on ? likedIds.delete(song.id) : likedIds.add(song.id);
+    paintLikes(song.id);
+    toast(err(e), true);
+  }
+}
+function paintLike(b) {
+  const on = likedIds.has(b.dataset.id);
+  b.classList.toggle("on", on);
+  b.title = on ? "Remove from Liked songs" : "Save to Liked songs";
+  b.setAttribute("aria-label", b.title);
+  b.setAttribute("aria-pressed", String(on));
+}
+function paintLikes(id) { document.querySelectorAll(`.mu-like[data-id="${CSS.escape(id)}"]`).forEach(paintLike); }
+function likeBtn(song) {
+  const b = el("button", { class: "mu-like mu-ib", dataset: { id: song.id }, onclick: (e) => { e.stopPropagation(); toggleLike(song); } }, ic("heart"));
+  paintLike(b);
+  return b;
+}
+
+async function keep(song) {
+  if (keptIds.has(song.id) || fetching.has(song.id)) return;
+  fetching.add(song.id);
+  markKeep(song.id);
+  try {
+    await invoke("music_keep", { song });
+    keptIds.add(song.id);
+    keptLoaded = null;
+    toast(`Downloaded ${song.title}`);
+  } catch (e) {
+    toast(err(e), true);
+  } finally {
+    fetching.delete(song.id);
+    markKeep(song.id);
+  }
+}
+function markKeep(id) { document.querySelectorAll(`.mu-keep[data-id="${CSS.escape(id)}"]`).forEach(paintKeep); }
+function paintKeep(b) {
+  const id = b.dataset.id;
+  const st = keptIds.has(id) ? "done" : fetching.has(id) ? "busy" : "";
+  b.dataset.state = st;
+  b.title = st === "done" ? "Downloaded" : st === "busy" ? "Downloading…" : "Download";
+  b.setAttribute("aria-label", b.title);
+  b.replaceChildren(ic(st === "done" ? "done" : "down"));
+}
+function keepBtn(song) {
+  const b = el("button", { class: "mu-keep mu-ib", dataset: { id: song.id }, onclick: (e) => { e.stopPropagation(); keep(song); } });
+  paintKeep(b);
+  return b;
+}
+
+/* ---------- the player ---------- */
+const audio = new Audio();
+audio.preload = "auto";
+const P = { queue: [], at: -1, ready: new Map(), seq: 0, from: "", shuffle: getPref("music-shuffle") === "1", repeat: getPref("music-repeat") || "off", counted: "", radio: false };
+let base = null;
+
+async function bridgeBase() {
+  if (!base) base = WEB ? await window.__CHILLARR_BRIDGE__() : await invoke("read_base");
+  return base;
+}
+
+/** The song made ready on the PC (fetched unless downloaded): the URL to play. */
+function ready(song) {
+  const have = P.ready.get(song.id);
+  if (have) return have;
+  const p = Promise.all([bridgeBase(), invoke("music_play", { song })]).then(([b, r]) => `${b}${r.path}`);
+  P.ready.set(song.id, p);
+  p.catch(() => P.ready.delete(song.id));
+  if (P.ready.size > 60) P.ready.delete(P.ready.keys().next().value);
+  return p;
+}
+
+function shuffled(a) { const b = a.slice(); for (let i = b.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [b[i], b[j]] = [b[j], b[i]]; } return b; }
+
+/** Plays `list[i]`, with the rest of `list` as what comes next. `from` names the list. */
+export function playList(list, i = 0, from = "") {
+  const pick = list[i];
+  if (!pick) return;
+  P.from = from;
+  P.radio = false;
+  if (P.shuffle) {
+    P.queue = [pick, ...shuffled(list.filter((_, k) => k !== i))];
+    start(0);
+  } else {
+    P.queue = list.slice();
+    start(i);
+  }
+}
+/** Puts a song right after the one playing. */
+function playNext(song) {
+  if (P.at < 0) { playList([song], 0, "Queue"); return; }
+  P.queue.splice(P.at + 1, 0, song);
+  toast(`${song.title} plays next`);
+  drawQueue();
+}
+
+async function start(i) {
+  if (i < 0 || i >= P.queue.length) return;
+  P.at = i;
+  const song = P.queue[i];
+  const seq = ++P.seq;
+  P.counted = "";
+  drawBar(true);
+  audio.pause();
+  try {
+    const url = await ready(song);
+    if (seq !== P.seq) return;
+    audio.src = url;
+    await audio.play().catch(() => {});
+    drawBar(false);
+    media(song);
+    // The next one is fetched while this one plays, so it starts at once.
+    const nx = P.queue[i + 1];
+    if (nx) ready(nx).catch(() => {});
+    else topUp();
+  } catch (e) {
+    if (seq !== P.seq) return;
+    drawBar(false);
+    toast(err(e), true);
+    // A song that can't be found: on to the next, not stuck.
+    if (P.queue[i + 1]) setTimeout(() => { if (seq === P.seq) start(i + 1); }, 1200);
+  }
+}
+
+/** The list ran out: songs like the last one keep it going (radio). */
+async function topUp() {
+  const last = P.queue[P.queue.length - 1];
+  if (!last || P.repeat !== "off") return;
+  try {
+    const more = await invoke("music_radio", { song: last, skip: P.queue.slice(-50).map((s) => s.id) });
+    if (!more.length || P.queue[P.queue.length - 1] !== last) return;
+    P.radio = true;
+    P.queue.push(...more);
+    drawQueue();
+    const nx = P.queue[P.at + 1];
+    if (nx) ready(nx).catch(() => {});
+  } catch (e) { /* the list just ends */ }
+}
+
+function next() {
+  if (P.repeat === "all" && P.at + 1 >= P.queue.length) return start(0);
+  return start(P.at + 1);
+}
+const prev = () => (audio.currentTime > 4 ? (audio.currentTime = 0) : start(Math.max(0, P.at - 1)));
+const toggle = () => { if (!audio.src) return; audio.paused ? audio.play().catch(() => {}) : audio.pause(); };
+
+audio.addEventListener("ended", () => {
+  if (P.repeat === "one") { audio.currentTime = 0; audio.play().catch(() => {}); return; }
+  if (P.at + 1 < P.queue.length || P.repeat === "all") next(); else drawBar(false);
+});
+for (const ev of ["play", "pause"]) audio.addEventListener(ev, () => drawBar(false));
+audio.addEventListener("timeupdate", () => {
+  drawTime();
+  // Counts as played after 20 seconds (or half a short song), once.
+  const s = P.queue[P.at];
+  if (s && P.counted !== s.id && audio.currentTime > Math.min(20, (audio.duration || 40) / 2)) {
+    P.counted = s.id;
+    invoke("music_played", { song: s }).then(() => { mine.recent = [s, ...mine.recent.filter((x) => x.id !== s.id)]; }).catch(() => {});
+  }
+});
+audio.addEventListener("loadedmetadata", () => drawTime());
+
+function media(s) {
+  if (!("mediaSession" in navigator)) return;
+  navigator.mediaSession.metadata = new MediaMetadata({ title: s.title, artist: s.artist, album: s.album, artwork: s.art ? [{ src: s.art, sizes: "600x600", type: "image/jpeg" }] : [] });
+  navigator.mediaSession.setActionHandler("play", () => audio.play());
+  navigator.mediaSession.setActionHandler("pause", () => audio.pause());
+  navigator.mediaSession.setActionHandler("nexttrack", next);
+  navigator.mediaSession.setActionHandler("previoustrack", prev);
+}
+
+/* ---------- the bar ---------- */
+let bar = null;
+function rangeFill(r) { r.style.setProperty("--fill", `${(r.value / r.max) * 100}%`); }
+function seekBar() {
+  const seek = el("input", { type: "range", class: "mu-range mu-seek", min: "0", max: "1000", value: "0", "aria-label": "Position" });
+  // Moves while it is dragged, not on release.
+  seek.addEventListener("input", () => { rangeFill(seek); if (audio.duration) audio.currentTime = (seek.value / 1000) * audio.duration; });
+  return seek;
+}
+const ctlButtons = () => [
+  el("button", { class: "mu-ib mu-shuf", "aria-label": "Shuffle", title: "Shuffle", onclick: toggleShuffle }, ic("shuffle")),
+  el("button", { class: "mu-ib mu-prev", "aria-label": "Previous", title: "Previous", onclick: prev }, ic("prev", "fill")),
+  el("button", { class: "mu-pp", "aria-label": "Play", onclick: toggle }, ic("play")),
+  el("button", { class: "mu-ib", "aria-label": "Next", title: "Next", onclick: next }, ic("next", "fill")),
+  el("button", { class: "mu-ib mu-rep", "aria-label": "Repeat", title: "Repeat", onclick: cycleRepeat }, ic("repeat"), el("i", { class: "mu-one", text: "1" })),
+];
+function makeBar() {
+  if (bar) return bar;
+  const vol = el("input", { type: "range", class: "mu-range mu-vol", min: "0", max: "100", value: String(Math.round(Number(getPref("chillarr-music-vol") ?? 0.8) * 100)), "aria-label": "Volume" });
+  audio.volume = vol.value / 100;
+  rangeFill(vol);
+  const volIc = el("button", { class: "mu-ib mu-volic", "aria-label": "Mute", onclick: () => { audio.muted = !audio.muted; volIc.replaceChildren(ic(audio.muted ? "mute" : "vol")); } }, ic("vol"));
+  vol.addEventListener("input", () => { audio.volume = vol.value / 100; audio.muted = false; volIc.replaceChildren(ic("vol")); rangeFill(vol); });
+  vol.addEventListener("change", () => setPref("chillarr-music-vol", String(audio.volume)));
+  bar = el("section", { class: "mu-bar", id: "mu-bar", "aria-label": "Music player", hidden: true },
+    el("div", { class: "mu-now" },
+      el("button", { class: "mu-art-btn", "aria-label": "Now playing", title: "Now playing", onclick: () => openFull() }, el("img", { class: "mu-art", alt: "" })),
+      el("div", { class: "mu-txt", onclick: () => { if (matchMedia("(max-width: 980px)").matches) openFull(); } }, el("b", { class: "mu-title" }), el("a", { class: "mu-artist" })),
+      el("span", { class: "mu-like-slot" })),
+    el("div", { class: "mu-mid" },
+      el("div", { class: "mu-ctl" }, ctlButtons()),
+      el("div", { class: "mu-line" }, el("span", { class: "mu-t0", text: "0:00" }), seekBar(), el("span", { class: "mu-t1", text: "0:00" }))),
+    el("div", { class: "mu-side" },
+      el("span", { class: "mu-keep-slot" }),
+      el("button", { class: "mu-ib mu-qbtn", "aria-label": "Queue", title: "Queue", onclick: () => openFull() }, ic("queue")),
+      volIc, vol,
+      el("button", { class: "mu-ib mu-stop", "aria-label": "Stop", title: "Stop", onclick: stopAll }, ic("close"))),
+    el("div", { class: "mu-mini-line" }));
+  document.body.append(bar);
+  paintModes();
+  return bar;
+}
+
+function toggleShuffle() {
+  P.shuffle = !P.shuffle;
+  setPref("music-shuffle", P.shuffle ? "1" : "0");
+  if (P.at >= 0) {
+    const rest = P.queue.slice(P.at + 1);
+    P.queue = [...P.queue.slice(0, P.at + 1), ...(P.shuffle ? shuffled(rest) : rest)];
+  }
+  paintModes();
+  drawQueue();
+}
+function cycleRepeat() {
+  P.repeat = P.repeat === "off" ? "all" : P.repeat === "all" ? "one" : "off";
+  setPref("music-repeat", P.repeat);
+  paintModes();
+}
+function paintModes() {
+  document.querySelectorAll(".mu-shuf").forEach((b) => { b.classList.toggle("on", P.shuffle); b.setAttribute("aria-pressed", String(P.shuffle)); });
+  document.querySelectorAll(".mu-rep").forEach((b) => {
+    b.classList.toggle("on", P.repeat !== "off");
+    b.classList.toggle("one", P.repeat === "one");
+    b.title = P.repeat === "off" ? "Repeat" : P.repeat === "all" ? "Repeat all" : "Repeat one";
+  });
+}
+
+function stopAll() {
+  P.seq++;
+  audio.pause();
+  audio.removeAttribute("src");
+  audio.load();
+  P.queue = [];
+  P.at = -1;
+  bar.hidden = true;
+  closeFull();
+  document.body.classList.remove("mu-on");
+  markPlaying();
+}
+
+function drawBar(loading) {
+  makeBar();
+  const s = P.queue[P.at];
+  if (!s) return;
+  bar.hidden = false;
+  document.body.classList.add("mu-on");
+  bar.classList.toggle("loading", !!loading);
+  const art = $(".mu-art", bar);
+  if (art.getAttribute("src") !== s.art) art.src = s.art || "logo.svg";
+  $(".mu-title", bar).textContent = s.title;
+  const a = $(".mu-artist", bar);
+  a.textContent = loading ? "Getting it ready…" : s.artist;
+  if (s.artist_id && !loading) a.href = `#m-artist/${s.artist_id}`; else a.removeAttribute("href");
+  const playing = !audio.paused && !loading;
+  document.querySelectorAll(".mu-pp").forEach((pp) => { pp.replaceChildren(ic(playing ? "pause" : "play")); pp.setAttribute("aria-label", playing ? "Pause" : "Play"); pp.classList.toggle("busy", !!loading); });
+  $(".mu-keep-slot", bar).replaceChildren(keepBtn(s));
+  $(".mu-like-slot", bar).replaceChildren(likeBtn(s));
+  markPlaying();
+  drawTime();
+  drawFull();
+}
+
+/** The song playing is marked wherever it is listed. */
+function markPlaying() {
+  const id = P.queue[P.at]?.id;
+  const playing = !!id && !audio.paused;
+  document.querySelectorAll(".mu-track").forEach((r) => { r.classList.toggle("on", r.dataset.id === id); r.classList.toggle("playing", r.dataset.id === id && playing); });
+}
+
+function drawTime() {
+  if (!bar) return;
+  const d = audio.duration || P.queue[P.at]?.secs || 0;
+  const t = audio.currentTime || 0;
+  document.querySelectorAll(".mu-t0").forEach((x) => (x.textContent = fmtTime(t)));
+  document.querySelectorAll(".mu-t1").forEach((x) => (x.textContent = fmtTime(d)));
+  document.querySelectorAll(".mu-seek").forEach((seek) => { if (document.activeElement !== seek && d) { seek.value = String(Math.round((t / d) * 1000)); rangeFill(seek); } });
+  const ml = $(".mu-mini-line", bar);
+  if (ml) ml.style.width = d ? `${(t / d) * 100}%` : "0";
+}
+
+/* ---------- Now playing, full screen, with the queue ---------- */
+let full = null;
+function openFull() {
+  if (!P.queue[P.at]) return;
+  if (!full) {
+    full = el("section", { class: "mu-full", "aria-label": "Now playing", role: "dialog" },
+      el("div", { class: "mu-full-bg" }),
+      el("header", { class: "mu-full-top" },
+        el("button", { class: "mu-ib", "aria-label": "Close", title: "Close", onclick: closeFull }, ic("chevron")),
+        el("span", { class: "mu-full-from" }),
+        el("span")),
+      el("div", { class: "mu-full-body" },
+        el("div", { class: "mu-full-np" },
+          el("img", { class: "mu-full-art", alt: "" }),
+          el("div", { class: "mu-full-meta" },
+            el("div", {}, el("h2", { class: "mu-full-title" }), el("a", { class: "mu-full-artist" })),
+            el("span", { class: "mu-full-acts" })),
+          el("div", { class: "mu-line" }, el("span", { class: "mu-t0", text: "0:00" }), seekBar(), el("span", { class: "mu-t1", text: "0:00" })),
+          el("div", { class: "mu-ctl big" }, ctlButtons())),
+        el("aside", { class: "mu-full-q" }, el("h3", { text: "Up next" }), el("ol", { class: "mu-qlist" }))));
+    full.addEventListener("click", (e) => { if (e.target.closest("a[href]")) closeFull(); });
+    document.body.append(full);
+    paintModes();
+  }
+  drawFull();
+  drawBar(bar?.classList.contains("loading"));
+  requestAnimationFrame(() => full.classList.add("in"));
+  document.body.classList.add("mu-full-on");
+}
+function closeFull() {
+  if (!full) return;
+  full.classList.remove("in");
+  document.body.classList.remove("mu-full-on");
+}
+function drawFull() {
+  if (!full) return;
+  const s = P.queue[P.at];
+  if (!s) return;
+  $(".mu-full-bg", full).style.backgroundImage = s.art ? `url("${s.art}")` : "";
+  const art = $(".mu-full-art", full);
+  if (art.getAttribute("src") !== s.art) art.src = s.art || "logo.svg";
+  $(".mu-full-title", full).textContent = s.title;
+  const a = $(".mu-full-artist", full);
+  a.textContent = s.artist;
+  if (s.artist_id) a.href = `#m-artist/${s.artist_id}`; else a.removeAttribute("href");
+  $(".mu-full-from", full).textContent = P.from ? `Playing from ${P.from}${P.radio ? ", then songs like it" : ""}` : "Now playing";
+  $(".mu-full-acts", full).replaceChildren(likeBtn(s), keepBtn(s));
+  drawQueue();
+}
+function drawQueue() {
+  if (!full) return;
+  const list = P.queue.slice(P.at + 1, P.at + 51);
+  $(".mu-qlist", full).replaceChildren(...(list.length ? list.map((s, k) => el("li", { class: "mu-q", onclick: () => start(P.at + 1 + k) },
+    el("img", { src: s.art, alt: "", loading: "lazy" }), el("span", { class: "mu-tt" }, el("b", { text: s.title }), el("span", { text: s.artist })),
+    el("button", { class: "mu-ib", title: "Take out", "aria-label": "Take out of the queue", onclick: (e) => { e.stopPropagation(); P.queue.splice(P.at + 1 + k, 1); drawQueue(); } }, ic("close")))) : [el("li", { class: "mu-empty", text: "Nothing after this one yet. Songs like it follow on their own." })]));
+}
+
+window.addEventListener("keydown", (e) => {
+  if (!audio.src || ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName)) return;
+  if (e.key === "Escape" && full?.classList.contains("in")) { closeFull(); return; }
+  if (document.body.dataset.mode !== "music") return;
+  if (e.key === " " || e.key === "k") { e.preventDefault(); toggle(); }
+  else if (e.shiftKey && e.key === "ArrowRight") next();
+  else if (e.shiftKey && e.key === "ArrowLeft") prev();
+});
+window.addEventListener("hashchange", closeFull);
+
+/* ---------- pieces of pages ---------- */
+const playBadge = (onclick) => el("button", { class: "mu-play-badge", "aria-label": "Play", onclick: (e) => { e.preventDefault(); e.stopPropagation(); onclick(); } }, ic("play"));
+
+function artistLink(s) {
+  return s.artist_id
+    ? el("a", { class: "mu-sub mu-alink", href: `#m-artist/${s.artist_id}`, text: s.artist, onclick: (e) => e.stopPropagation() })
+    : el("span", { class: "mu-sub", text: s.artist });
+}
+
+const songCard = (s, list, i, from) => el("div", { class: "mu-card", role: "button", tabindex: "0", title: `${s.title} — ${s.artist}`, onclick: () => playList(list, i, from), onkeydown: (e) => { if (e.key === "Enter") playList(list, i, from); } },
+  el("span", { class: "mu-cover" }, el("img", { src: s.art, alt: "", loading: "lazy" }), playBadge(() => playList(list, i, from))),
+  el("b", { text: s.title }), artistLink(s));
+
+const albumCard = (a) => el("a", { class: "mu-card", href: `#m-album/${a.id}`, title: `${a.title} — ${a.artist}` },
+  el("span", { class: "mu-cover" }, el("img", { src: a.art, alt: "", loading: "lazy" }), playBadge(() => playAlbum(a.id, a.title))),
+  el("b", { text: a.title }), el("span", { class: "mu-sub", text: [a.year, a.artist].filter(Boolean).join(" · ") }));
+
+const artistCard = (a) => el("a", { class: "mu-card mu-artist-card", href: `#m-artist/${a.id}`, title: a.name },
+  el("span", { class: "mu-cover round" }, el("img", { src: a.art, alt: "", loading: "lazy" }), playBadge(() => playArtist(a.id, a.name))),
+  el("b", { text: a.name }), el("span", { class: "mu-sub", text: "Artist" }));
+
+/** A big numbered card for the Top 10. */
+const topCard = (s, list, i) => el("div", { class: "mu-top", role: "button", tabindex: "0", onclick: () => playList(list, i, "Top 10"), onkeydown: (e) => { if (e.key === "Enter") playList(list, i, "Top 10"); } },
+  el("span", { class: "mu-top-n", text: String(i + 1) }),
+  el("span", { class: "mu-cover" }, el("img", { src: s.art, alt: "", loading: "lazy" }), playBadge(() => playList(list, i, "Top 10"))),
+  el("span", { class: "mu-top-txt" }, el("b", { text: s.title }), artistLink(s)));
+
+async function playAlbum(id, title) {
+  try { const r = await invoke("music_album", { id }); playList(r.songs, 0, title || r.album.title); } catch (e) { toast(err(e), true); }
+}
+async function playArtist(id, name) {
+  try { const r = await invoke("music_artist", { id }); playList(r.songs, 0, name || r.artist.name); } catch (e) { toast(err(e), true); }
+}
+
+/** A row that scrolls sideways, with arrows for a mouse. */
+function row(title, kids, { note: sub, more, id } = {}) {
+  const rail = el("div", { class: "mu-rail" }, kids);
+  const go = (d) => rail.scrollBy({ left: d * rail.clientWidth * 0.85, behavior: "smooth" });
+  return el("section", { class: "mu-row", dataset: { row: id || "" } },
+    el("div", { class: "mu-row-head" },
+      el("div", {}, el("h2", { text: title }), sub ? el("p", { class: "mu-row-note", text: sub }) : null),
+      el("div", { class: "mu-row-acts" }, more || null,
+        el("button", { class: "mu-ib mu-arrow", "aria-label": "Back", onclick: () => go(-1) }, icon("M15 5l-7 7 7 7")),
+        el("button", { class: "mu-ib mu-arrow", "aria-label": "More", onclick: () => go(1) }, icon("M9 5l7 7-7 7")))),
+    rail);
+}
+
+/** A table of songs: number (play on hover), title, album, like, download, play next, length. */
+function trackList(list, { removable = false, numbered = true, album = true, from = "" } = {}) {
+  const coarse = matchMedia("(pointer: coarse)").matches;
+  return el("div", { class: `mu-table${album ? "" : " no-album"}` },
+    el("div", { class: "mu-thead" }, el("span", { text: "#" }), el("span", { text: "Title" }), album ? el("span", { class: "mu-col-album", text: "Album" }) : null, el("span"), el("span", { class: "mu-col-len" }, ic("clock"))),
+    el("ol", { class: "mu-tracks" }, list.map((s, i) => {
+      const play = () => { if (P.queue[P.at]?.id === s.id) toggle(); else playList(list, i, from); };
+      const r = el("li", { class: "mu-track", dataset: { id: s.id }, tabindex: "0", onkeydown: (e) => { if (e.key === "Enter") play(); } },
+        el("span", { class: "mu-n" }, el("span", { class: "mu-n-num", text: numbered ? String(i + 1) : "" }), el("button", { class: "mu-n-play", "aria-label": `Play ${s.title}`, onclick: (e) => { e.stopPropagation(); play(); } }, ic("play")), el("span", { class: "mu-eq", "aria-hidden": "true" }, el("i"), el("i"), el("i"))),
+        el("span", { class: "mu-ti" }, el("img", { src: s.art, alt: "", loading: "lazy" }), el("span", { class: "mu-tt" }, el("b", { text: s.title }), artistLink(s))),
+        album ? (s.album_id ? el("a", { class: "mu-col-album", href: `#m-album/${s.album_id}`, text: s.album, onclick: (e) => e.stopPropagation() }) : el("span", { class: "mu-col-album", text: s.album })) : null,
+        el("span", { class: "mu-row-btns" }, likeBtn(s), removable ? removeBtn(s) : keepBtn(s),
+          el("button", { class: "mu-ib mu-hover", title: "Play next", "aria-label": "Play next", onclick: (e) => { e.stopPropagation(); playNext(s); } }, ic("queue"))),
+        el("span", { class: "mu-len", text: s.secs ? fmtTime(s.secs) : "" }));
+      // A double click plays on a PC; one tap on a phone.
+      r.addEventListener(coarse ? "click" : "dblclick", play);
+      return r;
+    })));
+}
+
+function removeBtn(s) {
+  if (WEB && !viewer.can_delete && !viewer.admin) return el("span");
+  return el("button", { class: "mu-ib", title: "Delete download", "aria-label": "Delete download", onclick: async (e) => {
+    e.stopPropagation();
+    const li = e.currentTarget.closest("li");
+    try { await invoke("music_forget", { id: s.id }); keptIds.delete(s.id); keptLoaded = null; li?.remove(); toast(`Deleted ${s.title}`); }
+    catch (er) { toast(err(er), true); }
+  } }, ic("trash"));
+}
+
+const note = (t) => el("p", { class: "mu-note", text: t });
+const skeleton = () => el("div", { class: "mu-skel", "aria-label": "Loading" }, Array.from({ length: 3 }, () => el("div", { class: "mu-skel-row" }, el("i", { class: "h" }), el("div", {}, Array.from({ length: 7 }, () => el("i"))))));
+function bigPlay(list, from) {
+  return el("div", { class: "mu-acts" },
+    el("button", { class: "mu-big-play", "aria-label": "Play", title: "Play", onclick: () => playList(list, 0, from) }, ic("play")),
+    el("button", { class: "mu-ib mu-big-ib", title: "Shuffle play", "aria-label": "Shuffle play", onclick: () => { if (!P.shuffle) toggleShuffle(); playList(list, Math.floor(Math.random() * list.length), from); } }, ic("shuffle")));
+}
+function greeting() {
+  const h = new Date().getHours();
+  return h < 5 ? "Up late?" : h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
+}
+
+/* ---------- the pages ---------- */
+let seq = 0;
+let chip = "all";
+
+/** Draws a Music page: `m-home`, `m-library[/which]`, `m-album/<id>`, `m-artist/<id>`. */
+export async function renderMusic(view, hash) {
+  const my = ++seq;
+  const [tab, arg] = hash.split("/");
+  const page = el("div", { class: "page-top mu-page" });
+  view.replaceChildren(page);
+  const alive = () => my === seq;
+  if (tab === "m-library") return library(page, decodeURIComponent(arg || ""), alive);
+  if (tab === "m-album") return albumPage(page, decodeURIComponent(arg || ""), alive);
+  if (tab === "m-artist") return artistPage(page, decodeURIComponent(arg || ""), alive);
+  return home(page, alive);
+}
+
+async function home(page, alive) {
+  const chips = el("div", { class: "mu-chips", role: "group", "aria-label": "Show" });
+  const quick = el("div", { class: "mu-quick" });
+  const body = el("div", { class: "mu-body" }, skeleton());
+  page.append(el("header", { class: "mu-hello" }, el("h1", { text: greeting() })), chips, quick, body);
+  const [rows, fy] = await Promise.all([invoke("music_rows").catch(() => []), invoke("music_for_you").catch(() => ({ rows: [], artists: [] })), loadMine(true), loadKept()]);
+  if (!alive()) return;
+  if (!rows.length && !fy.rows.length) { body.replaceChildren(note("The music charts aren't answering. Try again in a moment.")); return; }
+
+  // Quick picks: what you played lately, else the top of the charts.
+  const top = rows.find((r) => r.id === "top");
+  const fromRecent = mine.recent.length >= 4;
+  const picks = (fromRecent ? mine.recent : top?.items || []).slice(0, 8);
+  const pickFrom = fromRecent ? "Recently played" : "Top songs";
+  const liked = mine.liked;
+  quick.replaceChildren(
+    liked.length ? el("a", { class: "mu-qtile", href: "#m-library/liked" }, el("span", { class: "mu-qart liked-art" }, ic("heart")), el("b", { text: "Liked songs" }), playBadge(() => playList(liked, 0, "Liked songs"))) : null,
+    ...picks.slice(0, liked.length ? 7 : 8).map((s, i) => el("div", { class: "mu-qtile", role: "button", tabindex: "0", onclick: () => playList(picks, i, pickFrom), onkeydown: (e) => { if (e.key === "Enter") playList(picks, i, pickFrom); } },
+      el("img", { class: "mu-qart", src: s.art, alt: "" }), el("b", { text: s.title }), playBadge(() => playList(picks, i, pickFrom)))));
+
+  const GENRE_ROWS = rows.filter((r) => r.kind === "songs" && r.id !== "top");
+  const CHIPS = [["all", "All"], ...(fy.rows.length ? [["foryou", "For you"]] : []), ["charts", "Charts"], ["albums", "Albums"], ...GENRE_ROWS.map((r) => [r.id, r.title])];
+  if (!CHIPS.some(([k]) => k === chip)) chip = "all";
+  const draw = () => {
+    chips.replaceChildren(...CHIPS.map(([k, label]) => el("button", { class: `mu-chip${chip === k ? " on" : ""}`, "aria-pressed": String(chip === k), onclick: () => { chip = chip === k ? "all" : k; draw(); } }, label)));
+    quick.hidden = chip !== "all";
+    const out = [];
+    const want = (k) => chip === "all" || chip === k;
+    if (want("foryou")) {
+      for (const r of fy.rows) out.push(row(r.title, r.items.map((s, i) => songCard(s, r.items, i, r.title)), { note: r.note, id: r.id, more: r.artist_id ? el("a", { class: "mu-more", href: `#m-artist/${r.artist_id}`, text: "Artist" }) : el("button", { class: "mu-more", onclick: () => playList(r.items, 0, r.title) }, "Play all") }));
+      if (fy.artists.length) out.push(row("Your top artists", fy.artists.map(artistCard), { id: "artists" }));
+    }
+    if (top && want("charts")) {
+      const t10 = top.items.slice(0, 10);
+      out.push(row("Top 10 today", t10.map((s, i) => topCard(s, t10, i)), { id: "top10", note: "The most played songs right now", more: el("button", { class: "mu-more", onclick: () => playList(t10, 0, "Top 10") }, "Play all") }));
+      const trend = top.items.slice(10);
+      if (trend.length) out.push(row("Trending now", trend.map((s, i) => songCard(s, trend, i, "Trending now")), { id: "trending", more: el("button", { class: "mu-more", onclick: () => playList(trend, 0, "Trending now") }, "Play all") }));
+    }
+    if (chip === "all" && mine.recent.length) out.push(row("Recently played", mine.recent.slice(0, 20).map((s, i, a) => songCard(s, a, i, "Recently played")), { id: "recent", more: el("a", { class: "mu-more", href: "#m-library/recent", text: "Show all" }) }));
+    if (want("albums")) for (const r of rows.filter((r) => r.kind === "albums")) out.push(row("New and top albums", r.items.map(albumCard), { id: r.id }));
+    for (const r of GENRE_ROWS) {
+      if (!want(r.id)) continue;
+      if (chip === r.id) out.push(el("section", { class: "mu-row" }, el("div", { class: "mu-row-head" }, el("h2", { text: r.title })), bigPlay(r.items, r.title), trackList(r.items, { from: r.title })));
+      else out.push(row(r.title, r.items.map((s, i) => songCard(s, r.items, i, r.title)), { id: r.id, more: el("button", { class: "mu-more", onclick: () => { chip = r.id; draw(); window.scrollTo({ top: 0, behavior: "smooth" }); } }, "Show all") }));
+    }
+    body.replaceChildren(...out);
+    markPlaying();
+  };
+  draw();
+}
+
+async function library(page, which, alive) {
+  const tabs = [["liked", "Liked songs"], ["downloaded", "Downloaded"], ["recent", "Recently played"]];
+  if (!tabs.some(([k]) => k === which)) which = getPref("music-lib") || "liked";
+  setPref("music-lib", which);
+  const box = el("div", {}, skeleton());
+  page.append(el("header", { class: "mu-hello" }, el("h1", { text: "Your library" })),
+    el("div", { class: "mu-chips" }, tabs.map(([k, label]) => el("a", { class: `mu-chip${k === which ? " on" : ""}`, href: `#m-library/${k}` }, label))), box);
+  const [list] = await Promise.all([which === "downloaded" ? loadKept(true) : loadMine(true).then((m) => (which === "liked" ? m.liked : m.recent)), loadKept(), loadMine()]);
+  if (!alive()) return;
+  const title = tabs.find(([k]) => k === which)[1];
+  const cover = el("span", { class: `mu-hero-art ${which}-art` }, ic(which === "liked" ? "heart" : which === "downloaded" ? "down" : "clock"));
+  const empty = { liked: "Songs you like show up here. Press the heart on any song.", downloaded: "Nothing downloaded yet. Press the arrow on any song to keep it in Music\\Chillarr; it then plays from this PC with no waiting.", recent: "Songs you play show up here." }[which];
+  box.replaceChildren(
+    el("header", { class: "mu-hero" }, cover, el("div", {}, el("small", { text: "Playlist" }), el("h1", { text: title }), el("p", { text: `${list.length} ${list.length === 1 ? "song" : "songs"}` }))),
+    list.length ? bigPlay(list, title) : null,
+    list.length ? trackList(list, { removable: which === "downloaded", from: title }) : note(empty));
+  markPlaying();
+}
+
+async function albumPage(page, id, alive) {
+  page.append(skeleton());
+  try {
+    const [{ album, songs }] = await Promise.all([invoke("music_album", { id }), loadKept(), loadMine()]);
+    if (!alive()) return;
+    const mins = Math.round(songs.reduce((n, s) => n + (s.secs || 0), 0) / 60);
+    const by = album.artist_id ? el("a", { href: `#m-artist/${album.artist_id}`, text: album.artist }) : el("b", { text: album.artist });
+    page.replaceChildren(
+      el("div", { class: "mu-tint", style: `--art:url("${album.art}")` }),
+      el("header", { class: "mu-hero" }, el("img", { class: "mu-hero-art", src: album.art, alt: "" }),
+        el("div", {}, el("small", { text: "Album" }), el("h1", { text: album.title }),
+          el("p", {}, by, [album.year, `${songs.length} songs`, mins ? `${mins} min` : ""].filter(Boolean).map((t) => ` · ${t}`).join("")))),
+      bigPlay(songs, album.title),
+      trackList(songs, { album: false, from: album.title }));
+    markPlaying();
+  } catch (e) { if (alive()) page.replaceChildren(note(err(e))); }
+}
+
+async function artistPage(page, id, alive) {
+  page.append(skeleton());
+  try {
+    const [{ artist, songs, albums }] = await Promise.all([invoke("music_artist", { id }), loadKept(), loadMine()]);
+    if (!alive()) return;
+    let all = false;
+    const popular = el("div");
+    const drawPopular = () => {
+      popular.replaceChildren(trackList(songs.slice(0, all ? 20 : 5), { from: artist.name }),
+        songs.length > 5 ? el("button", { class: "mu-more mu-showmore", onclick: () => { all = !all; drawPopular(); } }, all ? "Show less" : "See more") : null);
+      markPlaying();
+    };
+    drawPopular();
+    const singles = albums.filter((a) => a.count <= 3);
+    const lps = albums.filter((a) => a.count > 3);
+    page.replaceChildren(
+      el("header", { class: "mu-artist-hero", style: `--art:url("${artist.art}")` },
+        el("div", {}, el("small", { text: artist.genre || "Artist" }), el("h1", { text: artist.name }))),
+      bigPlay(songs, artist.name),
+      el("section", { class: "mu-row" }, el("div", { class: "mu-row-head" }, el("h2", { text: "Popular" })), popular),
+      lps.length ? row("Albums", lps.map(albumCard)) : null,
+      singles.length ? row("Singles and EPs", singles.map(albumCard)) : null);
+  } catch (e) { if (alive()) page.replaceChildren(note(err(e))); }
+}
+
+/** Search results while in Music, with filters. */
+export async function renderMusicSearch(view, term) {
+  const my = ++seq;
+  const chips = el("div", { class: "mu-chips" });
+  const body = el("div", {}, skeleton());
+  view.replaceChildren(el("div", { class: "page-top mu-page" }, chips, body));
+  try {
+    const [r] = await Promise.all([invoke("music_search", { term }), loadKept(), loadMine()]);
+    if (my !== seq) return;
+    const { songs, albums, artists = [] } = r;
+    if (!songs.length && !albums.length) { body.replaceChildren(note(`Nothing found for “${term}”.`)); return; }
+    let f = "all";
+    const draw = () => {
+      chips.replaceChildren(...[["all", "All"], ["songs", "Songs"], ["artists", "Artists"], ["albums", "Albums"]].map(([k, l]) => el("button", { class: `mu-chip${f === k ? " on" : ""}`, onclick: () => { f = k; draw(); } }, l)));
+      const out = [];
+      if (f === "all") {
+        // The top result: the artist when the search is their name, else the first song.
+        const a0 = artists[0];
+        const isArtist = a0 && a0.name.toLowerCase().includes(term.toLowerCase().trim()) ;
+        const best = isArtist
+          ? el("a", { class: "mu-best", href: `#m-artist/${a0.id}` }, el("img", { class: "round", src: a0.art, alt: "" }), el("h3", { text: a0.name }), el("span", { class: "mu-pill", text: "Artist" }), playBadge(() => playArtist(a0.id, a0.name)))
+          : songs[0] ? el("div", { class: "mu-best", role: "button", tabindex: "0", onclick: () => playList(songs, 0, "Search") }, el("img", { src: songs[0].art, alt: "" }), el("h3", { text: songs[0].title }), el("span", {}, el("span", { class: "mu-pill", text: "Song" }), ` ${songs[0].artist}`), playBadge(() => playList(songs, 0, "Search"))) : null;
+        out.push(el("div", { class: "mu-search-top" },
+          el("section", {}, el("h2", { text: "Top result" }), best),
+          el("section", {}, el("h2", { text: "Songs" }), trackList(songs.slice(0, 4), { album: false, numbered: false, from: "Search" }))));
+        if (artists.length) out.push(row("Artists", artists.map(artistCard)));
+        if (albums.length) out.push(row("Albums", albums.map(albumCard)));
+      } else if (f === "songs") out.push(bigPlay(songs, "Search"), trackList(songs, { numbered: false, from: "Search" }));
+      else if (f === "artists") out.push(artists.length ? el("div", { class: "mu-grid" }, artists.map(artistCard)) : note("No artists."));
+      else out.push(albums.length ? el("div", { class: "mu-grid" }, albums.map(albumCard)) : note("No albums."));
+      body.replaceChildren(...out);
+      markPlaying();
+    };
+    draw();
+  } catch (e) { if (my === seq) body.replaceChildren(note(err(e))); }
+}
+
+export const musicIcon = I.note;

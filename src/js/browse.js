@@ -1767,7 +1767,7 @@ listen("get-progress", (e) => {
   if (p.refresh) {
     // A film or show landing: nothing on the reading pages changes, so they
     // aren't drawn again (they were, from skeletons, at every movie scan).
-    if ($("#player").hidden && !$("#detail").open && document.body.dataset.mode !== "read") window.dispatchEvent(new Event("chillarr:refresh"));
+    if ($("#player").hidden && !$("#detail").open && document.body.dataset.mode === "watch") window.dispatchEvent(new Event("chillarr:refresh"));
     return;
   }
   if (p.gone) {

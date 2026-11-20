@@ -11,9 +11,13 @@
 //! nothing here is unmarked, taken off or moved back, so importing twice
 //! changes nothing the second time.
 //!
-//! Left out on purpose: the Hidden list (it's behind its own password, and a
-//! file would show it to anyone who opens it), the PIN and passwords, and
-//! anything about this PC's files (the clean-up acts on those).
+//! Also in it: the songs the profile downloaded in Music (downloaded again on
+//! import), the profile's own settings on the device it exported from (look,
+//! player, reader: `prefs`), and the Hidden list, but only when it was
+//! unlocked at export, so a file never shows it to someone without the password.
+//!
+//! Left out on purpose: the PIN and passwords, and anything about this PC's
+//! files (the clean-up acts on those).
 //!
 //! An imported file is someone else's writing: every field is checked and cut
 //! to size before it is kept (`clean_*`), and a kids' profile takes nothing
@@ -171,6 +175,25 @@ pub struct Export {
     pub reading_list: Vec<Value>,
     pub reading: Vec<SeriesRead>,
     pub books: Vec<BookRead>,
+    /// Songs downloaded in Music.
+    pub music: Vec<crate::music::Song>,
+    /// Liked songs, and what was played lately (newest first).
+    pub music_liked: Vec<crate::music::Song>,
+    pub music_recent: Vec<crate::music::Song>,
+    /// The Hidden list, when it was unlocked at export (None: left out).
+    pub hidden: Option<Vec<crate::hidden::Portable>>,
+    /// The profile's settings on the device it was exported from (the page's
+    /// own; the page checks them again on import).
+    pub prefs: BTreeMap<String, String>,
+}
+
+/// Settings from the page: short names and values only.
+pub fn clean_prefs(p: &BTreeMap<String, String>) -> BTreeMap<String, String> {
+    p.iter()
+        .filter(|(k, v)| !k.is_empty() && k.len() <= 64 && k.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.')) && v.len() <= 4096)
+        .take(300)
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect()
 }
 
 // ---------- reading Jellyfin's answers ----------
@@ -517,7 +540,7 @@ fn profile_name(app: &AppHandle, uid: &str) -> String {
 }
 
 /// Everything of the watching profile's that the file carries.
-pub async fn export(app: &AppHandle) -> Result<Export, String> {
+pub async fn export(app: &AppHandle, prefs: BTreeMap<String, String>) -> Result<Export, String> {
     let uid = crate::media::active_user(app).ok_or("Sign in to Jellyfin first.")?;
     let dir = crate::media::data_dir(app).ok_or("Chillarr isn't ready yet.")?;
     let j = crate::media::jf(app).filter(|j| j.user_id.as_deref() == Some(uid.as_str())).ok_or("Sign in to Jellyfin first.")?;
@@ -644,6 +667,11 @@ pub async fn export(app: &AppHandle) -> Result<Export, String> {
         }
         out.books.push(BookRead { title: b.title.clone(), author: b.author.clone(), olid: b.olid.clone(), anilist: b.anilist, cover: clean_url(b.cover.as_deref()), comic: b.comic, following, spot });
     }
+    out.music = crate::music::kept_by(app, &uid);
+    let mine = crate::music::mine_of(app, &uid);
+    (out.music_liked, out.music_recent) = (mine.liked, mine.recent);
+    out.hidden = crate::hidden::portable(app);
+    out.prefs = clean_prefs(&prefs);
     Ok(out)
 }
 
@@ -658,9 +686,9 @@ pub fn file_name(profile: &str) -> String {
 /// usual name to start with). Returns where it went, or None when the window
 /// was closed without saving. The data is read first, so a Jellyfin that
 /// doesn't answer says so before anyone picks a folder.
-pub async fn export_to_file(app: &AppHandle) -> Result<Option<String>, String> {
+pub async fn export_to_file(app: &AppHandle, prefs: BTreeMap<String, String>) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
-    let e = export(app).await?;
+    let e = export(app, prefs).await?;
     let text = serde_json::to_string_pretty(&e).map_err(|e| e.to_string())?;
     let (tx, rx) = tokio::sync::oneshot::channel();
     let mut dialog = app.dialog().file().set_title("Save your Chillarr data").set_file_name(file_name(&e.profile)).add_filter("Chillarr profile file", &["json"]);
@@ -1143,6 +1171,24 @@ pub async fn import(app: &AppHandle, text: &str) -> Result<Report, String> {
     if failed > 0 {
         rep.lines.push(format!("Jellyfin didn't take {}. Import the file again to try once more.", plural(failed, "change", "changes")));
     }
+    let (liked, heard) = crate::music::take_mine(app, &uid, &file.music_liked, &file.music_recent);
+    if liked > 0 || heard > 0 {
+        rep.lines.push(format!("Music: {} liked, {} in Recently played.", plural(liked, "song", "songs"), plural(heard, "song", "songs")));
+    }
+    let songs = crate::music::take(app, &uid, file.music.clone());
+    if songs > 0 {
+        rep.lines.push(format!("Music: {} downloading now, into Music\\Chillarr.", plural(songs, "song", "songs")));
+    }
+    if let Some(h) = file.hidden.as_ref().filter(|h| !h.is_empty()) {
+        match crate::hidden::take(app, h) {
+            Ok(n) if n > 0 => rep.lines.push(format!("Hidden: {}.", plural(n, "title", "titles"))),
+            Ok(_) => {}
+            Err(_) => rep.lines.push(format!("The file has {} hidden. Set a hidden password in Settings, then import it again to hide them here.", plural(h.len(), "title", "titles"))),
+        }
+    }
+    if !file.prefs.is_empty() {
+        rep.lines.push("Your settings: put back on this device.".into());
+    }
     if rep.lines.is_empty() {
         rep.lines.push("Everything in that file was already here.".into());
     }
@@ -1321,5 +1367,37 @@ mod tests {
         assert!(n.starts_with("Chillarr - Sam") && n.ends_with(".json"));
         assert!(!n.contains('/') && !n.contains('\\') && !n.contains(':'));
         assert!(file_name("???").starts_with("Chillarr - Profile - "));
+    }
+    #[test]
+    fn music_hidden_and_settings_go_in_the_file() {
+        let mut prefs = BTreeMap::new();
+        prefs.insert("watch-style".to_string(), "cinema".to_string());
+        prefs.insert("bad key!".to_string(), "x".to_string());
+        prefs.insert("big".to_string(), "x".repeat(5000));
+        let kept = clean_prefs(&prefs);
+        assert_eq!(kept.len(), 1);
+        let e = Export {
+            format: FORMAT.into(),
+            version: VERSION,
+            music: vec![crate::music::Song { id: "1".into(), title: "Song".into(), artist: "Band".into(), ..Default::default() }],
+            hidden: Some(vec![crate::hidden::Portable { keys: vec!["tmdb:1".into()], label: "A film".into(), item: None }]),
+            prefs: kept,
+            ..Export::default()
+        };
+        let back = parse(&serde_json::to_string(&e).unwrap()).unwrap();
+        assert_eq!(back.music.len(), 1);
+        assert_eq!(back.hidden.unwrap()[0].label, "A film");
+        assert_eq!(back.prefs.get("watch-style").map(String::as_str), Some("cinema"));
+        // An older file, without any of them, still reads.
+        let old = parse(&format!(r#"{{"format":"{FORMAT}","version":1}}"#)).unwrap();
+        assert!(old.music.is_empty() && old.hidden.is_none() && old.prefs.is_empty());
+    }
+
+    #[test]
+    fn songs_from_a_file_are_checked() {
+        use crate::music::{clean, Song};
+        assert!(clean(&Song { id: "12".into(), title: "x".into(), art: "javascript:alert(1)".into(), ..Default::default() }).unwrap().art.is_empty());
+        assert!(clean(&Song { id: "../x".into(), title: "x".into(), ..Default::default() }).is_none());
+        assert!(clean(&Song { id: "12".into(), title: " ".into(), ..Default::default() }).is_none());
     }
 }
