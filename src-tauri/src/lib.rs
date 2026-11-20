@@ -1,4 +1,5 @@
 mod arr;
+mod music;
 mod recommend;
 mod activity;
 mod dubcheck;
@@ -752,6 +753,71 @@ fn read_base() -> Result<String, String> {
 }
 
 #[tauri::command]
+async fn music_rows() -> serde_json::Value {
+    music::rows().await
+}
+
+#[tauri::command]
+async fn music_search(term: String) -> Result<serde_json::Value, String> {
+    music::search(&term).await
+}
+
+#[tauri::command]
+async fn music_album(id: String) -> Result<serde_json::Value, String> {
+    music::album(&id).await
+}
+
+#[tauri::command]
+async fn music_play(app: AppHandle, song: music::Song) -> Result<serde_json::Value, String> {
+    music::play(&app, song).await
+}
+
+#[tauri::command]
+async fn music_keep(app: AppHandle, song: music::Song) -> Result<serde_json::Value, String> {
+    music::keep(&app, song).await
+}
+
+#[tauri::command]
+fn music_library(app: AppHandle) -> Vec<music::Song> {
+    music::library(&app)
+}
+
+#[tauri::command]
+async fn music_artist(id: String) -> Result<serde_json::Value, String> {
+    music::artist(&id).await
+}
+
+#[tauri::command]
+fn music_mine(app: AppHandle) -> music::Mine {
+    music::mine(&app)
+}
+
+#[tauri::command]
+fn music_like(app: AppHandle, song: music::Song, on: bool) -> Result<bool, String> {
+    music::like(&app, song, on)
+}
+
+#[tauri::command]
+fn music_played(app: AppHandle, song: music::Song) -> Result<(), String> {
+    music::played(&app, song)
+}
+
+#[tauri::command]
+async fn music_for_you(app: AppHandle) -> serde_json::Value {
+    music::for_you(&app).await
+}
+
+#[tauri::command]
+async fn music_radio(song: music::Song, skip: Option<Vec<String>>) -> Vec<music::Song> {
+    music::radio(song, skip.unwrap_or_default()).await
+}
+
+#[tauri::command]
+fn music_forget(app: AppHandle, id: String) -> Result<(), String> {
+    music::forget(&app, &id)
+}
+
+#[tauri::command]
 async fn read_rows(app: AppHandle) -> Result<serde_json::Value, String> {
     read::rows(&app).await
 }
@@ -1354,14 +1420,14 @@ async fn logs_save(app: AppHandle) -> Result<String, String> {
 /// Settings > Account > Your data: the watching profile's data as a file's
 /// contents (a browser downloads it itself)...
 #[tauri::command]
-async fn profile_export(app: AppHandle) -> Result<profile_data::Export, String> {
-    profile_data::export(&app).await
+async fn profile_export(app: AppHandle, prefs: Option<std::collections::BTreeMap<String, String>>) -> Result<profile_data::Export, String> {
+    profile_data::export(&app, prefs.unwrap_or_default()).await
 }
 
 /// ...or, in this window, saved where the person picks. Returns where (None: not saved).
 #[tauri::command]
-async fn profile_export_save(app: AppHandle) -> Result<Option<String>, String> {
-    profile_data::export_to_file(&app).await
+async fn profile_export_save(app: AppHandle, prefs: Option<std::collections::BTreeMap<String, String>>) -> Result<Option<String>, String> {
+    profile_data::export_to_file(&app, prefs.unwrap_or_default()).await
 }
 
 /// Following a series: where an imported place says you were in it, if any.
@@ -1432,6 +1498,19 @@ pub fn run() {
         .manage(seen::Seen::default())
         .manage(newep::Cache::default())
         .invoke_handler(tauri::generate_handler![
+            music_rows,
+            music_search,
+            music_album,
+            music_play,
+            music_keep,
+            music_library,
+            music_forget,
+            music_artist,
+            music_mine,
+            music_like,
+            music_played,
+            music_for_you,
+            music_radio,
             read_base,
             read_rows,
             read_search,
@@ -1658,6 +1737,8 @@ pub fn run() {
             if let Some(w) = app.get_webview_window("main") {
                 no_autofill(&w);
             }
+            // Songs played (not downloaded) last time go.
+            std::thread::spawn(|| music::sweep(true));
             let path = settings_path(app.handle());
             let (mut s, first_run) = settings::load(&path);
             let found = discover::discover_all();

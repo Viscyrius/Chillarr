@@ -48,6 +48,32 @@ export function setPref(name, value) {
   try { localStorage.setItem(person ? `${name}:${person}` : name, value); } catch (e) { /* storage blocked */ }
 }
 
+/** Every setting this person keeps on this device, for their profile file. */
+export function allPrefs() {
+  const out = {};
+  try {
+    const own = person ? `:${person}` : null;
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k || k === "chillarr_exit" || k.startsWith("chillarr-webaudio")) continue;
+      if (own && k.endsWith(own)) out[k.slice(0, -own.length)] = localStorage.getItem(k);
+      else if (!k.includes(":") && !(k in out)) out[k] = localStorage.getItem(k);
+    }
+  } catch (e) { /* storage blocked */ }
+  return out;
+}
+/** Puts a profile file's settings back, as this person's. Names and sizes checked. */
+export function takePrefs(p) {
+  if (!p || typeof p !== "object") return 0;
+  let n = 0;
+  for (const [k, v] of Object.entries(p).slice(0, 300)) {
+    if (!/^[A-Za-z0-9._-]{1,64}$/.test(k) || typeof v !== "string" || v.length > 4096 || k === "chillarr_exit") continue;
+    setPref(k, v);
+    n++;
+  }
+  return n;
+}
+
 export const $ = (sel, root = document) => root.querySelector(sel);
 
 /** Small element builder. Text always goes in as text, never as HTML. */

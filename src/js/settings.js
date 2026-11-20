@@ -1,7 +1,8 @@
 // Settings: the six apps and Fix everything, indexers, library folders,
 // app paths, the Jellyfin account and streaming, general options, logs.
 import { hiddenBox } from "./hidden.js";
-import { $, ask, audioChoice, canDelete, el, icon, ICON, invoke, LABEL, listen, ORDER, store, toast, viewer, WEB } from "./api.js";
+import { $, allPrefs, ask, audioChoice, canDelete, el, icon, ICON, invoke, LABEL, listen, ORDER, store, takePrefs, toast, viewer, WEB } from "./api.js";
+import { applyLook } from "./look.js";
 import { startProfiles } from "./profiles.js";
 import { installWithMeter, openSetup } from "./setup.js";
 import { applyTheme, currentTheme, saveTheme, themePicker } from "./theme.js";
@@ -642,7 +643,7 @@ function yourDataBox() {
     try {
       if (WEB) {
         // A browser saves it itself, with the name the PC would give it.
-        const data = await invoke("profile_export");
+        const data = await invoke("profile_export", { prefs: allPrefs() });
         // Plain filtering: \p{} classes are a syntax error on the TV's Chrome 53.
         const who = String(data.profile || "").replace(/[\\/:*?"<>|.\u0000-\u001f]/g, "").trim().slice(0, 40) || "Profile";
         const day = new Date(data.exported_at * 1000);
@@ -656,7 +657,7 @@ function yourDataBox() {
         toast("Saved to your downloads. Keep the file somewhere safe.");
       } else {
         // Windows asks where it goes; closing that window saves nothing.
-        const path = await invoke("profile_export_save");
+        const path = await invoke("profile_export_save", { prefs: allPrefs() });
         if (path) {
           toast(`Saved ${path}.`);
           invoke("open_folder", { path: path.replace(/[\\/][^\\/]*$/, "") }).catch(() => {});
@@ -672,12 +673,15 @@ function yourDataBox() {
     if (!f) return;
     if (WEB && f.size > WEB_IMPORT_MAX) { toast("That file is too big to import from a browser. Import it in Chillarr on the PC.", true); return; }
     if (f.size > 64 * 1024 * 1024) { toast("That file is too big to be a Chillarr profile file.", true); return; }
-    if (!(await ask("Import this file?", `What's in "${f.name}" is added to your profile: My List, watched, Continue watching, Completed, Notify me and reading. Nothing you have now is taken away.`, [], "Import", "Cancel"))) return;
+    if (!(await ask("Import this file?", `What's in "${f.name}" is added to your profile: My List, watched, Continue watching, Completed, Notify me, reading, music, hidden titles and your settings. Nothing you have now is taken away.`, [], "Import", "Cancel"))) return;
     inn.disabled = true;
     inn.textContent = "Importing...";
     report.hidden = true;
     try {
-      const rep = await invoke("profile_import", { text: await fileText(f) });
+      const text = await fileText(f);
+      const rep = await invoke("profile_import", { text });
+      // The settings are this device's: put back here, by the page.
+      try { if (takePrefs(JSON.parse(text).prefs)) applyLook(); } catch (e) { /* the server already said what was wrong */ }
       report.replaceChildren(...rep.lines.map((l) => el("li", { text: l })));
       report.hidden = false;
       toast("Imported.");
@@ -690,7 +694,7 @@ function yourDataBox() {
   return el("div", { class: "box data-box" },
     el("div", { class: "opt" },
       el("span", {}, el("b", { text: "Your data" }),
-        el("small", { text: "Save your My List, what you watched and where you stopped, Completed, Notify me and your reading to a file. Import it on another PC or profile, after a reinstall, or to keep a copy. Your Hidden list and passwords stay out of it." })),
+        el("small", { text: "Save everything of yours to a file: My List, what you watched and where you stopped, Completed, Notify me, your reading, your downloaded music and your settings. Your Hidden list goes in only while it's unlocked. Import it on another PC or profile, after a reinstall, or to keep a copy. Passwords and your PIN stay out of it." })),
       el("div", { class: "acts" }, out, inn, pick)),
     report);
 }
