@@ -3702,22 +3702,20 @@ body:not([data-mode="music"]):has(#player:not([hidden])) .mu-bar { opacity: 0; p
 /* Over the reader, so you can skip while you read. */
 body:has(.reader) .mu-bar { z-index: 2147483000; bottom: 84px; }
 body:has(.reader) .mu-full { z-index: 2147483001; }
-/* A phone reading: the bar would sit over the page you are reading. While the
-   reader's own bars are hidden it tucks into a small turning cover in the
-   corner (tap it for the full player, with lyrics); when you bring the
-   reader's bars up, it comes back as a bar just above them. */
+/* A phone reading: no bar across the page. The player is a small turning
+   cover tucked in the corner (tap it for the full player, with lyrics);
+   it slides up out of the way when the reader's own bars come up. */
 @media (max-width: 980px) {
-  body:has(.reader:not(.bars)) .mu-bar:not(.min) { left: auto !important; right: calc(12px + env(safe-area-inset-right)); bottom: calc(16px + env(safe-area-inset-bottom)); width: 48px; height: 48px; padding: 0; display: block; border-radius: 50%; background: rgba(20, 20, 24, 0.7); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45); opacity: 0.85; animation: mu-dock 0.28s var(--out) both; }
-  body:has(.reader:not(.bars)) .mu-bar:not(.min) > :not(.mu-now), body:has(.reader:not(.bars)) .mu-bar:not(.min) .mu-txt, body:has(.reader:not(.bars)) .mu-bar:not(.min) .mu-like-slot, body:has(.reader:not(.bars)) .mu-bar::before { display: none !important; }
-  body:has(.reader:not(.bars)) .mu-bar:not(.min) .mu-now { padding: 0; }
-  body:has(.reader:not(.bars)) .mu-bar:not(.min) .mu-art-btn { border-radius: 50%; }
-  body:has(.reader:not(.bars)) .mu-bar:not(.min) .mu-art { width: 48px; height: 48px; border-radius: 50%; }
-  body:has(.reader:not(.bars)) .mu-bar.spin:not(.min) .mu-art { animation: mu-spin 8s linear infinite; }
-  body:has(.reader.bars) .mu-bar:not(.min) { bottom: calc(84px + env(safe-area-inset-bottom)); animation: mu-rise 0.26s var(--out) both; }
+  body:has(.reader) .mu-bar:not(.min) { left: auto !important; right: calc(12px + env(safe-area-inset-right)); bottom: calc(16px + env(safe-area-inset-bottom)); width: 46px; height: 46px; padding: 0; display: block; border: 0; border-radius: 50%; background: rgba(20, 20, 24, 0.6); box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4); opacity: 0.8; transition: bottom 0.26s var(--out), opacity 0.2s; animation: mu-dock 0.28s var(--out) both; }
+  body:has(.reader.bars) .mu-bar:not(.min) { bottom: calc(96px + env(safe-area-inset-bottom)); opacity: 1; }
+  body:has(.reader) .mu-bar:not(.min) > :not(.mu-now), body:has(.reader) .mu-bar:not(.min) .mu-txt, body:has(.reader) .mu-bar:not(.min) .mu-like-slot, body:has(.reader) .mu-bar::before { display: none !important; }
+  body:has(.reader) .mu-bar:not(.min) .mu-now { padding: 0; }
+  body:has(.reader) .mu-bar:not(.min) .mu-art-btn { display: block; border-radius: 50%; }
+  body:has(.reader) .mu-bar:not(.min) .mu-art { width: 46px; height: 46px; border-radius: 50%; }
+  body:has(.reader) .mu-bar.spin:not(.min) .mu-art { animation: mu-spin 8s linear infinite; }
 }
 @keyframes mu-dock { from { opacity: 0; transform: scale(0.6); } }
-@keyframes mu-rise { from { opacity: 0; transform: translateY(12px); } }
-@media (prefers-reduced-motion: reduce) { body:has(.reader) .mu-bar { animation: none !important; } }
+@media (prefers-reduced-motion: reduce) { body:has(.reader) .mu-bar { animation: none !important; transition: none !important; } }
 .mu-min { display: none; }
 body:not([data-mode="music"]) .mu-bar .mu-side > .mu-min { display: inline-grid; }
 /* Folded away: only the cover, turning while it plays. Press it to open again. */
