@@ -77,6 +77,10 @@ async fn round(app: &AppHandle) {
     }
     // A chapter whose site gave no pages: tried again, and the downloader
     // (which stops on a failure) started again for what's behind it.
+    // First from another site that has it, if the one it's on gives no pages.
+    for line in read::fallback_failed(app).await {
+        crate::log::log(app, crate::model::Level::Amber, line);
+    }
     for line in crate::suwayomi::retry_failed().await {
         crate::log::log(app, crate::model::Level::Amber, line);
     }

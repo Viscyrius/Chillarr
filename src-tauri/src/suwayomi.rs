@@ -955,6 +955,30 @@ pub async fn queue_checked() -> Result<Vec<(i64, i64, f64)>, String> {
         .unwrap_or_default())
 }
 
+/// A failed chapter in the queue: (chapter id, series id, number, "Chapter 109 of Bad Born Blood").
+pub async fn failed() -> Vec<(i64, i64, Option<f64>, String)> {
+    let Ok(v) = gql("{downloadStatus{queue{state chapter{id name chapterNumber manga{id title}}}}}", json!({})).await else { return vec![] };
+    v["downloadStatus"]["queue"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|q| q["state"].as_str() == Some("ERROR"))
+        .filter_map(|q| {
+            let c = &q["chapter"];
+            Some((c["id"].as_i64()?, c["manga"]["id"].as_i64()?, c["chapterNumber"].as_f64().filter(|n| *n >= 0.0), format!("{} of {}", c["name"].as_str().unwrap_or("A chapter"), c["manga"]["title"].as_str().unwrap_or("a series"))))
+        })
+        .collect()
+}
+
+/// How many pages the site gives for a chapter right now (0: none, or it failed).
+pub async fn page_count(chapter_id: i64) -> usize {
+    gql("mutation($id:Int!){fetchChapterPages(input:{chapterId:$id}){pages}}", json!({ "id": chapter_id }))
+        .await
+        .ok()
+        .and_then(|v| v["fetchChapterPages"]["pages"].as_array().map(|a| a.len()))
+        .unwrap_or(0)
+}
+
 /// Chapters given up on, by chapter id: (times tried again, when last).
 static RETRIED: std::sync::Mutex<Option<std::collections::HashMap<i64, (u32, std::time::Instant)>>> = std::sync::Mutex::new(None);
 /// Tries again a failed chapter this often, this many times (6 x 30 min = 3 hours).
