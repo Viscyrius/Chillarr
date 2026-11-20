@@ -843,6 +843,11 @@ fn music_playlist_move(app: AppHandle, id: String, from: usize, to: usize) -> Re
 }
 
 #[tauri::command]
+async fn music_lyrics(song: music::Song) -> music::Lyrics {
+    music::lyrics(song).await
+}
+
+#[tauri::command]
 async fn music_youtube(term: String) -> Result<Vec<music::Song>, String> {
     music::youtube(&term).await
 }
@@ -1569,6 +1574,7 @@ pub fn run() {
             music_playlist_move,
             music_settings,
             music_youtube,
+            music_lyrics,
             music_set_cache,
             music_clear_cache,
             read_base,

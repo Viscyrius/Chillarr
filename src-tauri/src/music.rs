@@ -829,6 +829,185 @@ pub async fn radio(s: Song, skip: Vec<String>) -> Vec<Song> {
     out
 }
 
+// ---------- lyrics ----------
+
+/// One line of synced lyrics: when it starts (seconds) and what it says.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct Line(pub f64, pub String);
+
+/// A song's lyrics from LRCLIB (free and open, no key): synced line by line
+/// where it has them, else plain text. `duration` is the length of the
+/// recording they were timed to, so a sped up or slowed version can be timed
+/// by it (the page scales the times).
+#[derive(Serialize, Clone, Debug, Default)]
+pub struct Lyrics {
+    pub found: bool,
+    pub instrumental: bool,
+    pub synced: Vec<Line>,
+    pub plain: String,
+    pub duration: f64,
+    /// The song LRCLIB matched, when it isn't exactly this one (a YouTube remix).
+    pub matched: String,
+}
+
+static LYRICS: Mutex<Option<HashMap<String, (Instant, Lyrics)>>> = Mutex::new(None);
+
+/// "[01:02.50]Words" lines; a line may carry several times.
+pub fn parse_lrc(text: &str) -> Vec<Line> {
+    let mut out = Vec::new();
+    for raw in text.lines() {
+        let mut rest = raw.trim();
+        let mut times = Vec::new();
+        while let Some(r) = rest.strip_prefix('[') {
+            let Some(end) = r.find(']') else { break };
+            let tag = &r[..end];
+            let t = tag.split_once(':').and_then(|(m, s)| Some(m.trim().parse::<f64>().ok()? * 60.0 + s.trim().parse::<f64>().ok()?));
+            match t {
+                Some(t) if t.is_finite() && t >= 0.0 => times.push(t),
+                _ => {}
+            }
+            rest = r[end + 1..].trim_start();
+        }
+        let words = rest.trim().to_string();
+        for t in times {
+            out.push(Line(t, words.clone()));
+        }
+    }
+    out.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+    out
+}
+
+/// A YouTube title as the song it is: "Joji - Glimpse of Us (Gustixa Remix) [Lyrics]"
+/// is "Glimpse of Us" by "Joji". Brackets and "sped up", "slowed", "lyrics"... go.
+pub fn bare_title(title: &str) -> (Option<String>, String) {
+    let mut t = String::new();
+    let mut depth = 0;
+    for c in title.chars() {
+        match c {
+            '(' | '[' | '【' | '{' => depth += 1,
+            ')' | ']' | '】' | '}' => depth = (depth - 1).max(0),
+            _ if depth == 0 => t.push(c),
+            _ => {}
+        }
+    }
+    let low = t.to_lowercase();
+    let mut cut = t.len();
+    for w in [" ft.", " feat.", " ft ", " feat ", " | ", " sped up", " slowed", " nightcore", " lyrics", " official", " audio", " music video", " x "] {
+        if let Some(i) = low.find(w) {
+            cut = cut.min(i);
+        }
+    }
+    let t = t[..cut].trim().trim_matches(|c: char| c == '-' || c == '–' || c == '|' || c.is_whitespace()).to_string();
+    match t.split_once(" - ").or_else(|| t.split_once(" – ")) {
+        Some((a, b)) if !a.trim().is_empty() && !b.trim().is_empty() => (Some(a.trim().to_string()), b.trim().to_string()),
+        _ => (None, t),
+    }
+}
+
+fn words(s: &str) -> Vec<String> {
+    s.to_lowercase().split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).map(String::from).collect()
+}
+
+/// How alike two titles are, 0 to 1, by the words they share.
+fn alike(a: &str, b: &str) -> f64 {
+    let (a, b) = (words(a), words(b));
+    if a.is_empty() || b.is_empty() {
+        return 0.0;
+    }
+    let shared = a.iter().filter(|w| b.contains(w)).count() as f64;
+    shared / (a.len().max(b.len()) as f64)
+}
+
+fn lyrics_of(v: &Value, matched: String) -> Option<Lyrics> {
+    let synced = v["syncedLyrics"].as_str().map(parse_lrc).unwrap_or_default();
+    let plain = v["plainLyrics"].as_str().unwrap_or_default().trim().to_string();
+    let instrumental = v["instrumental"].as_bool().unwrap_or(false);
+    if synced.is_empty() && plain.is_empty() && !instrumental {
+        return None;
+    }
+    Some(Lyrics { found: true, instrumental, synced, plain, duration: v["duration"].as_f64().unwrap_or(0.0), matched })
+}
+
+async fn lrclib(url: &str) -> Option<Value> {
+    let r = http().get(url).send().await.ok()?;
+    if !r.status().is_success() {
+        return None;
+    }
+    r.json().await.ok()
+}
+
+/// The lyrics for a song: LRCLIB's exact match by artist, title, album and
+/// length first, then its search (the best title match, synced first). A
+/// YouTube upload is looked up by the song its title names. Kept 6 hours.
+pub async fn lyrics(s: Song) -> Lyrics {
+    if let Some((at, l)) = LYRICS.lock().unwrap().as_ref().and_then(|c| c.get(&s.id)) {
+        if at.elapsed() < Duration::from_secs(6 * 3600) {
+            return l.clone();
+        }
+    }
+    let yt = is_yt(&s.id);
+    let (artist, title) = if yt {
+        let (a, t) = bare_title(&s.title);
+        (a.unwrap_or_else(|| s.artist.clone()), t)
+    } else {
+        let (_, t) = bare_title(&s.title);
+        (s.artist.split([',', '&']).next().unwrap_or(&s.artist).trim().to_string(), if t.is_empty() { s.title.clone() } else { t })
+    };
+    let mut found: Option<Lyrics> = None;
+    if !yt && !title.is_empty() {
+        let mut url = format!("https://lrclib.net/api/get?artist_name={}&track_name={}", enc(&artist), enc(&s.title));
+        if !s.album.is_empty() {
+            url.push_str(&format!("&album_name={}", enc(&s.album)));
+        }
+        if s.secs > 0 {
+            url.push_str(&format!("&duration={}", s.secs));
+        }
+        if let Some(v) = lrclib(&url).await {
+            found = lyrics_of(&v, String::new());
+        }
+    }
+    if found.as_ref().is_none_or(|l| l.synced.is_empty()) && !title.is_empty() {
+        for q in [format!("{title} {artist}"), title.clone()] {
+            let Some(Value::Array(list)) = lrclib(&format!("https://lrclib.net/api/search?q={}", enc(&q))).await else { continue };
+            // The best: the title alike, the artist alike, synced, near the length.
+            let best = list
+                .iter()
+                .filter(|v| alike(v["trackName"].as_str().unwrap_or_default(), &title) >= 0.5)
+                .max_by(|a, b| {
+                    let score = |v: &Value| {
+                        let mut n = alike(v["trackName"].as_str().unwrap_or_default(), &title) * 3.0 + alike(v["artistName"].as_str().unwrap_or_default(), &artist) * 2.0;
+                        if v["syncedLyrics"].as_str().is_some_and(|x| !x.is_empty()) {
+                            n += 2.0;
+                        }
+                        if s.secs > 0 && !yt {
+                            n -= ((v["duration"].as_f64().unwrap_or(0.0) - s.secs as f64).abs() / 30.0).min(2.0);
+                        }
+                        n
+                    };
+                    score(a).partial_cmp(&score(b)).unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .cloned();
+            if let Some(v) = best {
+                let name = format!("{} by {}", v["trackName"].as_str().unwrap_or_default(), v["artistName"].as_str().unwrap_or_default());
+                if let Some(l) = lyrics_of(&v, if yt { name } else { String::new() }) {
+                    if found.is_none() || !l.synced.is_empty() {
+                        found = Some(l);
+                    }
+                    break;
+                }
+            }
+        }
+    }
+    let l = found.unwrap_or_default();
+    let mut c = LYRICS.lock().unwrap();
+    let c = c.get_or_insert_with(HashMap::new);
+    if c.len() > 1000 {
+        c.clear();
+    }
+    c.insert(s.id.clone(), (Instant::now(), l.clone()));
+    l
+}
+
 // ---------- yt-dlp ----------
 
 fn tool_dir() -> PathBuf {
@@ -1268,6 +1447,31 @@ mod tests {
         let s = chart_song(&entries(&v)[0]).unwrap();
         assert_eq!((s.id.as_str(), s.title.as_str(), s.artist.as_str(), s.album_id.as_str()), ("42", "Song", "Band", "777"));
         assert_eq!(s.art, "https://x/a.jpg/600x600bb.jpg");
+    }
+
+    #[test]
+    fn lyrics_are_read() {
+        let l = parse_lrc("[ar:Joji]\n[00:12.50]She'd take the world\n[01:02.00][02:10.25]Chorus line\n[00:20.00]\nno time here");
+        assert_eq!(l, vec![Line(12.5, "She'd take the world".into()), Line(20.0, String::new()), Line(62.0, "Chorus line".into()), Line(130.25, "Chorus line".into())]);
+        assert_eq!(bare_title("Joji - Glimpse of Us (Gustixa Remix) [Lyrics]"), (Some("Joji".into()), "Glimpse of Us".into()));
+        assert_eq!(bare_title("glimpse of us sped up"), (None, "glimpse of us".into()));
+        assert_eq!(bare_title("Lady Gaga, Bruno Mars - Die With A Smile x Glimpse of Us (Mashup)"), (Some("Lady Gaga, Bruno Mars".into()), "Die With A Smile".into()));
+        assert!(alike("Glimpse of Us", "Joji - Glimpse of Us (Official Video)") >= 0.5);
+        assert!(alike("Glimpse of Us", "Slow Dancing in the Dark") < 0.5);
+    }
+
+    /// Lyrics for a catalog song and a YouTube remix. Needs the internet.
+    #[tokio::test]
+    #[ignore]
+    async fn live_lyrics() {
+        let s = Song { id: "1".into(), title: "Glimpse of Us".into(), artist: "Joji".into(), album: "SMITHEREENS".into(), secs: 233, ..Song::default() };
+        let l = lyrics(s).await;
+        println!("catalog: found {} synced {} first {:?}", l.found, l.synced.len(), l.synced.first());
+        assert!(l.found && !l.synced.is_empty());
+        let y = Song { id: "yt-PWKZz42VpaI".into(), title: "Joji - glimpse of us (Gustixa Remix)".into(), artist: "Gustixa".into(), secs: 173, ..Song::default() };
+        let l = lyrics(y).await;
+        println!("youtube: found {} synced {} matched {} duration {}", l.found, l.synced.len(), l.matched, l.duration);
+        assert!(l.found);
     }
 
     #[test]
