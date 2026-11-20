@@ -362,7 +362,7 @@ fn need(cmd: &str) -> Option<Need> {
         | "music_artist" | "music_mine" | "music_like" | "music_played" | "music_for_you" | "music_radio"
         // Each profile's own playlists (music.rs `change` acts on the viewer's).
         | "music_playlist_new" | "music_playlist_add" | "music_playlist_remove" | "music_playlist_rename" | "music_playlist_delete" | "music_playlist_move"
-        | "music_settings" | "music_youtube" => Need::Viewer,
+        | "music_settings" | "music_youtube" | "music_lyrics" => Need::Viewer,
         // How long played songs stay on the PC, and clearing them: the PC's.
         "music_set_cache" | "music_clear_cache" => Need::Admin,
         // Deleting a downloaded song's file: whoever may delete.
@@ -481,6 +481,7 @@ async fn run(app: &AppHandle, cmd: &str, a: &Value) -> Result<Value, String> {
         "music_playlist_delete" => res(crate::music::playlist_delete(app, &arg::<String>(a, "id")?)),
         "music_playlist_move" => res(crate::music::playlist_move(app, &arg::<String>(a, "id")?, arg(a, "from")?, arg(a, "to")?)),
         "music_settings" => ok(crate::music::settings(app)),
+        "music_lyrics" => ok(crate::music::lyrics(arg(a, "song")?).await),
         "music_youtube" => res(crate::music::youtube(&arg::<String>(a, "term")?).await),
         "music_set_cache" => res(crate::music::set_cache_mins(app, arg(a, "mins")?)),
         "music_clear_cache" => ok(crate::music::clear_cache()),

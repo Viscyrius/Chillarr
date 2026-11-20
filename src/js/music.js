@@ -31,6 +31,7 @@ const I = {
   pen: "M4 20h4L19 9l-4-4L4 16zM14 6l4 4",
   expand: "M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7",
   more: "M5 12h.01M12 12h.01M19 12h.01",
+  mic: "M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zM19 11a7 7 0 0 1-14 0M12 18v3M8 21h8",
   user: "M20 21v-1a5 5 0 0 0-5-5H9a5 5 0 0 0-5 5v1M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z",
   disc: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 14a2 2 0 1 0 0-4 2 2 0 0 0 0 4z",
   yt: "M22 8.5a3 3 0 0 0-2.1-2.1C18 6 12 6 12 6s-6 0-7.9.4A3 3 0 0 0 2 8.5 31 31 0 0 0 1.7 12 31 31 0 0 0 2 15.5a3 3 0 0 0 2.1 2.1C6 18 12 18 12 18s6 0 7.9-.4a3 3 0 0 0 2.1-2.1 31 31 0 0 0 .3-3.5 31 31 0 0 0-.3-3.5zM10 15V9l5 3z",
@@ -315,8 +316,9 @@ async function start(i) {
     media(song);
     // The next one is fetched while this one plays, so it starts at once.
     const nx = P.queue[i + 1];
-    if (nx) ready(nx).catch(() => {});
+    if (nx) { ready(nx).catch(() => {}); lyricsFor(nx); }
     else topUp();
+    lyricsFor(song);
   } catch (e) {
     if (seq !== P.seq) return;
     drawBar(false);
@@ -428,7 +430,8 @@ function makeBar() {
       el("div", { class: "mu-line" }, el("span", { class: "mu-t0", text: "0:00" }), seekBar(), el("span", { class: "mu-t1", text: "0:00" }))),
     el("div", { class: "mu-side" },
       el("span", { class: "mu-keep-slot" }),
-      el("button", { class: "mu-ib mu-qbtn", "aria-label": "Queue", title: "Queue", onclick: () => openFull() }, ic("queue")),
+      el("button", { class: "mu-ib mu-lybtn", "aria-label": "Lyrics", title: "Lyrics", onclick: () => openFull("lyrics") }, ic("mic")),
+      el("button", { class: "mu-ib mu-qbtn", "aria-label": "Up next", title: "Up next", onclick: () => openFull("queue") }, ic("list")),
       volIc, vol,
       el("button", { class: "mu-ib mu-min", "aria-label": "Fold away", title: "Fold away", onclick: () => setMin(true) }, icon("M5 12h14")),
       el("button", { class: "mu-ib mu-stop", "aria-label": "Stop", title: "Stop", onclick: stopAll }, ic("close"))),
@@ -529,7 +532,7 @@ function drawTime() {
 
 /* ---------- Now playing, full screen, with the queue ---------- */
 let full = null;
-function openFull() {
+function openFull(panel) {
   if (!P.queue[P.at]) return;
   if (!full) {
     full = el("section", { class: "mu-full", "aria-label": "Now playing", role: "dialog" },
@@ -546,19 +549,28 @@ function openFull() {
             el("span", { class: "mu-full-acts" })),
           el("div", { class: "mu-line" }, el("span", { class: "mu-t0", text: "0:00" }), seekBar(), el("span", { class: "mu-t1", text: "0:00" })),
           el("div", { class: "mu-ctl big" }, ctlButtons())),
-        el("aside", { class: "mu-full-q" }, el("h3", { text: "Up next" }), el("ol", { class: "mu-qlist" }))));
+        el("aside", { class: "mu-full-q" },
+          el("div", { class: "mu-ptabs", role: "tablist" },
+            el("button", { class: "mu-ptab", role: "tab", dataset: { p: "lyrics" }, onclick: () => setPanel("lyrics") }, ic("mic"), "Lyrics"),
+            el("button", { class: "mu-ptab", role: "tab", dataset: { p: "queue" }, onclick: () => setPanel("queue") }, ic("list"), "Up next")),
+          el("div", { class: "mu-lyrics", role: "tabpanel", "aria-label": "Lyrics" }),
+          el("ol", { class: "mu-qlist", role: "tabpanel", "aria-label": "Up next" }))));
+    // Scrolling the lyrics yourself pauses following the song for a moment.
+    const lb = $(".mu-lyrics", full);
+    for (const ev of ["wheel", "touchmove"]) lb.addEventListener(ev, () => (L.userAt = Date.now()), { passive: true });
     full.addEventListener("click", (e) => { if (e.target.closest("a[href]")) closeFull(); });
     // On a phone, a swipe down from the top half closes it.
     let y0 = null, dy = 0;
-    full.addEventListener("touchstart", (e) => { const t = e.touches[0]; y0 = t.clientY < innerHeight * 0.6 && !e.target.closest(".mu-full-q, input") && $(".mu-full-body", full).scrollTop <= 0 ? t.clientY : null; dy = 0; }, { passive: true });
+    full.addEventListener("touchstart", (e) => { const t = e.touches[0]; y0 = t.clientY < innerHeight * 0.6 && !e.target.closest(".mu-full-q, .mu-lyrics, input") && $(".mu-full-body", full).scrollTop <= 0 ? t.clientY : null; dy = 0; }, { passive: true });
     full.addEventListener("touchmove", (e) => { if (y0 == null) return; dy = Math.max(0, e.touches[0].clientY - y0); full.style.transform = `translateY(${dy}px)`; full.style.transition = "none"; }, { passive: true });
     full.addEventListener("touchend", () => { if (y0 == null) return; full.style.transition = ""; full.style.transform = ""; if (dy > 110) closeFull(); y0 = null; });
     document.body.append(full);
     paintModes();
   }
+  setPanel(panel || getPref("music-panel") || "lyrics");
   drawFull();
   drawBar(bar?.classList.contains("loading"));
-  requestAnimationFrame(() => full.classList.add("in"));
+  requestAnimationFrame(() => { full.classList.add("in"); drawLyricTime(true); });
   document.body.classList.add("mu-full-on");
 }
 function closeFull() {
@@ -580,7 +592,90 @@ function drawFull() {
   $(".mu-full-from", full).textContent = P.from ? `Playing from ${P.from}${P.radio ? ", then songs like it" : ""}` : "Now playing";
   $(".mu-full-acts", full).replaceChildren(likeBtn(s), addBtn(s), keepBtn(s));
   drawQueue();
+  drawLyrics();
 }
+
+/* ---------- lyrics ---------- */
+// L: the lyrics for the song playing. `rate` times them for a sped up or
+// slowed version; `loose`: shown as text only (a remix, laid out otherwise).
+const L = { id: "", data: null, rate: 1, loose: false, at: -1, userAt: 0, p: null };
+const lyricCache = new Map();
+function lyricsFor(s) {
+  if (!lyricCache.has(s.id)) {
+    const p = invoke("music_lyrics", { song: s }).catch(() => ({ found: false }));
+    lyricCache.set(s.id, p);
+    if (lyricCache.size > 200) lyricCache.delete(lyricCache.keys().next().value);
+  }
+  return lyricCache.get(s.id);
+}
+function setPanel(p) {
+  if (!full) return;
+  full.dataset.panel = p;
+  setPref("music-panel", p);
+  full.querySelectorAll(".mu-ptab").forEach((b) => { const on = b.dataset.p === p; b.classList.toggle("on", on); b.setAttribute("aria-selected", String(on)); });
+  if (p === "lyrics") drawLyricTime(true);
+}
+async function drawLyrics() {
+  if (!full) return;
+  const s = P.queue[P.at];
+  const box = $(".mu-lyrics", full);
+  if (!s) return;
+  if (L.id === s.id && L.data) return;
+  L.id = s.id; L.data = null; L.at = -1;
+  box.replaceChildren(el("div", { class: "mu-ly-wait" }, Array.from({ length: 6 }, () => el("i"))));
+  const d = await lyricsFor(s);
+  if (L.id !== s.id) return;
+  L.data = d;
+  const speedy = /sped|speed ?up|nightcore|slowed|\bslow\b|reverb/i.test(s.title);
+  const ratio = audio.duration && d.duration ? audio.duration / d.duration : 1;
+  L.rate = speedy && ratio > 0.5 && ratio < 1.8 ? ratio : 1;
+  // A YouTube version that isn't the same song at another speed (a remix, a
+  // mashup, live) is laid out differently: its words show, not timed.
+  L.loose = String(s.id).startsWith("yt-") && !speedy && Math.abs(ratio - 1) > 0.06;
+  if (!d.found) { box.replaceChildren(el("p", { class: "mu-ly-none", text: "No lyrics found for this one." })); return; }
+  if (d.instrumental && !d.synced.length && !d.plain) { box.replaceChildren(el("p", { class: "mu-ly-none", text: "♪ Instrumental" })); return; }
+  const note = d.matched ? el("p", { class: "mu-ly-note", text: `Lyrics of ${d.matched}${L.loose ? ", the original: this version's timing differs" : ""}` }) : null;
+  if (d.synced.length && !L.loose) {
+    box.replaceChildren(note, ...d.synced.map(([t, words], i) => el("p", { class: "mu-ly", dataset: { i: String(i) }, role: "button", tabindex: "0", title: "Play from here",
+      onclick: () => seekLyric(t), onkeydown: (e) => { if (e.key === "Enter") seekLyric(t); } }, words || "♪")), el("p", { class: "mu-ly-src", text: "Lyrics from LRCLIB" }));
+    box.classList.add("synced");
+    drawLyricTime(true);
+  } else {
+    const text = d.plain || d.synced.map(([, w]) => w).join("\n");
+    box.classList.remove("synced");
+    box.replaceChildren(note, ...text.split("\n").map((w) => el("p", { class: "mu-ly plain" }, w || "\u00a0")), el("p", { class: "mu-ly-src", text: "Lyrics from LRCLIB" }));
+    box.scrollTop = 0;
+  }
+}
+/** A line pressed: the song goes there. */
+function seekLyric(t) {
+  const at = t / L.rate;
+  if (isFinite(audio.duration)) audio.currentTime = Math.max(0, Math.min(at, audio.duration - 0.25));
+  if (audio.paused) audio.play().catch(() => {});
+  L.userAt = 0;
+  drawLyricTime(true);
+}
+/** The line being sung lights up and comes to the middle. */
+function drawLyricTime(force = false) {
+  if (!full || !L.data?.synced?.length || L.loose || full.dataset.panel !== "lyrics") return;
+  const t = (audio.currentTime || 0) * L.rate + 0.25;
+  const lines = L.data.synced;
+  let i = -1;
+  for (let k = 0; k < lines.length; k++) { if (lines[k][0] <= t) i = k; else break; }
+  if (i === L.at && !force) return;
+  L.at = i;
+  const box = $(".mu-lyrics", full);
+  box.querySelectorAll(".mu-ly").forEach((p) => { const k = +p.dataset.i; p.classList.toggle("on", k === i); p.classList.toggle("past", k < i); });
+  const cur = box.querySelector(`.mu-ly[data-i="${Math.max(0, i)}"]`);
+  // Follows the song, unless you scrolled the lyrics in the last few seconds.
+  if (cur && full.classList.contains("in") && Date.now() - L.userAt > 3500) {
+    box.scrollTo({ top: cur.offsetTop - box.clientHeight * 0.38, behavior: force ? "auto" : "smooth" });
+  }
+}
+audio.addEventListener("timeupdate", () => drawLyricTime());
+audio.addEventListener("seeked", () => drawLyricTime(true));
+// The length is known once the song loads: timing for a sped up version.
+audio.addEventListener("loadedmetadata", () => { if (L.data && L.id === P.queue[P.at]?.id) { L.data = null; L.id = ""; drawLyrics(); } });
 function drawQueue() {
   if (!full) return;
   const list = P.queue.slice(P.at + 1, P.at + 51);

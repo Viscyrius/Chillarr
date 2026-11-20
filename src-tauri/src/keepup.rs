@@ -75,6 +75,11 @@ async fn round(app: &AppHandle) {
     if list.is_empty() {
         return;
     }
+    // A chapter whose site gave no pages: tried again, and the downloader
+    // (which stops on a failure) started again for what's behind it.
+    for line in crate::suwayomi::retry_failed().await {
+        crate::log::log(app, crate::model::Level::Amber, line);
+    }
     let mut asked = false;
     for f in list.iter().filter(|f| f.new_too) {
         let due = with_due(|d| d.keep_up.get(&f.key).is_none_or(|(at, _)| Instant::now() >= *at));

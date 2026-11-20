@@ -945,12 +945,79 @@ pub async fn queue() -> Vec<(i64, i64, f64)> {
 }
 
 /// The queue, or why it couldn't be read (an error isn't an empty queue).
+/// A chapter that failed (its site gave no pages after the downloader's own
+/// tries) isn't downloading: it's left out, or it showed "0%" for good.
 pub async fn queue_checked() -> Result<Vec<(i64, i64, f64)>, String> {
-    let v = gql("{downloadStatus{queue{progress chapter{id manga{id}}}}}", json!({})).await?;
+    let v = gql("{downloadStatus{queue{progress state chapter{id manga{id}}}}}", json!({})).await?;
     Ok(v["downloadStatus"]["queue"]
         .as_array()
-        .map(|a| a.iter().filter_map(|q| Some((q["chapter"]["manga"]["id"].as_i64()?, q["chapter"]["id"].as_i64()?, q["progress"].as_f64().unwrap_or(0.0)))).collect())
+        .map(|a| a.iter().filter(|q| q["state"].as_str() != Some("ERROR")).filter_map(|q| Some((q["chapter"]["manga"]["id"].as_i64()?, q["chapter"]["id"].as_i64()?, q["progress"].as_f64().unwrap_or(0.0)))).collect())
         .unwrap_or_default())
+}
+
+/// Chapters given up on, by chapter id: (times tried again, when last).
+static RETRIED: std::sync::Mutex<Option<std::collections::HashMap<i64, (u32, std::time::Instant)>>> = std::sync::Mutex::new(None);
+/// Tries again a failed chapter this often, this many times (6 x 30 min = 3 hours).
+const RETRY_GAP: Duration = Duration::from_secs(30 * 60);
+const RETRY_MAX: u32 = 6;
+
+/// Failed chapters get another go: the site's chapter list is read again (a
+/// new chapter's pages often aren't up at first) and the chapter queued
+/// afresh. The downloader stops when one fails, so it's started again for the
+/// rest of the queue too. One still failing after 3 hours is taken out of the
+/// queue and named in the log; its Download button brings it back. Returns
+/// lines for the log.
+pub async fn retry_failed() -> Vec<String> {
+    let Ok(v) = gql("{downloadStatus{state queue{state chapter{id name manga{id title}}}}}", json!({})).await else { return vec![] };
+    let queue = v["downloadStatus"]["queue"].as_array().cloned().unwrap_or_default();
+    let stopped = v["downloadStatus"]["state"].as_str() == Some("STOPPED");
+    let failed: Vec<(i64, i64, String)> = queue
+        .iter()
+        .filter(|q| q["state"].as_str() == Some("ERROR"))
+        .filter_map(|q| Some((q["chapter"]["id"].as_i64()?, q["chapter"]["manga"]["id"].as_i64()?, format!("{} of {}", q["chapter"]["name"].as_str().unwrap_or("A chapter"), q["chapter"]["manga"]["title"].as_str().unwrap_or("a series")))))
+        .collect();
+    let waiting = queue.iter().any(|q| q["state"].as_str() == Some("QUEUED"));
+    let mut log = Vec::new();
+    let (mut again, mut give_up) = (Vec::new(), Vec::new());
+    {
+        let mut m = RETRIED.lock().unwrap();
+        let m = m.get_or_insert_with(std::collections::HashMap::new);
+        m.retain(|id, _| failed.iter().any(|f| f.0 == *id));
+        for (id, manga, name) in &failed {
+            let e = m.entry(*id).or_insert((0, std::time::Instant::now() - RETRY_GAP));
+            if e.1.elapsed() < RETRY_GAP {
+                continue;
+            }
+            if e.0 >= RETRY_MAX {
+                give_up.push(*id);
+                log.push(format!("{name}: its site still gives no pages after 3 hours of trying, so it's out of the downloads. Download it again from the series when the site has it, or follow the series from another site."));
+                continue;
+            }
+            e.0 += 1;
+            e.1 = std::time::Instant::now();
+            again.push((*id, *manga));
+            if e.0 == 1 {
+                log.push(format!("{name} failed to download (its site gave no pages). Trying again every 30 minutes."));
+            }
+        }
+    }
+    if !give_up.is_empty() {
+        let _ = dequeue(&give_up).await;
+    }
+    if !again.is_empty() {
+        let mut mangas: Vec<i64> = again.iter().map(|x| x.1).collect();
+        mangas.sort();
+        mangas.dedup();
+        for m in mangas {
+            let _ = refresh(m).await;
+        }
+        let ids: Vec<i64> = again.iter().map(|x| x.0).collect();
+        let _ = dequeue(&ids).await;
+        let _ = enqueue(&ids).await;
+    } else if stopped && waiting {
+        let _ = gql("mutation{startDownloader(input:{}){clientMutationId}}", json!({})).await;
+    }
+    log
 }
 
 /// Deletes downloaded chapters' files (they stay listed, so they can come back).
