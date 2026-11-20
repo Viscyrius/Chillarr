@@ -163,26 +163,68 @@ pub fn apply(mut discovered: Vec<AppConfig>, s: &Settings) -> Vec<AppConfig> {
     discovered
 }
 
-/// `(settings, first_run)`. A missing or unreadable file means first run.
+fn with_ext(path: &Path, ext: &str) -> std::path::PathBuf {
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(ext);
+    path.with_file_name(name)
+}
+
+fn read(path: &Path) -> Option<Settings> {
+    std::fs::read_to_string(path).ok().and_then(|t| serde_json::from_str(&t).ok())
+}
+
+/// `(settings, first_run)`. A missing file means first run. A torn one (a
+/// crash or blue screen while saving) falls back to the last good copy: it
+/// used to mean first run, with setup shown again and every choice gone.
 pub fn load(path: &Path) -> (Settings, bool) {
-    match std::fs::read_to_string(path).ok().and_then(|t| serde_json::from_str(&t).ok()) {
+    match read(path).or_else(|| read(&with_ext(path, ".bak"))) {
         Some(s) => (s, false),
         None => (Settings::default(), true),
     }
 }
 
+/// Written beside the file and swapped in, the last good copy kept as `.bak`.
 pub fn save(path: &Path, s: &Settings) -> Result<(), String> {
+    use std::io::Write;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
     let json = serde_json::to_string_pretty(s).map_err(|e| e.to_string())?;
-    std::fs::write(path, json).map_err(|e| e.to_string())
+    let tmp = with_ext(path, ".tmp");
+    std::fs::File::create(&tmp).and_then(|mut f| {
+        f.write_all(json.as_bytes())?;
+        f.sync_all()
+    })
+    .map_err(|e| e.to_string())?;
+    if read(path).is_some() {
+        let _ = std::fs::copy(path, with_ext(path, ".bak"));
+    }
+    std::fs::rename(&tmp, path).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        e.to_string()
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::model::{AppConfig, AppId};
+
+    #[test]
+    fn a_torn_save_falls_back_to_the_last_good_copy() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let mut s = Settings::default();
+        s.player = "vlc".into();
+        s.setup_done = true;
+        save(&path, &s).unwrap();
+        save(&path, &s).unwrap();
+        // A crash halfway through writing.
+        std::fs::write(&path, "{\"start_with_win").unwrap();
+        let (got, first) = load(&path);
+        assert!(!first, "not a first run: setup isn't shown again");
+        assert_eq!(got.player, "vlc");
+    }
 
     fn cfg(id: AppId, url: &str) -> AppConfig {
         AppConfig {

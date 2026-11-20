@@ -496,7 +496,9 @@ pub fn spawn(app: AppHandle) {
         loop {
             cycle(&app).await;
             let st = app.state::<SubsWanted>();
-            let _ = tokio::time::timeout(CYCLE, st.nudge.notified()).await;
+            // Nobody on it: hourly (an import still nudges it at once).
+            let wait = crate::activity::wait_for(crate::activity::active(), false, CYCLE, Duration::from_secs(60 * 60));
+            let _ = tokio::time::timeout(wait, st.nudge.notified()).await;
         }
     });
 }

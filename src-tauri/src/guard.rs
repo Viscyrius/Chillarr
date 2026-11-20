@@ -68,8 +68,14 @@ pub fn spawn(app: AppHandle) {
         fix::fix_all(&app, Trigger::Guard).await;
         let mut tick = tokio::time::interval(TICK);
         let mut last_update_check: Option<std::time::Instant> = None;
+        let mut n = 0u64;
         loop {
             tick.tick().await;
+            // Nobody on it: the apps are looked after every 5 minutes, not every minute.
+            n += 1;
+            if !crate::activity::active() && n % 5 != 0 {
+                continue;
+            }
             if last_update_check.map_or(true, |t| t.elapsed() >= UPDATE_EVERY) {
                 last_update_check = Some(std::time::Instant::now());
                 for (id, v) in fix::check_updates(&app).await {

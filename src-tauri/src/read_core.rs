@@ -77,8 +77,14 @@ pub fn page_order(names: &[String]) -> Vec<usize> {
     idx
 }
 
-/// Width and height from an image's first bytes (JPEG, PNG, WebP, GIF).
+/// Width and height from an image's first bytes (JPEG, PNG, WebP, GIF, AVIF).
 pub fn dims(b: &[u8]) -> Option<(u32, u32)> {
+    // AVIF: the size is in the "ispe" box. Without it pages came out stretched (#82).
+    if b.len() >= 12 && &b[4..8] == b"ftyp" && (&b[8..12] == b"avif" || &b[8..12] == b"avis") {
+        let at = b.windows(4).position(|w| w == b"ispe")?;
+        let be32 = |i: usize| b.get(i..i + 4).map(|s| u32::from_be_bytes([s[0], s[1], s[2], s[3]]));
+        return Some((be32(at + 8)?, be32(at + 12)?));
+    }
     let be16 = |i: usize| b.get(i..i + 2).map(|s| u16::from_be_bytes([s[0], s[1]]) as u32);
     let le16 = |i: usize| b.get(i..i + 2).map(|s| u16::from_le_bytes([s[0], s[1]]) as u32);
     let le24 = |i: usize| b.get(i..i + 3).map(|s| s[0] as u32 | (s[1] as u32) << 8 | (s[2] as u32) << 16);
@@ -119,6 +125,103 @@ pub fn dims(b: &[u8]) -> Option<(u32, u32)> {
         }
     }
     None
+}
+
+// ---------- which chapter numbers a copy can be trusted with ----------
+//
+// A site's chapter list is a claim, and the highest number in it was taken as
+// how far the series goes. Swordborne's MangaK copy listed 1..120 and then a
+// "Chapter 276" from January that is another manga; Murim Lord's only copy
+// listed 1..147 and then 559, 560 (old pages under a new number). Both were
+// told as new and set the "known up to" mark so high that the real next
+// chapters would never be fetched (#77, #82). Every earlier fix patched one
+// caller; this judges the shape of the list itself, once, before anything
+// reads it.
+
+/// A gap bigger than this ends a run of chapters.
+fn big_gap(prev: f64) -> f64 {
+    (prev * 0.25).max(10.0)
+}
+/// A run after a big gap is its own series of chapters only when this long.
+const REAL_RUN: usize = 4;
+const DAY_MS: i64 = 86_400_000;
+
+fn median(mut v: Vec<i64>) -> Option<i64> {
+    v.sort_unstable();
+    v.get(v.len() / 2).copied()
+}
+
+/// For each chapter (number, upload time in ms), whether to keep it.
+/// `backing`: how far another copy's own run goes; numbers up to it are kept.
+pub fn keep_mask(list: &[(Option<f64>, Option<i64>)], backing: Option<f64>) -> Vec<bool> {
+    // One date per number (the earliest), numbers in order.
+    let mut by: Vec<(f64, Option<i64>)> = Vec::new();
+    let mut nums: Vec<(f64, Option<i64>)> = list.iter().filter_map(|(n, d)| n.map(|n| (n, *d))).collect();
+    nums.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+    for (n, d) in nums {
+        match by.last_mut() {
+            Some(last) if last.0 == n => last.1 = match (last.1, d) { (Some(a), Some(b)) => Some(a.min(b)), (a, b) => a.or(b) },
+            _ => by.push((n, d)),
+        }
+    }
+    // Runs split at big gaps.
+    let mut runs: Vec<Vec<(f64, Option<i64>)>> = Vec::new();
+    for c in by {
+        match runs.last_mut() {
+            Some(r) if c.0 - r.last().unwrap().0 <= big_gap(r.last().unwrap().0) => r.push(c),
+            _ => runs.push(vec![c]),
+        }
+    }
+    let backed = |n: f64| backing.is_some_and(|b| n <= b);
+    // Sites that give every chapter the same date (the day it was fetched)
+    // can't be judged by dates.
+    let dated: Vec<i64> = runs.iter().flatten().filter_map(|c| c.1).collect();
+    let same_day = dated.iter().min().zip(dated.iter().max()).is_none_or(|(a, b)| b - a < DAY_MS);
+    let last = runs.len().saturating_sub(1);
+    let mut trusted: Vec<(f64, Option<i64>)> = Vec::new();
+    for (i, r) in runs.into_iter().enumerate() {
+        // A short run at the very end, every chapter in it dated after
+        // everything before it, is the newest chapters (MANGA Plus lists the
+        // first 3 and the newest 3). A stray is older, or has no real date.
+        let newest_tail = i == last && !same_day && {
+            let before = trusted.iter().filter_map(|c| c.1).max();
+            r.iter().all(|c| c.1.zip(before).is_some_and(|(d, b)| d > b))
+        };
+        if i == 0 || r.len() >= REAL_RUN || newest_tail {
+            trusted.extend(r);
+        } else {
+            trusted.extend(r.into_iter().filter(|c| backed(c.0)));
+        }
+    }
+    // The newest few: one uploaded long before the chapters just under it is
+    // an old chapter under a new number.
+    if !same_day {
+        for _ in 0..3 {
+            let Some(&(n, Some(d))) = trusted.last() else { break };
+            if backed(n) {
+                break;
+            }
+            let below: Vec<i64> = trusted.iter().rev().skip(1).take(5).filter_map(|c| c.1).collect();
+            match median(below) {
+                Some(m) if d < m - 30 * DAY_MS => {
+                    trusted.pop();
+                }
+                _ => break,
+            }
+        }
+    }
+    let ok: Vec<f64> = trusted.into_iter().map(|c| c.0).collect();
+    list.iter().map(|(n, _)| n.is_none_or(|n| ok.contains(&n))).collect()
+}
+
+/// The highest number a copy can be trusted with.
+pub fn trusted_top(list: &[(Option<f64>, Option<i64>)], backing: Option<f64>) -> Option<f64> {
+    list.iter().zip(keep_mask(list, backing)).filter(|(_, k)| *k).filter_map(|(c, _)| c.0).fold(None, |m: Option<f64>, n| Some(m.map_or(n, |m| m.max(n))))
+}
+
+/// How far a copy's own first run of chapters goes, for backing another copy.
+pub fn own_run_top(list: &[(Option<f64>, Option<i64>)]) -> Option<f64> {
+    trusted_top(list, None)
 }
 
 /// What a chapter file's name says: Suwayomi writes `<scanlator>_<chapter name>.cbz`.
@@ -313,5 +416,87 @@ mod tests {
         assert_eq!(default_mode(Some("CN"), None), "webtoon");
         assert_eq!(default_mode(Some("JP"), Some("MANGA")), "manga");
         assert_eq!(default_mode(Some("JP"), Some("NOVEL")), "book");
+    }
+
+    // ---- which chapter numbers a copy can be trusted with (#77, #82) ----
+    const DAY: i64 = 86_400_000;
+    fn weekly(from: u32, to: u32, start_ms: i64) -> Vec<(Option<f64>, Option<i64>)> {
+        (from..=to).map(|n| (Some(n as f64), Some(start_ms + n as i64 * 7 * DAY))).collect()
+    }
+    fn kept(list: &[(Option<f64>, Option<i64>)], backing: Option<f64>) -> Vec<f64> {
+        list.iter().zip(keep_mask(list, backing)).filter(|(_, k)| *k).filter_map(|(c, _)| c.0).collect()
+    }
+    const NOV_2026: i64 = 1_794_000_000_000;
+
+    #[test]
+    fn swordborne_276_dropped() {
+        // MangaK: 1..120 weekly up to Nov 2026, then "276" from January 2026 (another manga).
+        let mut l = weekly(1, 120, NOV_2026 - 120 * 7 * DAY);
+        l.push((Some(276.0), Some(1_768_300_000_000)));
+        assert_eq!(kept(&l, Some(116.0)).last(), Some(&120.0));
+        assert_eq!(trusted_top(&l, Some(116.0)), Some(120.0));
+    }
+
+    #[test]
+    fn murim_559_560_dropped() {
+        // One copy, every date the day it was fetched.
+        let mut l: Vec<_> = (1..=147).map(|n| (Some(n as f64), Some(NOV_2026))).collect();
+        l.push((Some(559.0), Some(NOV_2026)));
+        l.push((Some(560.0), Some(NOV_2026)));
+        assert_eq!(trusted_top(&l, None), Some(147.0));
+    }
+
+    #[test]
+    fn backed_tail_is_kept() {
+        // MANGA Plus lists the first and newest chapters only; another copy has them all.
+        let mut l = weekly(1, 6, 1_000_000_000_000);
+        l.extend(weekly(1193, 1198, 1_000_000_000_000));
+        assert_eq!(kept(&l, Some(1198.0)).len(), 12);
+    }
+
+    #[test]
+    fn lone_dense_tail_is_kept() {
+        // The same MANGA Plus copy alone: six newer chapters in a row are a real run.
+        let mut l = weekly(1, 6, 1_000_000_000_000);
+        l.extend(weekly(1193, 1198, 1_000_000_000_000));
+        assert_eq!(trusted_top(&l, None), Some(1198.0));
+    }
+
+    #[test]
+    fn lone_short_tail_with_newer_dates_is_kept() {
+        // MANGA Plus alone: the first 3 and the newest 3, the newest dated after the first.
+        let mut l = weekly(1, 3, 1_000_000_000_000);
+        l.extend(weekly(1196, 1198, 1_000_000_000_000));
+        assert_eq!(trusted_top(&l, None), Some(1198.0));
+    }
+
+    #[test]
+    fn extras_and_holes_are_kept() {
+        let mut l = weekly(1, 50, NOV_2026 - 60 * 7 * DAY);
+        l.retain(|c| !(20.0..=25.0).contains(&c.0.unwrap()));
+        l.push((Some(10.5), Some(NOV_2026 - 50 * 7 * DAY)));
+        l.push((None, None));
+        assert!(keep_mask(&l, None).iter().all(|k| *k), "a hole of 6, an extra and a nameless chapter all stay");
+    }
+
+    #[test]
+    fn old_chapter_with_the_next_number_is_dropped() {
+        // "121" is really an old chapter: uploaded long before the chapters under it.
+        let mut l = weekly(1, 120, NOV_2026 - 120 * 7 * DAY);
+        l.push((Some(121.0), Some(NOV_2026 - 100 * 7 * DAY)));
+        assert_eq!(trusted_top(&l, None), Some(120.0));
+    }
+
+    #[test]
+    fn avif_dims() {
+        let mut b = vec![0, 0, 0, 0x1c];
+        b.extend_from_slice(b"ftypavif");
+        b.extend_from_slice(&[0; 16]);
+        b.extend_from_slice(&[0, 0, 0, 0x14]);
+        b.extend_from_slice(b"ispe");
+        b.extend_from_slice(&[0, 0, 0, 0]);
+        b.extend_from_slice(&800u32.to_be_bytes());
+        b.extend_from_slice(&5000u32.to_be_bytes());
+        assert_eq!(dims(&b), Some((800, 5000)));
     }
 }

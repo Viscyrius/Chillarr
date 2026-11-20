@@ -5,6 +5,18 @@
 // clear), one-of chips, More filters and Clear filters.
 import { el, getPref, icon, ICON, setPref } from "./api.js";
 
+// A kids' profile (profiles.js sets it): 18+ is off and its choice hidden. The
+// PC refuses 18+ for them too (profiles.rs viewer_kids).
+let kids = false;
+export function setKids(on) { kids = !!on; }
+export const isKids = () => kids;
+/** Where 18+ starts: Included for everyone but kids. Porn stays off until picked. */
+export const adultDefault = () => (kids ? "hide" : "include");
+/** The 18+ choice in a saved filter, or where it starts. */
+export const adultOf = (saved) => (kids ? "hide" : (saved && saved.adult) || adultDefault());
+/** 18+ titles show with this choice. */
+export const adultShows = (a) => !kids && (a === "include" || a === "only");
+
 /** Off -> in -> out -> off, on the filter object `f`. */
 export function cycleIn(f, inKey, outKey, v) {
   if (f[inKey].includes(v)) { f[inKey] = f[inKey].filter((g) => g !== v); f[outKey] = [...f[outKey], v]; }
@@ -80,7 +92,7 @@ export function adultFields(f, kit, porn, hint) {
   const out = [kit.field("18+", kit.oneOf(ADULT_CHOICES, (o) => f.adult === o[0], (x, o) => (x.adult = o[0])),
     el("small", { class: "read-fl-hint", text: hint || "Off until you pick Included or Only 18+." }))];
   if (porn && f.adult !== "hide") {
-    out.push(kit.field("Porn", kit.oneOf(PORN_CHOICES, (o) => (f.porn || "hide") === o[0], (x, o) => (x.porn = o[0])),
+    out.push(kit.field("18+ R", kit.oneOf(PORN_CHOICES, (o) => (f.porn || "hide") === o[0], (x, o) => (x.porn = o[0])),
       el("small", { class: "read-fl-hint", text: "Off until you pick Included." })));
   }
   return out;

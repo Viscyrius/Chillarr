@@ -9,6 +9,8 @@ pub fn show_main(app: &AppHandle) {
         let _ = w.unminimize();
         let _ = w.show();
         let _ = w.set_focus();
+        crate::activity::window_shown(true);
+        let _ = tauri::Emitter::emit(&w, "win-shown", true);
     }
 }
 

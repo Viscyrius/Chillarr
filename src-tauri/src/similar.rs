@@ -93,6 +93,14 @@ async fn resolve(app: &AppHandle, t: &Tile) -> Me {
 
 /// Up to `MAX` titles like this one, best first. Empty when none are known.
 pub async fn similar(app: &AppHandle, tile: &Tile) -> Vec<Tile> {
+    let mut out = similar_all(app, tile).await;
+    if crate::profiles::viewer_kids(app) {
+        crate::media::kids_only(app, &mut out);
+    }
+    out
+}
+
+async fn similar_all(app: &AppHandle, tile: &Tile) -> Vec<Tile> {
     let key = tile.series_id.as_ref().map(|s| format!("jf:{s}")).unwrap_or_else(|| tile.key.clone());
     let cached = CACHE.lock().unwrap().get(&key).filter(|(at, _, _)| at.elapsed() < FRESH).map(|(_, me, t)| (me.clone(), t.clone()));
     let (me, recs) = match cached {

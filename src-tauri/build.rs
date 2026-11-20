@@ -5,6 +5,8 @@ use std::path::Path;
 /// pages die there on syntax like `?.` and `async`, so the copy for older TV
 /// browsers is lowered to this; shim.js fills in the missing APIs.
 const LEGACY_TARGET: &str = "--target=chrome53";
+/// Phones and browsers from the last few years (iOS 14, Chrome 90).
+const WEB_TARGET: &str = "--target=es2020,safari14,chrome90";
 
 /// esbuild 0.24.0 as legacy/package-lock.json pins it (integrity-checked by
 /// npm ci, no install scripts run), installed into legacy/node_modules once.
@@ -65,6 +67,23 @@ fn legacy_page(index: &str) -> Result<String, String> {
     Ok(page)
 }
 
+/// index.html inside Jellyfin: the bundled script and minified styles in
+/// place of the modules (the desktop window keeps its own unbundled copy).
+fn web_page(index: &str) -> Result<String, String> {
+    let swaps = [
+        ("<link rel=\"stylesheet\" href=\"styles.css\">", "<link rel=\"stylesheet\" href=\"styles.min.css\">"),
+        ("<script type=\"module\" src=\"js/app.js\"></script>", "<script type=\"module\" src=\"web/app.bundle.js\"></script>"),
+    ];
+    let mut page = index.to_string();
+    for (from, to) in swaps {
+        if page.matches(from).count() != 1 {
+            return Err(format!("index.html no longer has exactly one {from}"));
+        }
+        page = page.replacen(from, to, 1);
+    }
+    Ok(page)
+}
+
 /// The pages for older TV browsers, served as legacy.html (loader.js picks
 /// it where `?.` doesn't parse): every script bundled into one classic file,
 /// the styles lowered, and the two scripts that run before any choice is made
@@ -90,6 +109,13 @@ fn legacy(src: &Path, files: &mut Vec<(String, String)>) {
         }
         let index = std::fs::read_to_string(src.join("index.html")).map_err(|e| e.to_string())?;
         std::fs::write(o("legacy.html"), legacy_page(&index)?).map_err(|e| e.to_string())?;
+        // Phones and browsers: the same app as ONE minified script and style
+        // sheet. Unbundled, the page is 27 modules that import each other, so a
+        // phone on a far, slow line (Tailscale from a university) waited for
+        // each layer of imports in turn before anything showed.
+        esbuild(&exe, &[&s(&src.join("js").join("app.js")), "--bundle", "--format=esm", "--minify", WEB_TARGET, &format!("--outfile={}", o("app.bundle.js").display())])?;
+        esbuild(&exe, &[&s(&src.join("styles.css")), "--minify", WEB_TARGET, &format!("--outfile={}", o("styles.min.css").display())])?;
+        std::fs::write(o("index.web.html"), web_page(&index)?).map_err(|e| e.to_string())?;
         Ok(())
     })();
     if let Err(e) = made {
@@ -101,8 +127,8 @@ fn legacy(src: &Path, files: &mut Vec<(String, String)>) {
     }
     let path = |name: &str| o(name).to_string_lossy().into_owned();
     // The lowered shim and loader stand in for the originals everywhere.
-    files.retain(|(rel, _)| !matches!(rel.as_str(), "web/shim.js" | "web/loader.js" | "legacy.html"));
-    for (rel, name) in [("web/legacy.js", "legacy.js"), ("legacy.css", "legacy.css"), ("web/shim.js", "shim.js"), ("web/loader.js", "loader.js"), ("legacy.html", "legacy.html")] {
+    files.retain(|(rel, _)| !matches!(rel.as_str(), "web/shim.js" | "web/loader.js" | "legacy.html" | "index.html"));
+    for (rel, name) in [("web/legacy.js", "legacy.js"), ("legacy.css", "legacy.css"), ("web/shim.js", "shim.js"), ("web/loader.js", "loader.js"), ("legacy.html", "legacy.html"), ("web/app.bundle.js", "app.bundle.js"), ("styles.min.css", "styles.min.css"), ("index.html", "index.web.html")] {
         files.push((rel.into(), path(name)));
     }
 }

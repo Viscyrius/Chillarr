@@ -33,6 +33,7 @@ pub fn parse(id: &str) -> Option<(&str, i64)> {
 /// Everything the person made, newest first, your copies swapped in.
 /// `adult`: R and NC-17 films and ecchi anime too (the profile's 18+ is on).
 pub async fn works(app: &AppHandle, id: &str, adult: bool) -> Result<Vec<Tile>, String> {
+    let adult = adult && !crate::profiles::viewer_kids(app);
     let (src, n) = parse(id).ok_or("That person can't be looked up.")?;
     let ck = format!("{id}:{adult}");
     let cached = CACHE.lock().unwrap().get(&ck).filter(|(at, _)| at.elapsed() < FRESH).map(|(_, t)| t.clone());

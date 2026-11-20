@@ -1,7 +1,7 @@
 // The detail panel: what a title is, Play / Resume / Download, My List, and episodes.
-import { hideButton } from "./hidden.js";
-import { $, ask, canDelete, closeDialog, el, genresAZ, getPref, icon, ICON, invoke, listen, metaBits, setPref, store, toast } from "./api.js";
-import { canWatchNow, isWatchNow, movieLike, play, removeWatchNow, startEpisode, watchNow } from "./player.js";
+import { hideButton, markHidden } from "./hidden.js";
+import { $, ask, canDelete, closeDialog, el, genresAZ, getPref, icon, ICON, invoke, listen, metaBits, picProps, setPref, store, toast } from "./api.js";
+import { canWatchNow, isWatchNow, loadHls, movieLike, play, removeWatchNow, startEpisode, watchNow } from "./player.js";
 import { completedActions, confirmRedownload, isWatched, listable, loadWatched, onMyList, removeContinue, resumable, setMyList } from "./mylist.js";
 import { subtitlesControl } from "./subpick.js";
 import { commentsBox, loadComments } from "./comments.js";
@@ -26,7 +26,8 @@ function renderEpisodes(season) {
       const num = (ep.subtitle || "").match(/E(\d+)/)?.[1] || String(i + 1);
       const name = (ep.subtitle || "").split(" · ").slice(1).join(" · ") || ep.title;
       const thumb = el("div", { class: "thumb" });
-      if (ep.backdrop || ep.poster) thumb.append(el("img", { src: ep.backdrop || ep.poster, alt: "", loading: "lazy" }));
+      // A 196px thumbnail: never the 1600px backdrop it would otherwise ask for.
+      if (ep.backdrop || ep.poster) thumb.append(el("img", { ...picProps(ep.backdrop || ep.poster, [240, 400, 640], ep.backdrop ? 0.5625 : 1.5, "196px"), alt: "", loading: "lazy", decoding: "async" }));
       if (ep.progress) thumb.append(el("div", { class: "bar" }, el("span", { style: `width:${Math.round(ep.progress * 100)}%` })));
       const li = el("li", { class: "ep", tabindex: "0", role: "button", "aria-label": `Play ${name}` },
         el("span", { class: "num", text: num }), thumb,
@@ -841,6 +842,8 @@ export async function openDetail(t, opts = {}) {
   }
   openSeq++;
   show = null;
+  // Play is likely next: the player's HLS script comes in once the panel has opened.
+  setTimeout(loadHls, 700);
   $("#detail-where").hidden = true;
   statusPill = null;
   openKey = t.key;
@@ -933,6 +936,10 @@ export async function openDetail(t, opts = {}) {
     if (isPickable && opts.get) setTimeout(() => $("#detail-pick").scrollIntoView({ behavior: "smooth", block: "start" }), 400);
     else if (opts.get) setTimeout(() => get.click(), 50);
   }
+  // Another title opened while this one was loading (a show's episodes can
+  // take seconds): its own buttons are already there. This one's My List,
+  // Hide and Delete used to land on the other title's panel.
+  if (seq !== openSeq) return;
   // A Watch now title's Jellyfin item is a placeholder: no My List, no Delete (Remove does that).
   if (t.completed) completedBits(t, actions);
   if (opts.episodes) showEpisodes(seq);
@@ -940,7 +947,16 @@ export async function openDetail(t, opts = {}) {
   // Notify me: a film not here yet, or any show (its new episodes and seasons).
   if (!opts.episodes && !watching && t.kind !== "episode" && !(t.jf_id && movieLike(t))) actions.append(...notifyButton({ tile: t }));
   actions.append(hideButton(t.subtitle && t.kind === "episode" ? t.title : t.title, () => shut(), t));
-  if (t.jf_id && t.kind !== "episode" && !watching) actions.append(subtitlesControl(t).el, canDelete() ? deleteButton(t) : null);
+  if (t.jf_id && t.kind !== "episode" && !watching) {
+    actions.append(subtitlesControl(t).el);
+    if (canDelete()) actions.append(deleteButton(t));
+    // Another profile, or a phone: Delete on what they downloaded or keep on My List.
+    else {
+      const spot = el("span", { class: "del-spot" });
+      actions.append(spot);
+      invoke("media_can_delete", { tile: t }).then((ok) => { if (ok && seq === openSeq && spot.isConnected) spot.replaceWith(deleteButton(t)); }).catch(() => {});
+    }
+  }
   if (started && seq === openSeq) {
     const off = el("button", { class: "btn soft", onclick: async () => { off.disabled = true; if (await removeContinue(started)) off.remove(); else off.disabled = false; } }, "Remove from Continue watching");
     actions.append(off);
@@ -980,7 +996,7 @@ function simCard(s, i) {
   const src = s.poster || s.backdrop;
   const noart = () => el("div", { class: "noart", text: s.title });
   if (src) {
-    const img = el("img", { src, alt: "", loading: "lazy", decoding: "async" });
+    const img = el("img", { ...(src === s.poster ? picProps(src, [185, 342, 500], 1.5, "150px") : { src }), alt: "", loading: "lazy", decoding: "async" });
     img.addEventListener("load", () => img.classList.add("loaded"), { once: true });
     img.addEventListener("error", () => img.replaceWith(noart()), { once: true });
     art.append(img);
@@ -990,6 +1006,7 @@ function simCard(s, i) {
   const b = el("button", { class: "tile", "aria-label": s.title, dataset: { key: s.key } }, art,
     el("div", { class: "cap" }, el("strong", { text: s.title }), s.year ? ` · ${s.year}` : ""));
   b.style.setProperty("--j", Math.min(i, 10));
+  markHidden(b, s);
   b.addEventListener("click", () => simOpen(s, b));
   return b;
 }

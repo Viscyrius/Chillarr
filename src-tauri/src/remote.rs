@@ -563,6 +563,16 @@ pub fn forget(app: &AppHandle, id: &str) -> Status {
     r.status()
 }
 
+/// A removed profile: every phone-remote code handed to a device it was signed in on stops working.
+pub fn forget_user(app: &AppHandle, user: &str) {
+    let r = app.state::<Remote>();
+    let before = r.saved.lock().unwrap().devices.len();
+    r.saved.lock().unwrap().devices.retain(|d| d.user != user);
+    if r.saved.lock().unwrap().devices.len() != before {
+        r.store();
+    }
+}
+
 /// Looks up this PC's Tailscale name and IP again (a process call: off the async threads).
 async fn refresh_tailscale(app: &AppHandle) {
     let got = tokio::task::spawn_blocking(crate::media::tailscale_self).await.ok().flatten();
@@ -617,7 +627,9 @@ pub fn start(app: AppHandle) {
             if r.generation.load(Ordering::SeqCst) != my_gen {
                 break;
             }
-            if looked.elapsed() > TAILSCALE_EVERY {
+            // Nobody on it: Tailscale is asked every 10 minutes (each ask starts a process).
+            let every = crate::activity::wait_for(crate::activity::active(), false, TAILSCALE_EVERY, std::time::Duration::from_secs(10 * 60));
+            if looked.elapsed() > every {
                 // Tailscale connected or dropped since: its name is let in, or no longer.
                 let h = app.clone();
                 tauri::async_runtime::spawn(async move { refresh_tailscale(&h).await });

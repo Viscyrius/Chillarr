@@ -246,6 +246,104 @@
     html.removeChild(box);
   })();
 
+  /* ---------- Why this page last left for Jellyfin's own ---------- */
+  // Kept in this browser and told to Chillarr's log on the next start
+  // (app.js), so a "went back to the old Jellyfin" can be traced to its cause.
+  function noteExit(why) {
+    try { localStorage.setItem("chillarr_exit", JSON.stringify({ why: String(why).slice(0, 40), at: Date.now(), page: location.pathname.slice(-40) })); } catch (e) { /* storage blocked */ }
+  }
+  window.__CHILLARR_NOTE_EXIT__ = noteExit;
+
+  /* ---------- Coming alive, or going back ---------- */
+  // This copy of the pages is gone: Chillarr made a new one (its update, or
+  // Jellyfin's) and Jellyfin restarted onto it while this page stayed open.
+  // The new copy leaves a page at this folder's address that sends you on
+  // (jfweb.rs moved_page), so loading again lands in the new one.
+  const MOVED = "data-chillarr-moved";
+  let reloading = false;
+  const moved = () => fetch("index.html", { cache: "no-store" })
+    .then((r) => (r.ok ? r.text() : ""))
+    .then((t) => t.indexOf(MOVED) >= 0, () => false);
+  const followMove = () => moved().then((yes) => {
+    if (yes && !reloading) { reloading = true; location.reload(); }
+    return yes;
+  });
+  // A page that loads code later (a tab's script) finds it missing after a move.
+  let askedAt = 0;
+  window.addEventListener("unhandledrejection", (e) => {
+    if (!(e && e.reason instanceof TypeError) || Date.now() - askedAt < 30000) return;
+    askedAt = Date.now();
+    followMove();
+  });
+
+  // index.html's guard goes to Jellyfin's own Home when the app hasn't drawn
+  // anything 15 s in. On a phone on a slow or far network that was only the
+  // scripts still coming in, and it used to leave the tab on Jellyfin's pages
+  // for good. So the guard's question (window.__CHILLARR_BOOTED__) is
+  // answered here: "not yet, but don't give up" while files keep arriving
+  // and nothing has failed, and this keeps watching from there. It goes back
+  // only on a script that can't run or load, 20 s with nothing new arriving,
+  // or 2 minutes in all; time in the background (another app, screen off)
+  // doesn't count. Only Chillarr's pages inside Jellyfin have the guard.
+  if (/\/web\/chillarr-[^/]+\//.test(location.pathname)) {
+    const STALL = 20000, CAP = 120000;
+    let booted = false, broken = false, done = false;
+    let tick = Date.now(), spent = 0, lastNew = tick, count = -1, state = "";
+    const arrived = () => (performance.getEntriesByType ? performance.getEntriesByType("resource").length : 0);
+    // The page has drawn something: it came alive, and the guard is done for
+    // good. Looked at directly, not only through app.js setting the flag:
+    // 0.18.0's getter answered "booted" while loading, so app.js never set
+    // it, and every page went back to Jellyfin's own Home 20 s after it went
+    // quiet (seen on an iPhone and reproduced in WebKit, 2026-11-10).
+    const drawn = () => { const v = document.getElementById("view"); return !!(v && v.firstElementChild); };
+    const stuck = () => {
+      const now = Date.now();
+      // The timer ticks every second; a longer gap is the page asleep (another
+      // app, screen off, the Jellyfin app in the background) and never counts.
+      const dt = now - tick;
+      tick = now;
+      if (dt > 3000) { lastNew = now; return broken; }
+      if (document.hidden) lastNew += dt;
+      else spent += dt;
+      const n = arrived();
+      if (n !== count || document.readyState !== state) { count = n; state = document.readyState; lastNew = now; }
+      return broken || now - lastNew >= STALL || spent >= CAP;
+    };
+    Object.defineProperty(window, "__CHILLARR_BOOTED__", {
+      configurable: true,
+      get: () => booted || drawn() || !stuck(),
+      set: (v) => { booted = !!v; },
+    });
+    const giveUp = () => {
+      if (booted || drawn() || done) return;
+      done = true;
+      clearInterval(timer);
+      // A moved copy reloads into the new one instead of giving up on it.
+      followMove().then((yes) => {
+        if (yes) return;
+        // loader.js keeps Jellyfin's pages for that one visit, then tries again.
+        noteExit(broken ? "script-error" : spent >= CAP ? "slow-2min" : "stalled-20s");
+        try { sessionStorage.setItem("chillarr_fallback", "1"); } catch (e) { /* storage blocked */ }
+        location.replace("../index.html#/home");
+      });
+    };
+    const timer = setInterval(() => {
+      if (booted || drawn()) { booted = true; clearInterval(timer); }
+      else if (stuck()) giveUp();
+    }, 1000);
+    document.addEventListener("visibilitychange", () => { tick = Date.now(); lastNew = tick; });
+    // Before index.html's own listener (this file runs first), so its check sees it.
+    window.addEventListener("error", (e) => {
+      const err = e && e.error, file = (e && e.filename) || "";
+      if (!booted && err && file.indexOf("/web/chillarr-") >= 0 && (err instanceof SyntaxError || err instanceof ReferenceError)) broken = true;
+    });
+    // A script that didn't load at all (its error doesn't reach the window's listeners above).
+    window.addEventListener("error", (e) => {
+      const t = e && e.target;
+      if (!booted && t && t !== window && t.tagName === "SCRIPT") giveUp();
+    }, true);
+  }
+
   /* ---------- Who's signed in ---------- */
   // The Jellyfin login this page came with, as jellyfin-web keeps it.
   const CREDS = "jellyfin_credentials";
@@ -280,10 +378,64 @@
 
   /** Back to jellyfin-web's sign-in. Waits forever, so nothing after it runs on a dead login. */
   let leaving = false;
-  function toLogin() {
+  // A profile switch on its way: resolves true once the new login is saved
+  // (the page then starts again as them), false if it failed.
+  let switching = null;
+  let switchCall = null;
+  // The login a profile switch last put in this browser (per server), kept by
+  // Chillarr itself. If the page later finds an older, ended login in
+  // jellyfin-web's list instead (seen in Jellyfin's iPhone app), it puts this
+  // one back rather than sending you to sign in.
+  const KEPT = (id) => `chillarr_login_${id}`;
+  function keptLogin(s) {
+    try { return JSON.parse(localStorage.getItem(KEPT(s.Id)) || "null"); } catch (e) { return null; }
+  }
+  function setLogin(serverId, token, userId) {
+    const c = JSON.parse(localStorage.getItem(CREDS) || "{}");
+    for (const x of c.Servers || []) if (x.Id === serverId) { x.AccessToken = token; x.UserId = userId; }
+    localStorage.setItem(CREDS, JSON.stringify(c));
+  }
+  function toLogin(why = "no-login", dead = null, tried = false) {
+    // Mid-switch: Jellyfin ends the old login the moment it approves the new
+    // one, before this page has the new one. Anything refused in that gap
+    // (a background call, the event stream) waits for the switch instead of
+    // signing the page out, which used to drop phones on Jellyfin's sign-in.
+    if (switching && !leaving) {
+      switching.then((ok) => { if (!ok) toLogin(why, dead); });
+      return new Promise(() => {});
+    }
+    // A login switched meanwhile (Quick Connect in another tab) isn't the one that failed.
+    if (dead && server() && server().AccessToken !== dead.AccessToken) { location.reload(); return new Promise(() => {}); }
+    // Refused: first the login the last switch made, if it isn't this one and Jellyfin still takes it.
+    const was = dead || server();
+    const kept = why === "refused" && was && !tried && !leaving ? keptLogin(was) : null;
+    if (kept && kept.token && kept.token !== was.AccessToken) {
+      leaving = true;
+      jfSaysOk({ AccessToken: kept.token }).then((good) => {
+        if (good === true) {
+          try { setLogin(was.Id, kept.token, kept.userId); } catch (e) { /* storage blocked */ }
+          noteExit("healed-old-login-after-switch");
+          location.reload();
+        } else { leaving = false; toLogin(why, dead, true); }
+      });
+      return new Promise(() => {});
+    }
+    // Refused within 10 minutes of a switch: said so in Chillarr's log.
+    if (why === "refused" && was) { const k = keptLogin(was); if (k && Date.now() - (k.at || 0) < 600000) why = "refused-after-switch"; }
     if (!leaving) {
       leaving = true;
-      const s = server();
+      const s = dead || server();
+      noteExit(why);
+      // Jellyfin itself said this login is dead: it's taken out of jellyfin-web's
+      // list too, so jellyfin-web asks to sign in instead of opening its own Home
+      // on it (which looked like Chillarr "going back to the old Jellyfin").
+      if (why === "refused" && s) {
+        try {
+          const c = JSON.parse(localStorage.getItem(CREDS) || "{}");
+          for (const x of c.Servers || []) if (x.Id === s.Id && x.AccessToken === s.AccessToken) { x.AccessToken = null; x.UserId = null; }
+          localStorage.setItem(CREDS, JSON.stringify(c));
+        } catch (e) { /* storage blocked */ }
+      }
       // loader.js won't send this login straight back here: jellyfin-web may
       // still think it's good and go on to Home. A new sign-in clears it.
       try { sessionStorage.setItem("chillarr_bounce", (s && s.AccessToken) || "none"); } catch (e) { /* storage blocked */ }
@@ -300,7 +452,12 @@
     if (fresh) basePromise = null;
     if (!basePromise) {
       basePromise = fetch("bridge.json", { cache: "no-store" })
-        .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+        .then((r) => {
+          if (r.ok) return r.json();
+          // Gone with its whole folder: this copy may have been replaced.
+          if (r.status === 404) followMove();
+          return Promise.reject(new Error(String(r.status)));
+        })
         .then((j) => `${location.protocol}//${location.hostname}:${j.port}`)
         .catch((e) => { basePromise = null; throw e; });
     }
@@ -308,6 +465,13 @@
   }
 
   const OFFLINE = "Can't reach Chillarr on the server. Make sure it's running there.";
+  const STARTING = "Jellyfin is starting up. Try again in a moment.";
+  const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+  /** Jellyfin itself about this login: true good, false refused, null couldn't ask. */
+  function jfSaysOk(s) {
+    return fetch(`${location.origin}/Users/Me`, { headers: { "X-Emby-Token": s.AccessToken }, cache: "no-store" })
+      .then((r) => (r.ok ? true : r.status === 401 || r.status === 403 ? false : null), () => null);
+  }
   // Chillarr answers on plain http, which a browser won't call from an https page.
   const HTTPS = "Chillarr's pages need Jellyfin's http address on your network, like http://your-pc:8096.";
 
@@ -356,7 +520,16 @@
       root = now;
       try { r = await send(root, cmd, args, s); } catch (e2) { throw OFFLINE; }
     }
-    if (r.status === 401) return toLogin();
+    // 401: Chillarr couldn't confirm the login. Only Jellyfin turning it down
+    // too signs this page out; otherwise (Jellyfin restarting, a hiccup) it
+    // waits and asks again, as it does on 503 (Jellyfin starting). Nothing ran
+    // on the PC for either, so asking again is safe.
+    for (let tries = 0; r.status === 401 || r.status === 503; tries++) {
+      if (r.status === 401 && (await jfSaysOk(s)) === false) return toLogin("refused", s);
+      if (tries >= 20) throw r.status === 503 ? STARTING : OFFLINE;
+      await pause(Math.min(1000 + tries * 500, 4000));
+      try { r = await send(root, cmd, args, s); } catch (e) { throw OFFLINE; }
+    }
     const body = await r.text();
     let data;
     try { data = body ? JSON.parse(body) : null; }
@@ -460,7 +633,7 @@
           localStorage.setItem(CREDS, JSON.stringify(c));
         } catch (e) { /* nothing to clear */ }
       }
-      toLogin();
+      toLogin("signed-out");
     },
     /** Becomes another Chillarr profile: Jellyfin signs this browser in as
      *  them through Quick Connect, which Chillarr approves once the PIN or
@@ -468,6 +641,23 @@
     async switchProfile(id, pin = null, password = null) {
       const s = server();
       if (!s) return toLogin();
+      // One switch at a time. A second one (a double tap, an iPhone keyboard
+      // sending the PIN twice) made Jellyfin sign the profile in twice on this
+      // device, which ends the first sign-in: the one this page then kept.
+      // It waits for the first one instead.
+      if (switchCall) return switchCall;
+      let done;
+      switching = new Promise((r) => { done = r; });
+      switchCall = this.switchTo(s, id, pin, password, () => done(true)).catch((e) => {
+        // Failed: a refusal that waited goes on to the sign-in if the old login is really gone.
+        switching = null;
+        switchCall = null;
+        done(false);
+        throw e;
+      });
+      return switchCall;
+    },
+    async switchTo(s, id, pin, password, saved) {
       const version = (APP && APP.appVersion) || await fetch(`${location.origin}/System/Info/Public`).then((r) => r.json()).then((j) => j.Version).catch(() => "12.1.0");
       const q = (v) => String(v).replace(/"/g, "");
       const auth = `MediaBrowser Client="${q((APP && APP.appName) || "Jellyfin Web")}", Device="${q((APP && APP.deviceName) || "Chillarr web")}", DeviceId="${q(device())}", Version="${q(version)}"`;
@@ -475,26 +665,50 @@
       if (!qc || !qc.ok) throw qc && qc.status === 401 ? "Quick Connect is off in Jellyfin. Turn it on in the dashboard to switch profiles here." : "Jellyfin isn't answering. Try again in a moment.";
       const { Code, Secret } = await qc.json();
       // Wrong PIN, wrong password, too many tries: Chillarr says so here.
-      const got = await invoke("profiles_switch_web", { id, pin, password, code: Code, trust: trust() });
-      const r = await fetch(`${location.origin}/Users/AuthenticateWithQuickConnect`, {
-        method: "POST",
-        headers: { Authorization: auth, "Content-Type": "application/json" },
-        body: JSON.stringify({ Secret }),
-      }).catch(() => null);
-      if (!r || !r.ok) throw "Jellyfin didn't sign that profile in. Try again.";
-      const a = await r.json();
+      // The new login, once Chillarr approved the code. Jellyfin has already
+      // ended the old one by then, so giving up here would mean the sign-in
+      // page: a dropped connection or a busy Jellyfin is tried again for up
+      // to a minute and a half. Only Jellyfin saying the code isn't approved
+      // (400/401/403/404) stops it at once.
+      const login = async (tries) => {
+        for (let i = 0; ; i++) {
+          const r = await fetch(`${location.origin}/Users/AuthenticateWithQuickConnect`, {
+            method: "POST",
+            headers: { Authorization: auth, "Content-Type": "application/json" },
+            body: JSON.stringify({ Secret }),
+            cache: "no-store",
+          }).catch(() => null);
+          if (r && r.ok) {
+            const a = await r.json().catch(() => null);
+            if (a && a.AccessToken && a.User && a.User.Id) return a;
+          } else if (r && [400, 401, 403, 404].includes(r.status)) return null;
+          if (i + 1 >= tries) return null;
+          await pause(Math.min(1000 + i * 1000, 5000));
+        }
+      };
+      let got, a;
+      try { got = await invoke("profiles_switch_web", { id, pin, password, code: Code, trust: trust() }); }
+      catch (e) {
+        // The approval may have gone through with only its answer lost (the
+        // connection dropped): then the old login is gone and the new one waits.
+        a = await login(1);
+        if (!a) throw e;
+        got = null;
+      }
+      if (!a) a = await login(25);
+      if (!a) throw "Jellyfin didn't sign that profile in. Try again.";
       // Signed in on another DeviceId than the old login (a Jellyfin app id the
       // bridge can't take): Jellyfin didn't end the old one, so it's ended here.
       if (appId && device() !== appId) {
         await fetch(`${location.origin}/Sessions/Logout`, { method: "POST", headers: { "X-Emby-Token": s.AccessToken } }).catch(() => {});
       }
-      const c = JSON.parse(localStorage.getItem(CREDS) || "{}");
-      for (const x of c.Servers || []) if (x.Id === s.Id) { x.AccessToken = a.AccessToken; x.UserId = a.User.Id; }
-      localStorage.setItem(CREDS, JSON.stringify(c));
+      setLogin(s.Id, a.AccessToken, a.User.Id);
+      try { localStorage.setItem(KEPT(s.Id), JSON.stringify({ token: a.AccessToken, userId: a.User.Id, at: Date.now() })); } catch (e) { /* storage blocked */ }
       // The owner's password was checked: this device doesn't ask for it again.
       if (got && got.trust) { try { localStorage.setItem(`chillarr_trust_${s.Id}`, got.trust); } catch (e) { /* storage blocked */ } }
       // No Logout for the old token: signing in with the same DeviceId already ended it in Jellyfin.
       leaving = true;
+      saved();
       location.replace(location.pathname);
       return new Promise(() => {});
     },

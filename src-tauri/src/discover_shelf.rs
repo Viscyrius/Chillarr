@@ -1837,11 +1837,14 @@ pub fn spawn(app: AppHandle) {
                     last_refresh = Some(std::time::Instant::now());
                 }
                 check_arrivals(&app).await;
-                check_favourites(&app).await;
-                unmark_placeholder_plays(&app).await;
+                // Hearts and plays only happen while someone is on it (activity.rs).
+                if crate::activity::active() {
+                    check_favourites(&app).await;
+                    unmark_placeholder_plays(&app).await;
+                }
             }
             tick += 1;
-            tokio::time::sleep(FAVOURITE_EVERY).await;
+            crate::activity::nap(false, FAVOURITE_EVERY, Duration::from_secs(10 * 60)).await;
         }
     });
 }

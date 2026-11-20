@@ -159,7 +159,8 @@ impl Arr {
             200..=299 => {}
             400 if ok_400 => {}
             401 | 403 => {
-                crate::log::detail(format!("{} refused the API key ({code})", resp.url().path()));
+                // Which app and address: "/api/v3/health" alone (86 times since 11-03) said neither.
+                crate::log::detail(format!("{}{} refused the API key ({code})", self.base, resp.url().path()));
                 return Err(ArrError::BadKey);
             }
             400 | 409 | 422 => {

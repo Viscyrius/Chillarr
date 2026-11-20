@@ -1,6 +1,7 @@
 // Put into jellyfin-web's index.html (jfweb.rs), before its own scripts.
-// Signed in and going to Home: Chillarr's pages open instead. Sign-in,
-// your settings and the admin dashboard stay jellyfin-web's.
+// Signed in and going to Home (or Movies or Shows): Chillarr's pages open
+// instead. Sign-in, your settings, the admin dashboard and the libraries
+// Chillarr doesn't show (music, books, live TV...) stay jellyfin-web's.
 // ES5 on purpose (var, function, no arrows or template strings): it runs in
 // jellyfin-web's page on every TV, however old, and must never be what breaks.
 (function () {
@@ -18,27 +19,77 @@
     var s = mine || (signed.length === 1 ? signed[0] : null);
     return s ? s.AccessToken : null;
   }
-  function session(key) { try { return sessionStorage.getItem(key); } catch (e) { return null; } }
-  // A login Chillarr just refused stays in jellyfin-web; signing in again makes a new one.
+  // A note Chillarr's pages left for this tab (shim.js, index.html's guard),
+  // read once and removed: it holds for THIS page only, for a while, and the
+  // next load (or a later trip Home) tries Chillarr's pages again. Kept for
+  // the whole tab before, a phone that was slow once stayed on Jellyfin's
+  // own pages until the tab was closed, which on a phone is never.
+  var HOLD = 5 * 60 * 1000;
+  var loaded = new Date().getTime();
+  function take(key) {
+    var v = null;
+    try { v = sessionStorage.getItem(key); if (v !== null) sessionStorage.removeItem(key); } catch (e) { /* storage blocked */ }
+    return v;
+  }
+  // Chillarr's pages gave up on this browser (they never drew, or a script
+  // failed): Jellyfin's own pages stay, so a broken copy is never a blank page.
+  var fellBack = !!take("chillarr_fallback");
+  // A login Chillarr just refused (shim.js toLogin): jellyfin-web may still
+  // think it's good and go on to Home, and sending it straight back would
+  // loop. Signing in again makes a new one; otherwise the next load (or a
+  // trip Home after a while) asks Chillarr again.
+  var refused = take("chillarr_bounce");
+  function held() { return new Date().getTime() - loaded < HOLD; }
   function signedIn() {
     var t = token();
-    return !!t && session("chillarr_bounce") !== t;
+    return !!t && !(t === refused && held());
   }
   // #/home, #/home.html, #!/home.html (older versions), or no page at all.
   var HOME = /^#!?\/?(home(\.html)?)?(\?.*)?$/;
+  // Jellyfin's own Movies and Shows pages (its menu, a restored tab, Back):
+  // Chillarr's tabs of the same name.
+  var TABS = /^#!?\/(movies|tv)(\.html)?(\?.*)?$/;
   // A browser that can't parse today's JavaScript (TVs from before 2020) gets
   // the page built for it: the same app, bundled down for old Chrome (legacy.js).
   // Only a SyntaxError means old: a page rule against eval throws too, and that browser is fine.
   var modern = true;
   try { new Function("var a; a?.b; a ??= 1"); } catch (e) { modern = !(e instanceof SyntaxError); }
   var PAGE = modern ? DIR + "/" : DIR + "/legacy.html";
-  var gone = false;
+  // When this page last set off for Chillarr's: a trip that never happened
+  // (cut off, or the page came back from the browser's back/forward cache)
+  // doesn't block the next one.
+  var goneAt = 0;
+  // Held on Jellyfin's own Home after Chillarr's pages gave up: a button back,
+  // so nobody is stuck here until the hold runs out.
+  function backButton() {
+    if (!document.body) { document.addEventListener("DOMContentLoaded", backButton); return; }
+    if (document.getElementById("chillarr-back")) return;
+    var a = document.createElement("a");
+    a.id = "chillarr-back";
+    a.href = PAGE;
+    a.textContent = "Back to Chillarr";
+    a.setAttribute("style", "position:fixed;z-index:99999;left:50%;bottom:calc(16px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);padding:12px 22px;border-radius:24px;background:#e50914;color:#fff;font:600 15px system-ui,sans-serif;text-decoration:none;box-shadow:0 4px 16px rgba(0,0,0,.5)");
+    a.onclick = function () { try { sessionStorage.removeItem("chillarr_fallback"); } catch (e) { /* storage blocked */ } fellBack = false; };
+    document.body.appendChild(a);
+  }
   function check() {
-    // Over https Chillarr's bridge (plain http) can't be called: jellyfin-web's own Home stays.
-    // Chillarr's pages gave up on this browser this visit (index.html's guard): Jellyfin's own Home stays too.
-    if (gone || location.protocol === "https:" || session("chillarr_fallback") || !HOME.test(location.hash || "#") || !signedIn()) return;
-    gone = true;
-    location.replace(PAGE);
+    var hash = location.hash || "#";
+    var tab = TABS.exec(hash);
+    if (!tab && !HOME.test(hash)) {
+      // Never over Jellyfin's player or other pages.
+      var old = document.getElementById("chillarr-back");
+      if (old && old.parentNode) old.parentNode.removeChild(old);
+      return;
+    }
+    if (new Date().getTime() - goneAt < 8000) return;
+    // Over https Chillarr's bridge (plain http) can't be called (mixed
+    // content): jellyfin-web's own Home stays. On purpose; shim.js says the same.
+    if (location.protocol === "https:") return;
+    if (fellBack && held()) { backButton(); return; }
+    // Still holding a login Chillarr turned down: the button lets you check again.
+    if (!signedIn()) { if (token()) backButton(); return; }
+    goneAt = new Date().getTime();
+    location.replace(PAGE + (tab ? (tab[1] === "tv" ? "#series" : "#movies") : ""));
   }
   // jellyfin-web moves between pages with pushState, which fires no hashchange.
   ["pushState", "replaceState"].forEach(function (name) {
@@ -47,5 +98,8 @@
   });
   window.addEventListener("hashchange", check);
   window.addEventListener("popstate", check);
+  // Back to this page from the browser's back/forward cache: no script runs
+  // again, so it's looked at here.
+  window.addEventListener("pageshow", function (e) { if (e && e.persisted) { goneAt = 0; check(); } });
   check();
 })();
