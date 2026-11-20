@@ -49,6 +49,13 @@ const err = (e) => String(e?.message || e);
 const thumb = (u, px) => !u ? u
   : /\/\d+x\d+bb\.(jpg|png|webp)$/.test(u) ? u.replace(/\/\d+x\d+bb\.\w+$/, `/${px}x${px}bb.jpg`)
   : px <= 200 && u.includes("i.ytimg.com/") ? u.replace("/hqdefault.", "/mqdefault.") : u;
+// A small, quick settle-in for whatever just changed (a new song, a panel);
+// nothing for someone who asked for less motion.
+const calm = matchMedia("(prefers-reduced-motion: reduce)");
+function settle(node, from = "translateY(6px)", ms = 260) {
+  if (!node || calm.matches || !node.animate) return;
+  node.animate([{ opacity: 0, transform: from }, { opacity: 1, transform: "none" }], { duration: ms, easing: "cubic-bezier(0.22, 1, 0.36, 1)" });
+}
 const img = (u, px, cls) => el("img", { class: cls, src: thumb(u, px), alt: "", loading: "lazy", decoding: "async" });
 
 /* ---------- what this profile has: downloads, likes, plays ---------- */
@@ -505,8 +512,11 @@ function drawBar(loading) {
   if (document.body.dataset.mode !== "music" && getPref("music-min") === "1") bar.classList.add("min");
   const art = $(".mu-art", bar);
   const small = thumb(s.art, 160) || "logo.svg";
-  if (art.getAttribute("src") !== small) { art.src = small; bar.style.setProperty("--art", s.art ? `url("${small}")` : "none"); }
+  const changed = art.getAttribute("src") !== small;
+  if (changed) { art.src = small; bar.style.setProperty("--art", s.art ? `url("${small}")` : "none"); }
   $(".mu-title", bar).textContent = s.title;
+  if (changed && art.getAttribute("data-shown")) { settle(art, "scale(0.9)"); settle($(".mu-txt", bar), "translateX(-8px)"); }
+  art.setAttribute("data-shown", "1");
   const a = $(".mu-artist", bar);
   a.textContent = loading ? "Getting it ready…" : s.artist;
   if (s.artist_id && !loading) a.href = `#m-artist/${s.artist_id}`; else a.removeAttribute("href");
@@ -592,7 +602,11 @@ function drawFull() {
   if (!s) return;
   $(".mu-full-bg", full).style.backgroundImage = s.art ? `url("${s.art}")` : "";
   const art = $(".mu-full-art", full);
-  if (art.getAttribute("src") !== s.art) art.src = s.art || "logo.svg";
+  const changed = art.getAttribute("src") !== (s.art || "logo.svg");
+  if (changed) {
+    art.src = s.art || "logo.svg";
+    if (full.classList.contains("in")) { settle(art, "scale(0.94)", 340); settle($(".mu-full-meta", full), "translateY(8px)", 340); settle($(full.dataset.panel === "lyrics" ? ".mu-lyrics" : ".mu-qlist", full), "translateY(10px)", 320); }
+  }
   $(".mu-full-title", full).textContent = s.title;
   const a = $(".mu-full-artist", full);
   a.textContent = s.artist;
@@ -618,7 +632,12 @@ function lyricsFor(s) {
 }
 function setPanel(p) {
   if (!full) return;
+  const was = full.dataset.panel;
   full.dataset.panel = p;
+  if (was && was !== p && full.classList.contains("in")) {
+    settle($(p === "lyrics" ? ".mu-lyrics" : ".mu-qlist", full), p === "lyrics" ? "translateX(-14px)" : "translateX(14px)");
+    settle($(".mu-full-np", full), "translateY(4px)", 220);
+  }
   setPref("music-panel", p);
   full.querySelectorAll(".mu-ptab").forEach((b) => { const on = b.dataset.p === p; b.classList.toggle("on", on); b.setAttribute("aria-selected", String(on)); });
   if (p === "lyrics") drawLyricTime(true);

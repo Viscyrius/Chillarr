@@ -3796,6 +3796,11 @@ body:not([data-mode="music"]) .mu-bar .mu-side > .mu-min { display: inline-grid;
 .mu-ptab { display: inline-flex; align-items: center; gap: 8px; height: 34px; padding: 0 14px; border: 0; border-radius: 9px; background: none; color: rgba(255, 255, 255, 0.7); font: 700 13px var(--display); cursor: pointer; }
 .mu-ptab svg { width: 16px; height: 16px; }
 .mu-ptab.on { background: rgba(255, 255, 255, 0.92); color: #000; }
+.mu-ptab { transition: background 0.22s, color 0.22s; }
+.mu-full-ly, .mu-ly-mini { transition: background 0.22s, color 0.22s, transform 0.15s; }
+.mu-full-ly:active, .mu-ly-mini:active, .mu-ptab:active { transform: scale(0.94); }
+.mu-full-bg { transition: background-image 0.6s, opacity 0.6s; }
+.mu-q { transition: background 0.15s; }
 .mu-full[data-panel="lyrics"] .mu-qlist, .mu-full:not([data-panel="lyrics"]) .mu-lyrics { display: none; }
 .mu-full[data-panel="lyrics"] .mu-full-q { align-self: stretch; }
 .mu-lyrics { flex: 1; min-height: 0; overflow-y: auto; padding: 18% 6px 45%; scrollbar-width: none; -webkit-mask-image: linear-gradient(transparent, #000 12%, #000 80%, transparent); mask-image: linear-gradient(transparent, #000 12%, #000 80%, transparent); }
