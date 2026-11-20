@@ -123,6 +123,26 @@ pub struct Song {
     pub artist_id: String,
     #[serde(default)]
     pub genre: String,
+    /// A YouTube upload's views (0 for a catalog song).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub views: u64,
+}
+
+fn is_zero(n: &u64) -> bool {
+    *n == 0
+}
+
+/// A song's id: Apple's track number, or "yt-" and a YouTube video's 11 characters.
+pub fn id_ok(id: &str) -> bool {
+    match id.strip_prefix("yt-") {
+        Some(v) => v.len() == 11 && v.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'),
+        None => !id.is_empty() && id.len() <= 20 && id.bytes().all(|b| b.is_ascii_digit()),
+    }
+}
+
+/// From YouTube itself, not the catalog: remixes, covers, live takes, edits.
+pub fn is_yt(id: &str) -> bool {
+    id.starts_with("yt-") && id_ok(id)
 }
 
 /// A downloaded song: what it is and the file it is in.
@@ -177,6 +197,7 @@ fn song_of(v: &Value) -> Option<Song> {
         secs: (v["trackTimeMillis"].as_u64().unwrap_or(0) / 1000) as u32,
         artist_id: v["artistId"].as_u64().map(|n| n.to_string()).unwrap_or_default(),
         genre: v["primaryGenreName"].as_str().unwrap_or_default().to_string(),
+        views: 0,
     })
 }
 
@@ -224,6 +245,7 @@ fn chart_song(e: &Value) -> Option<Song> {
         secs: 0,
         artist_id: id_in(e["im:artist"]["attributes"]["href"].as_str()),
         genre: e["category"]["attributes"]["label"].as_str().unwrap_or_default().to_string(),
+        views: 0,
     })
 }
 
@@ -342,6 +364,65 @@ pub async fn album(id: &str) -> Result<Value, String> {
     let head = res.iter().find(|r| r["wrapperType"] == "collection").and_then(album_of).ok_or("That album isn't in the catalog.")?;
     let songs: Vec<Song> = res.iter().filter_map(song_of).collect();
     Ok(json!({ "album": head, "songs": songs }))
+}
+
+static YT_CACHE: Mutex<Option<HashMap<String, (Instant, Vec<Song>)>>> = Mutex::new(None);
+
+/// A YouTube video as a song: its uploader as the artist ("- Topic" off), its
+/// thumbnail as the art. Live streams and anything over an hour are left out.
+fn yt_song(e: &Value) -> Option<Song> {
+    let vid = e["id"].as_str()?;
+    let id = format!("yt-{vid}");
+    if !is_yt(&id) || e["live_status"].as_str().is_some_and(|l| l == "is_live" || l == "is_upcoming") {
+        return None;
+    }
+    let secs = e["duration"].as_f64().unwrap_or(0.0) as u32;
+    if secs == 0 || secs > 3600 {
+        return None;
+    }
+    let artist = e["channel"].as_str().or(e["uploader"].as_str()).unwrap_or_default();
+    Some(Song {
+        id,
+        title: e["title"].as_str()?.to_string(),
+        artist: artist.trim_end_matches(" - Topic").to_string(),
+        album: "YouTube".into(),
+        art: format!("https://i.ytimg.com/vi/{vid}/hqdefault.jpg"),
+        secs,
+        views: e["view_count"].as_u64().unwrap_or(0),
+        ..Song::default()
+    })
+}
+
+/// YouTube's own results for a search: remixes, covers, live takes, sped up,
+/// mashups, what the catalog doesn't have. Takes a few seconds; kept 30 minutes.
+pub async fn youtube(term: &str) -> Result<Vec<Song>, String> {
+    let term: String = term.trim().chars().filter(|c| !c.is_control()).take(120).collect();
+    if term.chars().count() < 2 {
+        return Ok(vec![]);
+    }
+    let key = term.to_lowercase();
+    if let Some((at, v)) = YT_CACHE.lock().unwrap().as_ref().and_then(|c| c.get(&key)) {
+        if at.elapsed() < Duration::from_secs(1800) {
+            return Ok(v.clone());
+        }
+    }
+    let exe = ensure_ytdlp().await?;
+    let mut cmd = tokio::process::Command::new(&exe);
+    cmd.args(["--flat-playlist", "-J", "--no-warnings", "--quiet"])
+        .arg(format!("ytsearch30:{term}"))
+        .creation_flags(CREATE_NO_WINDOW)
+        .stdin(std::process::Stdio::null())
+        .kill_on_drop(true);
+    let out = tokio::time::timeout(Duration::from_secs(40), cmd.output()).await.map_err(|_| "YouTube took too long to answer.".to_string())?.map_err(|e| format!("Couldn't run yt-dlp: {e}"))?;
+    let v: Value = serde_json::from_slice(&out.stdout).map_err(|_| "YouTube's answer wasn't readable. Try again in a moment.".to_string())?;
+    let list: Vec<Song> = v["entries"].as_array().into_iter().flatten().filter_map(yt_song).collect();
+    let mut c = YT_CACHE.lock().unwrap();
+    let c = c.get_or_insert_with(HashMap::new);
+    if c.len() > 200 {
+        c.clear();
+    }
+    c.insert(key, (Instant::now(), list.clone()));
+    Ok(list)
 }
 
 /// An artist: their best-known songs and their albums.
@@ -828,7 +909,11 @@ async fn run_ytdlp(exe: &Path, s: &Song, dir: &Path, stem: &str) -> Result<(), S
     let mut cmd = tokio::process::Command::new(exe);
     cmd.args(["-f", "bestaudio[ext=m4a]/bestaudio", "--no-playlist", "--no-part", "--no-mtime", "--quiet", "--no-warnings", "--max-downloads", "1", "-o"])
         .arg(dir.join(format!("{stem}.%(ext)s")))
-        .arg(query_of(s))
+        // A YouTube upload by its own address; a catalog song found by name.
+        .arg(match s.id.strip_prefix("yt-") {
+            Some(v) if is_yt(&s.id) => format!("https://www.youtube.com/watch?v={v}"),
+            _ => query_of(s),
+        })
         .creation_flags(CREATE_NO_WINDOW)
         .stdin(std::process::Stdio::null())
         .kill_on_drop(true);
@@ -851,7 +936,7 @@ fn fetch_lock(id: &str) -> Arc<tokio::sync::Mutex<()>> {
 
 /// The song's sound in the cache folder, fetched if it isn't there.
 async fn cached(s: &Song) -> Result<PathBuf, String> {
-    if s.id.is_empty() || !s.id.bytes().all(|b| b.is_ascii_digit()) || s.title.trim().is_empty() {
+    if !id_ok(&s.id) || s.title.trim().is_empty() {
         return Err("That isn't a song.".into());
     }
     let dir = cache_dir();
@@ -994,7 +1079,7 @@ pub fn kept_by(app: &AppHandle, uid: &str) -> Vec<Song> {
 pub fn clean(s: &Song) -> Option<Song> {
     let cut = |t: &str, n: usize| t.trim().chars().filter(|c| !c.is_control()).take(n).collect::<String>();
     let digits = |t: &str| !t.is_empty() && t.len() <= 20 && t.bytes().all(|b| b.is_ascii_digit());
-    if !digits(&s.id) || s.title.trim().is_empty() {
+    if !id_ok(&s.id) || s.title.trim().is_empty() {
         return None;
     }
     let art = s.art.trim();
@@ -1009,6 +1094,7 @@ pub fn clean(s: &Song) -> Option<Song> {
         secs: s.secs.min(24 * 3600),
         artist_id: if digits(&s.artist_id) { s.artist_id.clone() } else { String::new() },
         genre: cut(&s.genre, 60),
+        views: s.views,
     })
 }
 
@@ -1185,6 +1271,18 @@ mod tests {
     }
 
     #[test]
+    fn youtube_songs() {
+        assert!(id_ok("123") && id_ok("yt-dQw4w9WgXcQ") && is_yt("yt-dQw4w9WgXcQ"));
+        assert!(!id_ok("yt-short") && !id_ok("yt-../../etc/pa") && !id_ok("") && !is_yt("123"));
+        let e: Value = serde_json::from_str(r#"{"id":"AFpyyMQYI20","title":"Joji - Glimpse of Us (Remix)","channel":"Ma Fo - Topic","duration":231.0,"view_count":278720}"#).unwrap();
+        let s = yt_song(&e).unwrap();
+        assert_eq!((s.id.as_str(), s.artist.as_str(), s.secs, s.views), ("yt-AFpyyMQYI20", "Ma Fo", 231, 278720));
+        assert_eq!(s.art, "https://i.ytimg.com/vi/AFpyyMQYI20/hqdefault.jpg");
+        assert!(yt_song(&serde_json::from_str(r#"{"id":"AFpyyMQYI20","title":"x","duration":0,"live_status":"is_live"}"#).unwrap()).is_none());
+        assert!(clean(&s).is_some(), "a YouTube song can be liked and put in a playlist");
+    }
+
+    #[test]
     fn the_artists_played_most_come_first() {
         let s = |id: &str, a: &str| Song { id: id.into(), title: id.into(), artist: a.into(), artist_id: a.into(), genre: "Pop".into(), ..Default::default() };
         let mut m = Mine { recent: vec![s("1", "10"), s("2", "20"), s("3", "20")], liked: vec![s("4", "30")], ..Default::default() };
@@ -1213,5 +1311,17 @@ mod tests {
         cached(&s).await.unwrap();
         println!("again: {:.3} s", t.elapsed().as_secs_f64());
         assert!(rows().await.as_array().unwrap().len() > 3);
+    }
+    /// Searches YouTube and fetches its first result, timed. Needs the internet.
+    #[tokio::test]
+    #[ignore]
+    async fn live_youtube() {
+        let t = Instant::now();
+        let l = youtube("joji glimpse of us remix").await.unwrap();
+        println!("search: {} results in {:.1} s; first: {} by {} ({} views)", l.len(), t.elapsed().as_secs_f64(), l[0].title, l[0].artist, l[0].views);
+        let t = Instant::now();
+        let f = cached(&l[0]).await.unwrap();
+        println!("fetched in {:.1} s: {} KB", t.elapsed().as_secs_f64(), std::fs::metadata(&f).unwrap().len() / 1024);
+        let _ = std::fs::remove_file(f);
     }
 }
